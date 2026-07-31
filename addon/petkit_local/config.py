@@ -115,6 +115,56 @@ def _supervisor_host_ip() -> str | None:
     return None
 
 
+#: Marks that `show_in_sidebar_once` has already run. Lives in the data
+#: directory because that is what survives a restart and an update.
+SIDEBAR_FLAG_FILENAME = "sidebar_offered.flag"
+
+
+def show_in_sidebar_once(data_dir: str) -> None:
+    """Put the panel in Home Assistant's sidebar, the first time only.
+
+    "Show in sidebar" is not something an add-on can declare. It is per-install
+    state the Supervisor keeps (`SCHEMA_APP_USER`, default False) and only its
+    API writes; there is no `config.yaml` key for it, and nothing turns it on at
+    install time. So a fresh install hides the panel that IS this add-on's
+    interface, and the user has to find a toggle to see it at all.
+
+    Done exactly once, recorded by a file in `data_dir`. That distinction is the
+    whole design: setting it on every start would be an add-on that reinstates
+    itself in the sidebar every time someone removes it, which is worse than the
+    problem it solves. After the first run the choice is the operator's.
+
+    Never raises. Failing to tidy the sidebar must not stop the add-on starting.
+    """
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return
+    flag = Path(data_dir) / SIDEBAR_FLAG_FILENAME
+    if flag.exists():
+        return
+    try:
+        req = urllib.request.Request(
+            "http://supervisor/addons/self/options",
+            data=json.dumps({"ingress_panel": True}).encode(),
+            method="POST",
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except Exception as e:
+        log.debug("Could not add the panel to the sidebar: %s", e)
+        return
+    # Written only after the call succeeded, so a Supervisor that was briefly
+    # unreachable gets another try rather than silently never showing the panel.
+    try:
+        flag.write_text("The panel was added to the sidebar once, on first run.\n"
+                        "Delete this file to have it offered again.\n")
+    except OSError:
+        pass
+    log.info("Added the web panel to Home Assistant's sidebar (first run only)")
+
+
 @dataclass
 class Config:
     """Every tunable the add-on has, with a working default for each.

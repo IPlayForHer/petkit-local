@@ -13,8 +13,13 @@ PetKit device ──HTTP───► petkit-local ──MQTT discovery──► 
 
 ## Requirements
 
-- The **MQTT** integration / a broker (the Mosquitto add-on). petkit-local pulls
-  its HA broker credentials automatically from the Supervisor.
+- A broker for the **MQTT** integration, so entities can be published. With the
+  Mosquitto add-on the credentials come from the Supervisor and there is nothing
+  to configure. With any other broker — one on your LAN, or in another
+  container — **set `ha_mqtt_host` in Options**, plus `ha_mqtt_user` and
+  `ha_mqtt_pass` if it needs them. Nothing warns you if you skip this: the
+  device side works, the panel works, and Home Assistant simply never sees a
+  single entity.
 - A way to point the device at this add-on. BLE provisioning works on every
   model; ESP32 models can also be redirected by DNS. See the repository README.
 

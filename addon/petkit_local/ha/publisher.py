@@ -155,8 +155,16 @@ class HAPublisher:
         no `ha_mqtt_host` configured, or aiomqtt missing.
         """
         if not self._host:
-            log.info("HA MQTT broker not configured - HA entity publishing disabled. "
-                     "Set the ha_mqtt_host option to publish entities to Home Assistant.")
+            # WARNING, not INFO. Getting this far means HA publishing was wanted
+            # — `--no-ha` never constructs a publisher at all — so an empty host
+            # is a misconfiguration, and its symptom is the confusing one: the
+            # device works, the panel works, and Home Assistant shows nothing.
+            # It is the one thing an install with a non-Mosquitto broker has to
+            # set, and at INFO it was lost in the startup noise.
+            log.warning("No HA MQTT broker configured, so NOTHING will appear in Home "
+                        "Assistant. Set the ha_mqtt_host option (plus ha_mqtt_user / "
+                        "ha_mqtt_pass if your broker needs them). The Mosquitto add-on "
+                        "is detected automatically; any other broker has to be named.")
             return
         try:
             import aiomqtt

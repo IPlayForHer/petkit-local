@@ -160,9 +160,17 @@ talk you out of it.
 https://github.com/alex-so-3/petkit-local
 ```
 
-Install **PetKit Local**, start it, open the panel from the sidebar. Leave `api_url` empty and it
-asks the Supervisor for your host's LAN IP and configures itself. Options, ports and troubleshooting
-are in [the add-on documentation](addon/DOCS.md).
+Install **PetKit Local**, then open its **Configuration** tab before starting it:
+
+- **If you run the Mosquitto add-on**, there is nothing to fill in — the Supervisor hands over the
+  broker and its credentials.
+- **If your broker is anywhere else**, set `ha_mqtt_host` (and `ha_mqtt_user` / `ha_mqtt_pass` if it
+  wants them). Leave it empty and everything still works except the part you probably came for:
+  nothing is published to Home Assistant, so no entities appear.
+
+`api_url` can stay empty — it asks the Supervisor for your host's LAN IP. Now start it and open the
+panel from the sidebar. Every option, the ports and troubleshooting are in
+[the add-on documentation](addon/DOCS.md).
 
 </details>
 

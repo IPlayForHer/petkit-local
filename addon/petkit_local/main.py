@@ -171,6 +171,13 @@ def main() -> None:
         stream=sys.stdout,
     )
 
+    if args.ha_addon:
+        # After logging is configured, so the one line it writes is visible, and
+        # before anything long-running, so the sidebar entry appears while the
+        # user is still looking at the add-on page they just started.
+        from petkit_local.config import show_in_sidebar_once
+        show_in_sidebar_once(config.data_dir)
+
     registry = DeviceRegistry(persist_path=f"{config.data_dir}/devices.json")
     ble_registry = BLERegistry(persist_path=f"{config.data_dir}/ble_devices.json")
     hub = EventHub()
