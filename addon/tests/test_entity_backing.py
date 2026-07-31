@@ -49,6 +49,22 @@ UNSEEDED_BY_DESIGN = {
     # unlike `feedTone`/`disturbMode`, which appear nowhere and were removed.
     "feedSound",
     "surplusControl",
+    # W7H. Each is a wire name the device's own `ctrl` registers a set handler
+    # for, per the reverse-engineered settings map supplied 2026-07-31
+    # (`wire_to_set_handler`), so the write lands. What the map does NOT give is
+    # the current value or the default, and this device's `property/post`
+    # carries no settings at all — so there is nothing to seed from and any
+    # number here would be a value we PUSH to somebody's fountain.
+    "drinkDetection",
+    "vomitDetection",
+    "autoFlush",
+    "autoWaterChange",
+    "cleanWaterLackLight",
+    "cleanWaterEmptyLight",
+    "wasteWaterFullLight",
+    "wifiLightAssist",
+    "awDisturbMode",
+    "wlDisturbMode",
 }
 
 #: `state.*` keys whose ONLY backing is a parser passthrough list, with the
@@ -79,6 +95,21 @@ PASSTHROUGH_ATTESTED = {
     "refresh": "reference integration sensor.py:757 device.state.refresh",
     "refreshing": "reference integration binary_sensor.py:372 device.refreshing",
     "liquidLack": "reference integration binary_sensor.py:379 device.liquid_lack",
+    # W7H (EverSweet Ultra AI). Unlike the fountain rows above, these are not
+    # read off a reference model: each is a key of one real `property/post`
+    # captured from a W7H on 2026-07-31, and each is named with the same
+    # meaning in the reverse-engineered `ctrl` field map supplied alongside it.
+    # Two independent sources agreeing on the same 42-key payload is the
+    # strongest evidence any row in this file has.
+    "stgFullState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
+    "cwtState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
+    "wtState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
+    "heatInstall": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
+    "pumpState": "W7H property/post 2026-07-31; ctrl map params_work_states",
+    "waterPumpState": "W7H property/post 2026-07-31; ctrl map params_work_states",
+    "addWaterState": "W7H property/post 2026-07-31; ctrl map params_work_states",
+    "flushState": "W7H property/post 2026-07-31; ctrl map params_work_states",
+    "disinfectState": "W7H property/post 2026-07-31; ctrl map params_work_states",
 }
 
 #: Pre-existing passthrough-only keys that were already published when the
@@ -91,6 +122,11 @@ PASSTHROUGH_ATTESTED = {
 #: `sandLack` and friends. See the K2/K3 note in CLAUDE.md — both are BLE-only
 #: today, so their WiFi-purifier entities cannot be exercised at all.
 PASSTHROUGH_UNVERIFIED = {
+    # `drinkTime` is back after a day out of this list. A real W7H does report
+    # `device.drink_time`, but the map says it is the unix TIME OF THE LAST
+    # DRINK, not a count — so it feeds the `last_drink` timestamp sensor, and
+    # this key stays what it always was: the ESP32 fountains' cloud-model name
+    # for a counter nobody here has seen on the wire.
     "filterLeftDays", "lackWarning", "heatRealTemp", "drinkTime",
     "desiccantLeftDays", "batteryPower",
     "bowl", "food", "weight", "feeding", "eating",
@@ -121,17 +157,17 @@ def _keys_a_parser_can_emit(fn) -> set[str]:
     merely depends on the payload.
     """
     keys: set[str] = set()
-    for source in (fn, state_parsers._extract_camel, state_parsers._extract_litter_nested,
-                   state_parsers._extract_consumable_days, state_parsers._extract_shared,
-                   state_parsers._extract_presence_flags,
-                   state_parsers._extract_wifi_rssi, state_parsers._extract_work_mode,
-                   state_parsers._parse_content_field):
+    for source in (fn, *_SHARED_HELPERS):
         tree = ast.parse(inspect.getsource(source).lstrip())
         keys |= {n.value for n in ast.walk(tree)
                  if isinstance(n, ast.Constant) and isinstance(n.value, str)}
     # Names produced from a module-level table rather than a literal in the
     # function body, so the AST walk above cannot see them.
     keys |= set(state_parsers.PRESENCE_FLAGS.values())
+    keys |= set(state_parsers.W7H_STATE_FIELDS)
+    keys |= set(state_parsers.W7H_HALLS)
+    keys |= set(state_parsers.W7H_DEVICE_TIMESTAMPS.values())
+    keys |= set(state_parsers.LITTER_CAMERA_HALLS)
     return keys
 
 
@@ -139,7 +175,8 @@ def _keys_a_parser_can_emit(fn) -> set[str]:
 _SHARED_HELPERS = (
     state_parsers._extract_camel, state_parsers._extract_litter_nested,
     state_parsers._extract_consumable_days, state_parsers._extract_shared,
-    state_parsers._extract_presence_flags,
+    state_parsers._extract_presence_flags, state_parsers._extract_error_flags,
+    state_parsers._extract_fountain_w7h,
     state_parsers._extract_wifi_rssi, state_parsers._extract_work_mode,
     state_parsers._parse_content_field, state_parsers.normalize_property_params,
 )

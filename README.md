@@ -106,6 +106,15 @@ to sit at "unknown".
 | EverSweet Max Cordless | CTW3 | — | — |
 | Pura Air smart spray | K2, K3 | — | — |
 
+**The W7H is the exception in that table.** Its state fields are not borrowed from the cloud API:
+they are pinned to a real `property/post` from a running EverSweet Ultra AI, cross-checked against a
+reverse-engineered map of the same firmware's `ctrl`. So it reports its tanks, pumps, lift valve,
+heater and ten hall switches, and it deliberately does **not** publish a filter, a battery or the
+pause/resume buttons — that hardware and those commands do not exist on this model, and an entity
+that can never hold a value is worse than a missing one. Its *settings* are still unverified: this
+firmware's state reports carry no settings at all, so whether a write took effect is only observable
+on the device itself.
+
 **Not listed at all?** It should still work with **proxy mode** on — every request is forwarded to
 PetKit and the device gets the real cloud's answer, so it keeps behaving normally while everything
 it says is recorded. That recording is exactly what is needed to add it properly; see

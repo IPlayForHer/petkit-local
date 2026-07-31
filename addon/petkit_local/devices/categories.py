@@ -31,13 +31,15 @@ from petkit_local.ha.entities.selects import FEEDER_SELECTS, FOUNTAIN_SELECTS, L
 from petkit_local.ha.entities.sensors import (
     FEEDER_BINARY_SENSORS, FEEDER_SENSORS,
     FOUNTAIN_BINARY_SENSORS, FOUNTAIN_SENSORS,
-    LITTER_BINARY_SENSORS, LITTER_CAMERA_SENSORS, LITTER_SENSORS,
+    FOUNTAIN_W7H_BINARY_SENSORS, FOUNTAIN_W7H_HALL_SENSORS, FOUNTAIN_W7H_SENSORS,
+    LITTER_BINARY_SENSORS, LITTER_CAMERA_HALL_SENSORS, LITTER_CAMERA_SENSORS,
+    LITTER_SENSORS,
     PURIFIER_BINARY_SENSORS, PURIFIER_SENSORS,
 )
 from petkit_local.ha.entities.switches import (
     CAPABILITY_SWITCHES,
     FEEDER_CAMERA_SWITCHES, FEEDER_SWITCHES,
-    FOUNTAIN_SWITCHES,
+    FOUNTAIN_SWITCHES, FOUNTAIN_W7H_SWITCHES,
     LITTER_CAMERA_SWITCHES, LITTER_SWITCHES,
     PURIFIER_SWITCHES,
 )
@@ -75,15 +77,45 @@ class CategorySpec:
     camera_entities: tuple[EntityDef, ...] = ()
     #: Extra MQTT event topics a camera-equipped model of this category emits.
     camera_state_topics: tuple[str, ...] = ()
+    #: `(codename, entities)` for a model that publishes more than its category.
+    #: Appended last, so the shared list keeps its positions.
+    #:
+    #: A category is a BEHAVIOUR family, not a hardware one. The W7H drinks,
+    #: detects pets and pours water like every other fountain, so it belongs
+    #: here — but it reports a sewage tank, a lift valve and ten hall switches
+    #: that no ESP32 fountain has. Pairs of tuples rather than a dict so the
+    #: dataclass stays frozen and hashable, and so the order is written down.
+    model_entities: tuple[tuple[str, tuple[EntityDef, ...]], ...] = ()
+    #: `(codename, entity keys)` a model must NOT publish, for a field its
+    #: hardware or firmware never reports.
+    #:
+    #: The alternative is worse than it looks: an entity nothing can fill is
+    #: published, reads unknown forever, and is indistinguishable from a device
+    #: that has not reported yet — which is the failure
+    #: `tests/test_entity_backing.py` exists to catch. Excluding is not the same
+    #: as deleting: the entity stays real for every other model in the family.
+    model_excludes: tuple[tuple[str, frozenset[str]], ...] = ()
 
-    def entities_for(self, has_camera: bool) -> list[EntityDef]:
+    def entities_for(self, has_camera: bool, device_type: str = "") -> list[EntityDef]:
         """HA entity definitions for one device, in discovery order.
 
         Returns a fresh list per call because callers treat it as their own.
+
+        `device_type` is optional so a caller asking what a CATEGORY publishes
+        still gets the shared answer; pass it to get one model's real list.
         """
-        entities = list(self.entities)
+        codename = device_type.lower()
+        excluded: set[str] = set()
+        for model, keys in self.model_excludes:
+            if model == codename:
+                excluded |= set(keys)
+
+        entities = [e for e in self.entities if e.key not in excluded]
         if has_camera:
-            entities.extend(self.camera_entities)
+            entities.extend(e for e in self.camera_entities if e.key not in excluded)
+        for model, extra in self.model_entities:
+            if model == codename:
+                entities.extend(extra)
         return entities
 
     def state_topics_for(self, has_camera: bool) -> list[str]:
@@ -111,8 +143,11 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
             *LITTER_EVENTS,
             *LITTER_SCHEDULE_TEXT,
         ),
+        # The halls go LAST, after the common bundle: appending is the only
+        # change to this tuple that cannot move an existing entity.
         camera_entities=(*LITTER_CAMERA_SENSORS, *LITTER_CAMERA_SWITCHES,
-                         *LITTER_CAMERA_NUMBERS, *_COMMON_CAMERA_ENTITIES),
+                         *LITTER_CAMERA_NUMBERS, *_COMMON_CAMERA_ENTITIES,
+                         *LITTER_CAMERA_HALL_SENSORS),
         state_topics=(
             "work_start", "work_continue", "work_suspend",
             "clean_over", "dump_over", "reset_over",
@@ -160,7 +195,52 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         # No fountain-specific camera switches exist; the W7H publishes only
         # the common bundle.
         camera_entities=_COMMON_CAMERA_ENTITIES,
-        state_topics=("property/post", "data_get/post"),
+        state_topics=("drink_start", "drink_over",
+                      "property/post", "data_get/post"),
+        # A real W7H sends all three (capture 2026-07-31), and it is the only
+        # fountain with a camera, so they belong on the camera bundle rather
+        # than the shared list.
+        camera_state_topics=("pet_detect", "pet_discern"),
+        model_entities=(
+            ("w7h", (*FOUNTAIN_W7H_SENSORS, *FOUNTAIN_W7H_BINARY_SENSORS,
+                     *FOUNTAIN_W7H_HALL_SENSORS, *FOUNTAIN_W7H_SWITCHES)),
+        ),
+        # Everything the W7H cannot fill. The list above is what it reports
+        # instead; between the two, the fountain family covers both hardware
+        # generations without either pretending to be the other.
+        #
+        # Evidence for each exclusion is one real `property/post` (2026-07-31)
+        # plus the reverse-engineered field map for the same firmware: the
+        # payload carries 42 keys and not one of these is among them. Their
+        # names come from the reference integration's CLOUD model, which is
+        # PetKit's account-side view of the ESP32 fountains — a different
+        # device generation, not a different spelling.
+        model_excludes=(
+            ("w7h", frozenset({
+                # No `workState` in the payload at all. Publishing it meant a
+                # Device Status of 0, which the device never sent and which
+                # decodes as a real mode.
+                "device_status",
+                # No filter and no battery in this hardware.
+                "filter_percent", "filter_days", "battery", "low_battery",
+                "replace_filter", "reset_filter",
+                # Not reported. The W7H says the same things with `cwtState`,
+                # the clean-tank halls and its `err{}` bits.
+                "water_lack",
+                # `detectStatus` is absent; presence arrives as `pet_detect`
+                # events and the `lastPetDetect` timestamp instead.
+                "pet_detected",
+                # `drinkTime` here is a TIMESTAMP under `device{}`, not the
+                # count this sensor renders. Replaced by `last_drink`.
+                "drink_times",
+                # `power` is not among the set handlers in this firmware's
+                # `ctrl`, so both buttons were writing a field nothing reads.
+                # The map notes fountain actions go through
+                # `thing/service/start` with a `start_action`, whose values are
+                # not known — so there is nothing to correct them TO yet.
+                "pause_fountain", "resume_fountain",
+            })),
+        ),
     ),
     "purifier": CategorySpec(
         device_types=frozenset(DEVICE_TYPES_PURIFIER),

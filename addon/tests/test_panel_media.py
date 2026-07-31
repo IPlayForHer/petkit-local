@@ -4,6 +4,7 @@ timeline, and pets."""
 import asyncio
 import os
 import tempfile
+from datetime import datetime
 import time
 from pathlib import Path
 
@@ -31,6 +32,20 @@ class FakeHAPublisher:
 
     async def publish_pet_discovery(self, pet):
         self.pet_discoveries.append(pet["id"])
+
+
+def _midday() -> float:
+    """Today, local noon — a safe anchor for events the timeline groups by day.
+
+    NOT `time.time()`. The timeline cuts days at LOCAL midnight, so a test that
+    writes an event at `now` and its follow-up at `now + 9` puts the two on
+    different days whenever it runs in the last nine seconds before midnight,
+    and the session comes back missing its sub-events. That is exactly how this
+    file failed once, at 00:00 on 2026-08-01, and passed on every rerun.
+    Anchoring at noon keeps hours of headroom in both directions.
+    """
+    return datetime.now().replace(hour=12, minute=0, second=0,
+                                  microsecond=0).timestamp()
 
 
 def _panel(tmp, device_type="t5"):
@@ -338,8 +353,7 @@ async def test_concurrent_video_thumbs_never_expose_a_partial_file():
 async def test_timeline_returns_sessions_for_today():
     with tempfile.TemporaryDirectory() as tmp:
         app, reg, device, store, retention, pet_registry, ha_publisher, media_root = _panel(tmp)
-        import time
-        now = time.time()
+        now = _midday()
         await store.upsert_event({"device_id": 1, "event_type": "pet_out", "event_kind": "toilet_visit",
                                   "ts": now, "related_event": "r1"})
         c = await _client(app)
@@ -396,8 +410,7 @@ async def test_timeline_leaves_an_unattributed_card_unnamed():
 async def test_timeline_filters_by_query_param():
     with tempfile.TemporaryDirectory() as tmp:
         app, reg, device, store, retention, pet_registry, ha_publisher, media_root = _panel(tmp)
-        import time
-        now = time.time()
+        now = _midday()
         await store.upsert_event({"device_id": 1, "event_type": "pet_out", "event_kind": "toilet_visit", "ts": now})
         await store.upsert_event({"device_id": 1, "event_type": "error_start", "event_kind": "error", "ts": now})
         c = await _client(app)
@@ -519,8 +532,7 @@ async def test_timeline_puts_visit_media_on_the_card_and_cleaning_media_on_its_l
     mixed together."""
     with tempfile.TemporaryDirectory() as tmp:
         app, reg, device, store, retention, pet_registry, ha_publisher, media_root = _panel(tmp)
-        import time
-        now = time.time()
+        now = _midday()
 
         await store.upsert_event({"event_uid": "v:10", "related_event": "visit", "device_id": 1,
                                   "event_type": "10", "event_kind": "toilet_visit", "ts": now})
@@ -622,7 +634,7 @@ async def test_timeline_labels_are_decoded_from_content():
     cards carried no content at all."""
     with tempfile.TemporaryDirectory() as tmp:
         app, reg, device, store, *_ = _panel(tmp)
-        now = time.time()
+        now = _midday()
         await store.upsert_event({
             "device_id": 1, "device_type": "t5", "event_type": "5",
             "event_kind": "cleaning", "ts": now, "related_event": "c1",
@@ -660,7 +672,7 @@ async def test_an_error_pair_is_one_card_and_counts_as_a_fault():
     them. It is a FAULT, not a health alert: the box is broken, not the cat."""
     with tempfile.TemporaryDirectory() as tmp:
         app, reg, device, store, *_ = _panel(tmp)
-        now = time.time()
+        now = _midday()
         for event_type, extra in (("1", {}), ("2", {"start_time": 1784827076})):
             await store.upsert_event({
                 "device_id": 1, "device_type": "t5", "event_type": event_type,
@@ -791,8 +803,7 @@ async def test_timeline_filters_by_pet():
     themselves."""
     with tempfile.TemporaryDirectory() as tmp:
         app, reg, device, store, retention, pet_registry, ha_publisher, media_root = _panel(tmp)
-        import time
-        now = time.time()
+        now = _midday()
         appka = await pet_registry.create("Appka", device_ids=[1])
         other = await pet_registry.create("Other", device_ids=[1])
         await store.upsert_event({"device_id": 1, "event_type": "pet_out", "ts": now,

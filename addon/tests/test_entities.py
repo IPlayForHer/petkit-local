@@ -28,10 +28,15 @@ EXPECTED_ENTITY_COUNTS = {
     # Litter models dropped 5 on 2026-07-30: `sand_lack`, `weight_error`,
     # `frequent_use`, `low_power` and `litter_tray`, none of which any device
     # has ever filled (see the REMOVED note in ha/entities/sensors.py).
-    "t3": 45, "t4": 45, "t5": 67, "t6": 67, "t7": 67,
+    #
+    # Camera litters gained 6 on 2026-07-31: the `sensor{}` hall switches, read
+    # live off a running T5. The W7H went 31 -> 61 the same day: its own field
+    # map replaced nine entities it can never fill (filter, battery, `power`
+    # buttons) with the 39 its `property/post` actually carries.
+    "t3": 45, "t4": 45, "t5": 73, "t6": 73, "t7": 73,
     "feeder": 25, "feedermini": 25, "d3": 25, "d4": 25, "d4s": 25,
     "d4h": 42, "d4sh": 42,
-    "w4": 24, "w5": 24, "ctw2": 24, "ctw3": 24, "w7h": 31,
+    "w4": 24, "w5": 24, "ctw2": 24, "ctw3": 24, "w7h": 61,
     "k2": 12, "k3": 12,
 }
 
@@ -123,12 +128,28 @@ def test_unknown_device_type_is_classified_as_nothing():
 
 
 def test_camera_bundle_is_appended_to_the_shared_base():
+    """The camera model adds entities; it never reshuffles the shared ones.
+
+    Stated as "the entities both models publish appear in the same relative
+    order" rather than "the camera list starts with the plain list". The
+    stricter form stopped being true once a model could be gated: a W7H drops
+    nine fountain entities its hardware has no field for (`filter_percent`,
+    `battery`, ...) and adds its own, so it is not a prefix-superset of a W5 —
+    by design. What must still hold is that nothing gets reordered, because
+    that is the part with no reason behind it.
+    """
     for plain_type, camera_type in CAMERA_PAIRS:
         plain = get_entities_for_device(Device(device_type=plain_type, petkit_id=1))
         camera = get_entities_for_device(Device(device_type=camera_type, petkit_id=1))
         assert len(camera) > len(plain), f"{camera_type} should add camera entities"
-        assert camera[:len(plain)] == plain, (
-            f"{camera_type} reorders the base entities of {plain_type}")
+
+        plain_keys = [e.key for e in plain]
+        camera_keys = [e.key for e in camera]
+        shared = set(plain_keys) & set(camera_keys)
+        assert shared, f"{camera_type} and {plain_type} share no entities at all"
+        assert [k for k in camera_keys if k in shared] == \
+               [k for k in plain_keys if k in shared], (
+            f"{camera_type} reorders the entities it shares with {plain_type}")
 
 
 def test_camera_state_topics_are_appended_to_the_shared_base():

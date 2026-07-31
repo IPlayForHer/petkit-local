@@ -32,7 +32,8 @@ def get_entities_for_device(device: Device) -> list[EntityDef]:
     spec = spec_for_device(device)
     if spec is None:
         return []
-    return spec.entities_for(has_camera=device.is_camera)
+    return spec.entities_for(has_camera=device.is_camera,
+                             device_type=device.device_type)
 
 
 def _merge_default_settings(device: Device) -> None:

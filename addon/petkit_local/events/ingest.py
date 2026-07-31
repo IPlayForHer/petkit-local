@@ -250,14 +250,28 @@ def _extract_pet_ref(content: dict) -> int | None:
     belongs to a different metric (see `_extract_score`), so discarding a match
     on that comparison would be a category error dressed up as tuning.
 
+    Zero is NOT an identity — it is the device saying it recognised nobody, and
+    it must not be stored as one. A real W7H sent four `pet_discern` events
+    (2026-07-31) each carrying `count: 1, pet_id: 0`: a pet was there and was
+    not identified. What settles it rather than leaving it a guess is the same
+    device's `discernPic: []` — it had downloaded no faces at all, so it could
+    not have matched anyone. 0 is also not a value any real id takes: ours are
+    SQLite row ids and start at 1, and PetKit's cloud ids are nine digits.
+
     Left unresolved here: `events/ingest.py` is transport, and this id is not
     necessarily one of ours. `ai/pets.py::PetRegistry.resolve_pet_ref` maps it
     to `events.pet_id`, or to nothing.
     """
     match = _best_match(content)
     if match and match.get("id") is not None:
-        return to_int(match["id"], None)
-    return to_int(content.get("petId", content.get("pet_id")), None)
+        return _identity_or_none(match["id"])
+    return _identity_or_none(content.get("petId", content.get("pet_id")))
+
+
+def _identity_or_none(value: object) -> int | None:
+    """A reported pet id, or None for the "recognised nobody" sentinel."""
+    pet_ref = to_int(value, None)
+    return None if pet_ref == 0 else pet_ref
 
 
 # --- dev_event_report (HTTP) -----------------------------------------------

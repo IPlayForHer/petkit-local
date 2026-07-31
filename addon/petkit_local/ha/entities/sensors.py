@@ -119,6 +119,43 @@ LITTER_CAMERA_SENSORS = [
               value_path="state.deodorizing", device_class="running", icon="mdi:spray",
               entity_category="diagnostic"),
 ]
+#: The T5 family's own hall switches, read live from a running T5 (firmware
+#: 943) on 2026-07-31 under `sensor{}` — the same block name the W7H uses for a
+#: completely different set. Diagnostic, because they say where the mechanism
+#: physically is, which is what you want when a cycle stops half way and the
+#: work mode alone cannot tell you where.
+#:
+#: No external source names these, so each entity carries the device's own
+#: field name rather than an interpretation of it — `open_hall` becomes
+#: "Hall: Open", not "Lid Open", which would be a guess about which part moves.
+#: The box's `err{}` does corroborate that the firmware treats them as distinct
+#: sensors: it carries a fault bit per hall (`hallT`, `hallD`, `hallS`, `hallO`,
+#: `hallC`, `hallB`, `hallH`) alongside them.
+#:
+#: No `device_class`, for the same reason as the W7H's: nothing here pins the
+#: polarity of each pin, and a class would render a wrong guess as a confident
+#: answer instead of a raw 0/1 somebody can compare against the machine.
+LITTER_CAMERA_HALL_SENSORS = [
+    EntityDef(component="binary_sensor", key="hall_standby", name="Hall: Standby",
+              value_path="state.stdby_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_smooth", name="Hall: Smooth",
+              value_path="state.smooth_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_dump", name="Hall: Dump",
+              value_path="state.dump_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_open", name="Hall: Open",
+              value_path="state.open_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_close", name="Hall: Close",
+              value_path="state.close_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_top", name="Hall: Top",
+              value_path="state.top_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+]
+
 # REMOVED (2026-07-29): `garbage_bag_state` (state.packageState) and
 # `purification_days` (state.purificationLeftDays). Neither string appears
 # anywhere in real T5 firmware, while every other field on these lists does —
@@ -188,6 +225,149 @@ FOUNTAIN_BINARY_SENSORS = [
               value_path="state.filterWarning", device_class="problem", icon="mdi:filter-remove"),
     EntityDef(component="binary_sensor", key="pet_detected", name="Pet Detected",
               value_path="state.detectStatus", device_class="occupancy", icon="mdi:cat"),
+]
+
+# --- W7H (EverSweet Ultra AI) ----------------------------------------------
+# The W7H shares almost nothing with the ESP32 fountains above: no filter, no
+# battery, no `lackWarning`, and a mechanism the others do not have (a clean
+# tank, a sewage tank, a lift valve, a heater and a disinfect cycle). Its state
+# fields are the ones a real `property/post` carries, documented in the
+# reverse-engineered map supplied 2026-07-31 and present key-for-key in that
+# capture; `devices/state_parsers.py::W7H_STATE_FIELDS` is what produces them.
+#
+# `entity_category="diagnostic"` on most of them is deliberate: they are how you
+# find out WHY the fountain stopped, not things to put on a dashboard. HA files
+# them under Diagnostic so the primary card stays the three or four values
+# somebody actually looks at.
+
+FOUNTAIN_W7H_SENSORS = [
+    # Timestamps, not counters. `drink_time` is when the pet last drank; the
+    # map is explicit about it, and reading it as a count is how it nearly
+    # ended up behind a "Drink Times" sensor showing 1785531049.
+    EntityDef(component="sensor", key="last_drink", name="Last Drink",
+              value_path="state.lastDrink", device_class="timestamp",
+              icon="mdi:cup-water"),
+    EntityDef(component="sensor", key="last_pet_detect", name="Last Pet Detected",
+              value_path="state.lastPetDetect", device_class="timestamp",
+              icon="mdi:cat"),
+    # Integer state codes whose individual values are NOT known — published raw
+    # rather than behind `options`, because a label per code would be invented.
+    EntityDef(component="sensor", key="clean_tank_state", name="Clean Water Tank State",
+              value_path="state.cwtState", icon="mdi:water", entity_category="diagnostic"),
+    EntityDef(component="sensor", key="tray_state", name="Drinking Tray State",
+              value_path="state.wtState", icon="mdi:bowl", entity_category="diagnostic"),
+    # Why the device last restarted. A W7H that connects and then does nothing
+    # is a real failure mode — one cost a support round-trip before a reboot
+    # fixed it — and this is the field that says a restart happened at all.
+    EntityDef(component="sensor", key="reboot_reason", name="Reboot Reason",
+              value_path="state.rebootReason", icon="mdi:restart",
+              entity_category="diagnostic"),
+]
+
+FOUNTAIN_W7H_BINARY_SENSORS = [
+    # Consumable-equivalent: the one thing on this device that needs a human.
+    EntityDef(component="binary_sensor", key="waste_tank_full", name="Waste Tank Full",
+              value_path="state.stgFullState", device_class="problem",
+              icon="mdi:delete-alert"),
+    # Running states.
+    EntityDef(component="binary_sensor", key="heating", name="Heating",
+              value_path="state.heatState", device_class="running",
+              icon="mdi:radiator"),
+    EntityDef(component="binary_sensor", key="pump_running", name="Circulation Pump",
+              value_path="state.pumpState", device_class="running",
+              icon="mdi:pump"),
+    EntityDef(component="binary_sensor", key="transfer_pump_running", name="Transfer Pump",
+              value_path="state.waterPumpState", device_class="running",
+              icon="mdi:pump"),
+    EntityDef(component="binary_sensor", key="refilling", name="Refilling",
+              value_path="state.addWaterState", device_class="running",
+              icon="mdi:water-plus"),
+    EntityDef(component="binary_sensor", key="flushing", name="Flushing",
+              value_path="state.flushState", device_class="running",
+              icon="mdi:water-sync"),
+    EntityDef(component="binary_sensor", key="disinfecting", name="Disinfecting",
+              value_path="state.disinfectState", device_class="running",
+              icon="mdi:shimmer"),
+    # Assembly, seated or not. All diagnostic: they answer "why won't it run".
+    EntityDef(component="binary_sensor", key="waste_tank_installed", name="Waste Tank Installed",
+              value_path="state.stgInstall", icon="mdi:delete-empty",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="clean_tank_installed", name="Clean Water Tank Installed",
+              value_path="state.cwtInstall", icon="mdi:water-check",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="tray_installed", name="Drinking Tray Installed",
+              value_path="state.wtInstall", icon="mdi:bowl",
+              entity_category="diagnostic"),
+    # NOT device_class "lock": HA reads that class as on = UNLOCKED, and this
+    # field is 1 when the lock is CLOSED. The class would invert it silently.
+    EntityDef(component="binary_sensor", key="waste_lock_closed", name="Waste Lock Closed",
+              value_path="state.wtLock", icon="mdi:lock",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="heater_installed", name="Heater Installed",
+              value_path="state.heatInstall", icon="mdi:radiator-disabled",
+              entity_category="diagnostic"),
+    # Lift/valve mechanism.
+    EntityDef(component="binary_sensor", key="lift_valve", name="Lift Valve",
+              value_path="state.liftValveState", device_class="running",
+              icon="mdi:valve", entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="lift_moving", name="Lift Moving",
+              value_path="state.liftLiveState", device_class="running",
+              icon="mdi:arrow-up-down", entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="lift_resetting", name="Lift Resetting",
+              value_path="state.liftResetState", device_class="running",
+              icon="mdi:backup-restore", entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="refill_cooldown", name="Refill Cooldown",
+              value_path="state.addWaterFrequent", icon="mdi:timer-sand",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="device_power", name="Device Power",
+              value_path="state.sw", device_class="power",
+              entity_category="diagnostic"),
+]
+
+#: The raw hall switches behind the derived flags above, as diagnostics.
+#:
+#: Worth publishing separately because the derived flag can disagree with them
+#: and the disagreement is the diagnosis: the map records `stgInstall` reading 1
+#: while `hall_DKR` reads 0, i.e. the sewage tank is seated on one side only.
+#: A user chasing "it says the tank is in but it won't flush" has no other way
+#: to see that.
+#:
+#: Polarity is 1 = closed / magnet present / installed, as the firmware reports
+#: it. The map warns that the exact NO/NC wiring may differ per pin, so these
+#: carry no `device_class` — a wrong class would render an inverted pin as a
+#: confident, wrong answer instead of a raw 0/1 somebody can compare against
+#: what they just reseated.
+FOUNTAIN_W7H_HALL_SENSORS = [
+    EntityDef(component="binary_sensor", key="hall_clean_high", name="Hall: Clean Tank High",
+              value_path="state.hall_CH", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_clean_low", name="Hall: Clean Tank Low",
+              value_path="state.hall_CL", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_lock_left", name="Hall: Lock Left",
+              value_path="state.hall_CKL", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_lock_right", name="Hall: Lock Right",
+              value_path="state.hall_CKR", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_waste_full", name="Hall: Waste Tank Full",
+              value_path="state.hall_DH", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_waste_left", name="Hall: Waste Tank Left",
+              value_path="state.hall_DKL", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_waste_right", name="Hall: Waste Tank Right",
+              value_path="state.hall_DKR", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_lift_upper", name="Hall: Lift Upper",
+              value_path="state.hall_LTU", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_lift_lower", name="Hall: Lift Lower",
+              value_path="state.hall_LTD", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_tray", name="Hall: Drinking Tray",
+              value_path="state.hall_TY", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
 ]
 
 PURIFIER_SENSORS = [

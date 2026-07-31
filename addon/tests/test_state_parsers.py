@@ -27,8 +27,10 @@ def test_mqtt_property_post_normalizes_to_flat_keys():
 
 
 def test_normalize_flags_active_errors():
+    # Separator is ", " since the flags began decoding to multi-word labels;
+    # a litter box has no label table, so its flags still read raw.
     flat = normalize_property_params("t4", {"err": {"DC": 0, "scale": 1, "OLED": 1}})
-    assert set(flat["errorMsg"].split(",")) == {"scale", "OLED"}
+    assert set(flat["errorMsg"].split(", ")) == {"scale", "OLED"}
 
 
 def test_normalize_safe_on_flat_input():

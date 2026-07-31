@@ -19,8 +19,10 @@ import json
 import math
 import re
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from petkit_local.events import codes
 from petkit_local.utils.coerce import to_float
 from petkit_local.utils.dicts import dig
 
@@ -131,6 +133,165 @@ PRESENCE_FLAGS = {
 SNAPSHOT_MARKER = "litter"
 
 
+#: Models whose reports carry the W7H field set. A codename, NOT a payload
+#: marker: `sensor` looked like one — it holds the hall block and no other
+#: fountain sends it — but a live T5 carries a `sensor` block of its own
+#: (`open_hall`, `dump_hall`, `prox_raw`, ...), so keying off its presence would
+#: have run the fountain branch over every litter box. Both call sites already
+#: know the codename; per CLAUDE.md, pass it rather than infer it.
+W7H_MODELS = frozenset({"w7h"})
+
+#: W7H top-level state fields, from the reverse-engineered `property/post` map
+#: supplied 2026-07-31 and present key-for-key in a real capture from the same
+#: device. Copied under their own names: this IS the device's vocabulary, the
+#: panel renders `device.state` verbatim, and inventing a second spelling for
+#: `stgFullState` would only create something to keep in sync.
+#:
+#: Every one of these is a plain scalar the device sends on every report, so
+#: unlike the litter box's presence-signalled trio there is no absence to read.
+W7H_STATE_FIELDS = (
+    # install / seating
+    "stgInstall", "stgFullState", "cwtInstall", "wtInstall", "wtLock",
+    "heatInstall",
+    # level / state codes (integers; the code meanings are NOT known, so they
+    # are published raw rather than decoded into labels we would be inventing)
+    "cwtState", "wtState",
+    # work states
+    "heatState", "liftValveState", "pumpState", "waterPumpState",
+    "addWaterState", "flushState", "liftResetState", "liftLiveState",
+    "disinfectState", "addWaterFrequent",
+    # timers / measurements
+    "disinfectTime", "heatLeftTime", "heatStatusTime", "heatRealTemp",
+    # camera + housekeeping
+    "cameraStatus", "ota", "rebootReason",
+)
+
+#: The ten hall switches a W7H reports under `sensor{}`, in the order the
+#: device sends them. Digital reed switches, NOT ADC readings — the supplied
+#: map correlated each against the BLE log's own `hall_data` lines
+#: (`CLEAN_WATER_H`, `LOCK_INSTALL_R`, `WATER_TRAY_INSTALL`, ...).
+#:
+#: Listed explicitly rather than copied by `hall_` prefix so that the set an
+#: entity may bind to is the set a source names. It is also what lets
+#: `tests/test_entity_backing.py` see a producer for each one; a prefix match
+#: is invisible to it, and an entity it cannot see a producer for is exactly
+#: the "reads unknown forever" case that test exists to catch.
+#:
+#: Names are the device's, kept verbatim so one string follows an entity
+#: through the panel into a firmware log.
+W7H_HALLS = (
+    "hall_CH", "hall_CL",       # clean-water tank, high / low level
+    "hall_CKL", "hall_CKR",     # waste lock, left / right
+    "hall_DH",                  # sewage tank full
+    "hall_DKL", "hall_DKR",     # sewage tank seated, left / right
+    "hall_LTU", "hall_LTD",     # lift travel, upper / lower
+    "hall_TY",                  # drinking tray seated
+)
+
+#: The T5-family litter box has a `sensor{}` block too, and it is NOT the same
+#: one — different names, different mechanism. Read live from a running T5
+#: (firmware 943) on 2026-07-31:
+#:
+#:     {"weight":0, "stdby_hall":0, "smooth_hall":1, "dump_hall":1,
+#:      "open_hall":1, "close_hall":0, "top_hall":0, "prox_raw":99,
+#:      "around_pos":0}
+#:
+#: Only the six `*_hall` switches are taken. `weight` duplicates `sandWeight`,
+#: and `prox_raw`/`around_pos` are a raw ADC and a position code whose scale
+#: and enum no source gives — publishing either would mean inventing a unit.
+#:
+#: Unlike the W7H's, these names have NO external map behind them, so the
+#: entities carry the device's own wording rather than an interpretation of it.
+#: What does corroborate them is the same device's `err{}` block, which carries
+#: a matching fault bit per hall (`hallT`, `hallD`, `hallS`, `hallO`, `hallC`) —
+#: the firmware itself treating each as a distinct sensor.
+LITTER_CAMERA_HALLS = (
+    "stdby_hall", "smooth_hall", "dump_hall",
+    "open_hall", "close_hall", "top_hall",
+)
+
+#: Litter models that report `LITTER_CAMERA_HALLS`. Seen on a T5; T6 and T7 run
+#: the same firmware family and share every other field, so they are included
+#: rather than left publishing nothing, and an absent key simply never fills.
+LITTER_CAMERA_MODELS = frozenset({"t5", "t6", "t7"})
+
+
+def _extract_sensor_block(body: dict[str, Any], state: dict[str, Any],
+                          names: tuple[str, ...]) -> None:
+    """Copy the named switches out of a report's `sensor{}` block.
+
+    Listed names only, never everything present: an entity may bind to a key
+    only if some source names it, and a blanket copy would also drag in the raw
+    ADC readings whose scale nobody here knows.
+    """
+    sensor = body.get("sensor")
+    if not isinstance(sensor, dict):
+        return
+    for key in names:
+        if key in sensor:
+            state[key] = sensor[key]
+
+#: The `device{}` block's unix timestamps, and the state key each becomes.
+#: These are TIMESTAMPS, not counters — `drink_time` is "when the pet last
+#: drank", not "how many times". Reading it as a count is how it ended up
+#: behind a "Drink Times" sensor that would have displayed 1785531049.
+W7H_DEVICE_TIMESTAMPS = {
+    "drink_time": "lastDrink",
+    "pet_time": "lastPetDetect",
+    "pet_close_time": "lastPetLeft",
+}
+
+
+def _iso_or_none(value: Any) -> str | None:
+    """A device unix timestamp as ISO-8601 UTC, or None if it is not one.
+
+    Zero is the device's "never happened" and must not become 1970 — an HA
+    timestamp sensor renders that as a real date 56 years ago rather than as
+    unknown.
+    """
+    seconds = to_float(value, 0.0)
+    if seconds <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _extract_fountain_w7h(body: dict[str, Any], state: dict[str, Any],
+                          device_type: str = "") -> None:
+    """Flatten the W7H-specific parts of a fountain report into `state`.
+
+    ONE helper called from BOTH transports on purpose. A `property/post` never
+    reaches `parse_state_report` — `mqtt/bridge.py` sends it to
+    `normalize_property_params` alone — while the snapshot embedded in an event
+    goes through both. So a mapping added to only one of them works on whichever
+    frames happen to carry it and silently does nothing on the other, which is
+    the failure this module's docstring calls "the standard bug".
+
+    Everything here is keyed off the presence of the field, never off a default.
+    """
+    if device_type.lower() not in W7H_MODELS:
+        return
+
+    # Via `_extract_camel` rather than a plain copy: the device mixes spellings
+    # inside one payload — `stgFullState` beside `reboot_reason` — and this is
+    # the helper that already collapses both onto the camelCase key an entity
+    # reads.
+    _extract_camel(body, list(W7H_STATE_FIELDS), state)
+    _extract_sensor_block(body, state, W7H_HALLS)
+
+    device_block = body.get("device")
+    if isinstance(device_block, dict):
+        for src, dst in W7H_DEVICE_TIMESTAMPS.items():
+            if src in device_block:
+                stamp = _iso_or_none(device_block[src])
+                if stamp:
+                    state[dst] = stamp
+        if "sw" in device_block:
+            state["sw"] = device_block["sw"]
+
+
 def _extract_presence_flags(body: dict[str, Any], state: dict[str, Any]) -> None:
     """Turn the presence-signalled fields into 0/1 in `state`.
 
@@ -231,7 +392,7 @@ def parse_state_report(device_type: str, body: dict[str, Any]) -> dict[str, Any]
     if device_type in ("d4h", "d4sh", "d4", "d3", "d4s", "feeder", "feedermini"):
         return _parse_feeder(body)
     if device_type in ("w4", "w5", "ctw2", "ctw3", "w7h"):
-        return _parse_water_fountain(body)
+        return _parse_water_fountain(body, device_type)
     if device_type in ("k2", "k3"):
         return _parse_purifier(body)
 
@@ -323,13 +484,7 @@ def _extract_litter_nested(body: dict[str, Any], state: dict[str, Any]) -> None:
         if "sandType" in litter:
             state["sandType"] = litter["sandType"]
 
-    # err{DC:0, mcu:0, scale:0, ...} -> errorMsg (comma-sep active), boxFull
-    err = body.get("err")
-    if isinstance(err, dict):
-        active = [k for k, v in err.items() if v and k != "full"]
-        state["errorMsg"] = ",".join(active) if active else ""
-        if "full" in err:
-            state["boxFull"] = err["full"]
+    _extract_error_flags(body, state)
 
     # device{sw, pet_in_time}
     dev = body.get("device")
@@ -338,6 +493,29 @@ def _extract_litter_nested(body: dict[str, Any], state: dict[str, Any]) -> None:
             state["petInTime"] = dev["pet_in_time"]
 
     _extract_shared(body, state)
+
+
+def _extract_error_flags(body: dict[str, Any], state: dict[str, Any],
+                         device_type: str = "") -> None:
+    """`err{DC:0, taryF:1, ...}` -> a readable `errorMsg`, plus litter's boxFull.
+
+    Both transports used to carry their own copy of this, and neither knew what
+    a flag meant, so the Error sensor read `taryF,cycL` — the firmware's own
+    abbreviations, and its spelling of "tray" at that. `codes.error_flag_label`
+    translates per device family and falls back to the raw name, so a family
+    with no table (litter, feeder) reads exactly as it did before.
+
+    `full` is excluded from the message on purpose: it has its own `boxFull`
+    entity, and listing it as an error made a full waste bin look like a fault.
+    """
+    err = body.get("err")
+    if not isinstance(err, dict):
+        return
+    active = [codes.error_flag_label(flag, device_type)
+              for flag, value in err.items() if value and flag != "full"]
+    state["errorMsg"] = ", ".join(active) if active else ""
+    if "full" in err:
+        state["boxFull"] = err["full"]
 
 
 def _extract_wifi_rssi(body: dict[str, Any], state: dict[str, Any]) -> None:
@@ -423,6 +601,7 @@ def _parse_litter_camera(body: dict[str, Any]) -> dict[str, Any]:
     # Extract from nested sub-objects (real T5 format). Placed AFTER
     # _extract_camel so nested values override any flat keys.
     _extract_litter_nested(body, state)
+    _extract_sensor_block(body, state, LITTER_CAMERA_HALLS)
     ip = body.get("Ip", body.get("ip", ""))
     if ip:
         state["ip"] = ip
@@ -480,10 +659,23 @@ def _parse_feeder(body: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def _parse_water_fountain(body: dict[str, Any]) -> dict[str, Any]:
-    """State for the water fountains (W4/W5/CTW2/CTW3/W7H)."""
+def _parse_water_fountain(body: dict[str, Any], device_type: str = "") -> dict[str, Any]:
+    """State for the water fountains (W4/W5/CTW2/CTW3/W7H).
+
+    Checked against a real W7H `property/post` (2026-07-31). Its payload carries
+    no `workState` at all, so the old `body.get("workState", …, 0)` default made
+    every W7H report Device Status 0 — a value the device never sent. Same
+    mistake as the litter box's, where defaulting to 0 meant `WORK_MODES[0] ==
+    "cleaning"` and an idle box called itself busy. Absent stays absent.
+
+    The W4/W5/CTW2/CTW3 field names below come from the reference integration's
+    cloud model and none of them appear in a W7H report; the W7H's own fields
+    are handled by `_extract_fountain_w7h`. The two sets are disjoint, which is
+    why one parser can serve both without either inventing the other's values.
+    """
     state: dict[str, Any] = {}
-    state["workingState"] = body.get("workState", body.get("work_state", 0))
+    if "workState" in body or "work_state" in body:
+        state["workingState"] = body.get("workState", body.get("work_state"))
     _extract_camel(body, [
         "errorMsg", "rssi", "filterLeftDays", "filterPercent",
         # real fountain field names (pypetkitapi water_fountain_container):
@@ -494,14 +686,24 @@ def _parse_water_fountain(body: dict[str, Any]) -> dict[str, Any]:
         "heatInstall", "stgFullState", "runStatus", "powerStatus",
     ], state)
 
+    # These two blocks are absent on a W7H, and the old code still wrote the
+    # key — `.get(...)` fell all the way through to None and published an
+    # explicit "unknown" rather than leaving the entity alone. Only write what
+    # the payload actually carried.
     electricity = dig(body, "electricity", default={})
     if isinstance(electricity, dict):
-        state["batteryPercent"] = electricity.get("battery_percent", electricity.get("batteryPercent", state.get("batteryPercent")))
+        battery = electricity.get("battery_percent", electricity.get("batteryPercent"))
+        if battery is not None:
+            state["batteryPercent"] = battery
 
     status = dig(body, "status", default={})
     if isinstance(status, dict):
-        state["detectStatus"] = status.get("detect_status", status.get("detectStatus", state.get("detectStatus")))
+        detect = status.get("detect_status", status.get("detectStatus"))
+        if detect is not None:
+            state["detectStatus"] = detect
 
+    _extract_fountain_w7h(body, state, device_type)
+    _extract_error_flags(body, state, device_type)
     _extract_wifi_rssi(body, state)
     return state
 
@@ -541,10 +743,15 @@ def normalize_property_params(device_type: str, params: dict[str, Any]) -> dict[
     under params.wifi.rsq, errors under params.err. Only keys that are present
     get mapped, so this is safe to run on any device type.
 
+    A W7H reaches this function and NOT `parse_state_report`: `mqtt/bridge.py`
+    handles a `property` post here alone, and only the state snapshot embedded
+    in an event goes through both. That asymmetry is why `_extract_fountain_w7h`
+    is called from here as well — a mapping added to the other parser only would
+    work on `drink_start` frames and do nothing on the device's main state
+    channel.
+
     Args:
-        device_type: Currently unused — every call site already passes it, and
-            keeping it means adding a per-model branch will not have to change
-            three signatures across two transports.
+        device_type: Selects the per-model branch and the `err{}` flag table.
     """
     if not isinstance(params, dict):
         return {}
@@ -568,6 +775,10 @@ def normalize_property_params(device_type: str, params: dict[str, Any]) -> dict[
         if "pet_in_time" in dev:
             flat["petInTime"] = dev["pet_in_time"]
 
+    _extract_fountain_w7h(params, flat, device_type)
+    if device_type.lower() in LITTER_CAMERA_MODELS:
+        _extract_sensor_block(params, flat, LITTER_CAMERA_HALLS)
+
     # Flat state fields the device reports at the top level.
     # Kept in step with `_parse_litter_camera`'s list by hand — the two
     # transports share no table, and forgetting the second is the standard bug
@@ -588,12 +799,7 @@ def normalize_property_params(device_type: str, params: dict[str, Any]) -> dict[
     # serves both -- which is the point, see `_extract_shared`.
     _extract_shared(params, flat)
 
-    err = params.get("err")
-    if isinstance(err, dict):
-        active = [k for k, v in err.items() if v]
-        flat["errorMsg"] = ",".join(active) if active else ""
-        if err.get("full"):
-            flat["boxFull"] = err["full"]
+    _extract_error_flags(params, flat, device_type)
 
     ws = params.get("work_state", params.get("workState"))
     if isinstance(ws, dict):

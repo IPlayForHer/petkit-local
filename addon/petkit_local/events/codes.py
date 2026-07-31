@@ -6,8 +6,8 @@ here. Keeping it separate is what lets the panel's Debug view show *why* a
 label says what it says: the confidence grade and the firmware provenance are
 fields, not comments.
 
-Six namespaces, deliberately never merged
------------------------------------------
+Seven namespaces, deliberately never merged
+-------------------------------------------
 NS1 `HTTP_EVENT_CODES`  -- numeric `event_type` on `POST /dev_event_report`.
 NS2 `CLOUD_RECORD_TYPES`-- the PetKit *cloud*'s `LitterRecord.subContent[]
                            .eventType`. QUARANTINED: it overlaps NS1 on 5/8/10
@@ -18,6 +18,8 @@ NS3 `MQTT_EVENT_TOPICS` -- `/sys/{pk}/{dn}/thing/event/{name}/post` suffixes.
 NS4 `RECORD_TYPES`      -- media classification strings in cloud records.
 NS5 `WORK_MODES` etc.   -- `state.workState.workMode`, the CURRENT operation.
 NS6 `FEED_SRC` etc.     -- feeder dispensing sub-fields.
+NS7 `ERROR_FLAGS`       -- the named bits inside a state report's `err{}`
+                           object. Per device family, like NS1.
 
 Where the two evidence sources disagree
 ---------------------------------------
@@ -548,9 +550,14 @@ MQTT_EVENT_TOPICS: dict[str, EventCode] = {
     "pet_out": EventCode(
         kind=KIND_TOILET, label="Pet left", anchor=True,
         role=ROLE_VISIT_SUMMARY, families=LITTER),
+    # No longer unverified: a real W7H sent four of these (2026-07-31), each
+    # with `content.related_event` pointing back at its `pet_detect` and the
+    # `count`/`area`/`pet_id`/`tracker_info`/`vomit_info` shape this row
+    # assumed. The fountain was missing from `families`, so every one of them
+    # would have classified as "other" on the model that actually sends them.
     "pet_discern": EventCode(
-        kind=KIND_PET, label="Detection result", grade=UNVERIFIED, detail=True,
-        role=ROLE_DETECTION, families=LITTER_NEXT_GEN),
+        kind=KIND_PET, label="Detection result", detail=True,
+        role=ROLE_DETECTION, families=LITTER_NEXT_GEN | FOUNTAIN),
     "pet_wander": EventCode(
         kind=KIND_PET, label="Pet nearby", grade=UNVERIFIED, anchor=True,
         families=LITTER_T6_PLUS),
@@ -584,6 +591,13 @@ MQTT_EVENT_TOPICS: dict[str, EventCode] = {
         kind=KIND_FEEDING, label="Eating done", anchor=True, role=ROLE_DONE,
         done_word="eating", families=FEEDER_CAMERA),
     # -- fountain
+    # CONFIRMED on a real W7H (capture 2026-07-31): two `drink_start` frames,
+    # each carrying `content.event_start` and the standard state snapshot. The
+    # matching `drink_over` has still never been seen, so it keeps its grade —
+    # the pair is not evidence for itself.
+    "drink_start": EventCode(
+        kind=KIND_DRINKING, label="Drinking started", detail=True,
+        role=ROLE_START, families=FOUNTAIN),
     "drink_over": EventCode(
         kind=KIND_DRINKING, label="Drinking done", grade=UNVERIFIED,
         anchor=True, role=ROLE_DONE, done_word="drinking", families=FOUNTAIN),
@@ -703,6 +717,64 @@ FEED_RESULT: dict[int, str] = {
     0: "dispensed",
     10: "skipped",
 }
+
+
+# --- NS7: err{} fault bits -------------------------------------------------
+# A state report carries an `err` OBJECT of named 0/1 bits, and the names are
+# per device family exactly as NS1's numeric codes are. Without a table the
+# Error sensor reads `taryF,cycL` — the device's own abbreviations, which say
+# nothing to the person whose fountain has stopped.
+#
+# Only what a source names is listed. A bit with no entry falls back to its raw
+# name rather than being dropped, so an unknown fault is still visible.
+
+#: W7H (EverSweet Ultra AI). From the reverse-engineered `ctrl` map supplied
+#: 2026-07-31, cross-checked against the `err` block of a real property/post
+#: from the same device, which carries these 18 keys and no others. The map
+#: also lists the matching on-device `error_start` content strings (`taryD`,
+#: `taryF`, `tankDU`, `cameraL`), which is how the two namespaces line up.
+#:
+#: Note the firmware's own spelling: "tary", not "tray". Kept verbatim, because
+#: the key has to match what the device sends.
+FOUNTAIN_ERROR_FLAGS: dict[str, str] = {
+    "DC": "DC power fault",
+    "mcu": "MCU communication fault",
+    "rtc": "Clock fault",
+    "cameraL": "Camera offline",
+    "cameraE": "Camera error",
+    "taryD": "Tray detection fault",
+    "taryL": "Tray missing",
+    "taryF": "Tray full",
+    "taryO": "Tray removed",
+    "ptcL": "Heater not detected",
+    "ptcM": "Heater fault",
+    "valveL": "Valve did not arrive",
+    "valveE": "Valve error",
+    "valveN": "Valve timeout",
+    "cycL": "Circulation pump stalled",
+    "cycM": "Circulation pump fault",
+    "repL": "Refill pump stalled",
+    "repM": "Refill pump fault",
+}
+
+#: Family -> that family's flag names. Litter boxes and feeders send an `err`
+#: object too, but no source names their bits, so they are absent here and
+#: their flags render raw — the honest state, and the reason the lookup below
+#: falls back rather than raising.
+ERROR_FLAGS: dict[str, dict[str, str]] = {
+    "fountain": FOUNTAIN_ERROR_FLAGS,
+}
+
+
+def error_flag_label(flag: str, device_type: str | None = None) -> str:
+    """Human label for one `err{}` bit, or the raw flag name if none is known.
+
+    Per device category, for the same reason NS1 is: nothing guarantees two
+    families spell the same fault the same way, and a wrong label is worse than
+    an untranslated one.
+    """
+    table = ERROR_FLAGS.get(category_of(device_type) or "", {})
+    return table.get(flag, flag)
 
 
 # --- derived views ---------------------------------------------------------

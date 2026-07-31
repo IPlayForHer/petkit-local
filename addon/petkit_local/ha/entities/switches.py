@@ -139,6 +139,57 @@ FOUNTAIN_SWITCHES = [
               value_path="settings.heaterSwitch", icon="mdi:thermometer"),
 ]
 
+# --- W7H (EverSweet Ultra AI) ----------------------------------------------
+# Every field below is a wire name the W7H's own `ctrl` dispatches a set
+# handler for, from the reverse-engineered settings map supplied 2026-07-31.
+# That map is authoritative for the NAME and for the fact that the device
+# accepts a write at all; it does NOT state a type. So this list stops at the
+# fields whose handler or family makes a 0/1 unambiguous — `drinkDetection` is
+# handled by `drinkDetection_Enable`, exactly as the `petDetection` switch we
+# already ship is handled by `pet_det_Enable`.
+#
+# Deliberately NOT here: `flushIntensity`, `flushCycle`, `flushTime`,
+# `waterChangeCycle`, `waterChangeTime`, `addWaterMode` and `targetTemp`. All
+# are real handlers, but a number or select needs a RANGE and the map gives
+# none, and `Device.to_device_info` serves settings back to the device — so an
+# invented bound is not a display detail, it is a value we would push.
+#
+# None of these are seeded in `devices/base.py` for the same reason: the honest
+# state is unknown until the device reports one. See `UNSEEDED_BY_DESIGN` in
+# tests/test_entity_backing.py.
+FOUNTAIN_W7H_SWITCHES = [
+    EntityDef(component="switch", key="drink_detection", name="Drink Detection",
+              value_path="settings.drinkDetection", icon="mdi:cup-water"),
+    EntityDef(component="switch", key="vomit_detection", name="Vomit Detection",
+              value_path="settings.vomitDetection", icon="mdi:emoticon-sick"),
+    EntityDef(component="switch", key="auto_flush", name="Auto Flush",
+              value_path="settings.autoFlush", icon="mdi:water-sync"),
+    EntityDef(component="switch", key="auto_water_change", name="Auto Water Change",
+              value_path="settings.autoWaterChange", icon="mdi:water-refresh"),
+    # Status-light toggles, siblings of the `indicator_light` switch this file
+    # already ships for `lightMode`.
+    EntityDef(component="switch", key="clean_water_lack_light", name="Low Water Light",
+              value_path="settings.cleanWaterLackLight", icon="mdi:lightbulb-alert",
+              entity_category="config"),
+    EntityDef(component="switch", key="clean_water_empty_light", name="Empty Water Light",
+              value_path="settings.cleanWaterEmptyLight", icon="mdi:lightbulb-alert",
+              entity_category="config"),
+    EntityDef(component="switch", key="waste_water_full_light", name="Waste Full Light",
+              value_path="settings.wasteWaterFullLight", icon="mdi:lightbulb-alert",
+              entity_category="config"),
+    EntityDef(component="switch", key="wifi_light_assist", name="WiFi Status Light",
+              value_path="settings.wifiLightAssist", icon="mdi:wifi",
+              entity_category="config"),
+    # Do-not-disturb for two specific subsystems, alongside the general
+    # `disturb_mode` switch above.
+    EntityDef(component="switch", key="refill_disturb_mode", name="Quiet Refill",
+              value_path="settings.awDisturbMode", icon="mdi:bell-off",
+              entity_category="config"),
+    EntityDef(component="switch", key="water_level_disturb_mode", name="Quiet Water Level Alerts",
+              value_path="settings.wlDisturbMode", icon="mdi:bell-off",
+              entity_category="config"),
+]
+
 # Media upload capability toggles — mirror devices/base.py::Device.
 # CAPABILITY_TYPES. Shared across all camera-capable categories (litter/
 # feeder/fountain), gated on device.is_camera the same way the camera entity
