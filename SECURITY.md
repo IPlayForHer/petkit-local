@@ -20,9 +20,11 @@ enough to be worth stating plainly.
 | Media bucket (host `9000`) | It stands in for Aliyun OSS, whose credentials this add-on issues to the device. Object keys are containment-checked, so an upload cannot escape the media root — but anyone on the LAN can upload. |
 | Web panel (container `8099`) | Unmapped by default and reached through Home Assistant Ingress, which authenticates. **Map it to a host port and the whole API — device settings, commands, pet records, the patchers — is available with no login.** |
 
-The panel used to be served a second time over HTTPS on port 8098 with a
+The panel was once served a second time over HTTPS on port 8098 with a
 self-signed certificate and no authentication, so that Web Bluetooth
-provisioning had a secure context. That was removed in 0.2.0.
+provisioning had a secure context. It never reached a release — provisioning now
+asks the operator for a real certificate in front of the ordinary panel port
+instead.
 
 ### Things that are deliberately permissive
 

@@ -7,7 +7,7 @@ that what it records now stays with you. It works with the internet unplugged, a
 supported but not required.
 
 <details>
-<summary><b>Screenshots</b></summary>
+<summary><b>📸 Screenshots</b></summary>
 
 <br>
 
@@ -42,7 +42,7 @@ shell commands or a log upload through it.
 
 </details>
 
-## Features
+## ✨ Features
 
 - **One container, nothing to maintain around it.** Python in a single process. No database server,
   no web server, no queue. Install it as a Home Assistant add-on, or `docker compose up`.
@@ -68,22 +68,22 @@ shell commands or a log upload through it.
   It only pulls from the device while somebody is watching, and it holds a single connection —
   which matters, because the device's own server wants seconds between them.
 
-## Supported devices
+## 🐈 Supported devices
 
 **Confirmed working.** This is the whole list, and it is one box — the author's. Every other model
 below is inference until somebody reports back.
 
 | Product | Codename | Camera | On-device AI |
 |---|---|---|---|
-| Purobot Max Pro 2 | T5 | yes | yes |
+| Purobot Max Pro 2 | T5 | ✅ | ✅ |
 
 **Should work.** Same firmware family, and the protocol was verified against their firmware — but
 nobody has run one.
 
 | Product | Codename | Camera | On-device AI |
 |---|---|---|---|
-| Purobot Ultra | T6 | yes | yes |
-| Purobot Crystal Duo | T7 | yes | yes |
+| Purobot Ultra | T6 | ✅ | ✅ |
+| Purobot Crystal Duo | T7 | ✅ | ✅ |
 
 **Supported, not tested.** Entity definitions exist and should be close, but most of them come from
 [pypetkitapi](https://github.com/Jezza34000/py-petkit-api), which is a client of PetKit's *cloud*
@@ -93,29 +93,29 @@ to sit at "unknown".
 
 | Product | Codename | Camera | On-device AI |
 |---|---|---|---|
-| Pura X | T3 | no | no |
-| Pura Max | T4 | no | no |
-| YumShare Solo | D4H | yes | no |
-| YumShare Dual-Hopper | D4SH | yes | no |
-| Feeder D3 / D4 / D4s | D3, D4, D4S | no | no |
-| Feeder / Feeder Mini | feeder, feedermini | no | no |
-| EverSweet Ultra AI | W7H | yes | yes |
-| EverSweet 3 Pro | W5 | no | no |
-| EverSweet | W4 | no | no |
-| EverSweet Solo 2 | CTW2 | no | no |
-| EverSweet Max Cordless | CTW3 | no | no |
-| Pura Air smart spray | K2, K3 | no | no |
+| Pura X | T3 | — | — |
+| Pura Max | T4 | — | — |
+| YumShare Solo | D4H | ✅ | — |
+| YumShare Dual-Hopper | D4SH | ✅ | — |
+| Feeder D3 / D4 / D4s | D3, D4, D4S | — | — |
+| Feeder / Feeder Mini | feeder, feedermini | — | — |
+| EverSweet Ultra AI | W7H | ✅ | ✅ |
+| EverSweet 3 Pro | W5 | — | — |
+| EverSweet | W4 | — | — |
+| EverSweet Solo 2 | CTW2 | — | — |
+| EverSweet Max Cordless | CTW3 | — | — |
+| Pura Air smart spray | K2, K3 | — | — |
 
 **Not listed at all?** It should still work with **proxy mode** on — every request is forwarded to
 PetKit and the device gets the real cloud's answer, so it keeps behaving normally while everything
 it says is recorded. That recording is exactly what is needed to add it properly; see
-[Contributing](#contributing).
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 K3 and W5 are Bluetooth-only accessories with no network of their own: the Pura Air is a spray that
 mounts inside a litter box and deodorises after a visit, and the W5 is a fountain. Both appear as
 separate Home Assistant devices, but their data arrives through the Wi-Fi device they are paired to.
 
-## Is this project another vibecoded AI slop?
+## 🤖 Is this project another vibecoded AI slop?
 
 <details>
 <summary><b>Yes, it is.</b></summary>
@@ -147,7 +147,7 @@ talk you out of it.
 
 </details>
 
-## Install
+## 📦 Install
 
 <details>
 <summary><b>Home Assistant add-on</b> — for Home Assistant OS or Supervised</summary>
@@ -212,7 +212,7 @@ pass `--ha-mqtt-host` to publish entities.
 
 </details>
 
-## Point a device at it
+## 🔀 Point a device at it
 
 A device only ever talks to the URL it was provisioned with, so it has to be redirected. This is the
 real work of setting the project up; everything else configures itself.
@@ -239,7 +239,7 @@ trust it. Use BLE provisioning, which sidesteps HTTPS entirely.
 These models also compile the cloud's CA into their `ctrl` binary, so they will not trust any other
 MQTT broker until it is patched. The **Patchers** tab does that for you.
 
-## Under the hood
+## 🔧 Under the hood
 
 Some of this exists because the protocol had to be worked out first, and those tools are still in
 the box — useful if you want to add a model, or are just curious.
@@ -261,7 +261,7 @@ the box — useful if you want to add a model, or are just curious.
 The protocol invariants a contributor must not break are summarised in
 [`.claude/CLAUDE.md`](.claude/CLAUDE.md).
 
-## Contributing
+## 🙌 Contributing
 
 **A report that your model works is worth opening an issue for.** There is exactly one device behind
 the "confirmed working" list, so everything else is inference until an owner says otherwise. *"T4,
@@ -275,7 +275,7 @@ without a device, and what is easy to break.
 > **⚠ If you attach a capture, read it first.** It records everything the device said and was told,
 > unfiltered, which can include your Wi-Fi SSID and, if proxy mode was on, your PetKit credentials.
 
-## Credits
+## 🙇 Credits
 
 Two projects published reverse engineering that saved a great deal of time here. This is an
 independent implementation and no code was copied from either, but they answered questions that
@@ -296,7 +296,7 @@ evidence grade on every row, the MQTT authentication, the media encryption and t
 visit's chunks, the on-device patches, and the handful of device behaviours that only ever show up
 in a capture.
 
-## License
+## ⚖️ License
 
 [GPL-3.0-or-later](LICENSE). Free to use, study, modify and redistribute, including commercially —
 but a modified version you distribute has to stay under the same terms with its source available.
