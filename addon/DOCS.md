@@ -158,6 +158,14 @@ Bluetooth at all.
 - **Controls show "unknown":** they render from device settings; they populate
   from defaults immediately and update on the first change.
 - **Device shows unavailable:** it hasn't reported within `offline_timeout`.
+- **Device connects but then does nothing:** power-cycle it before investigating
+  anything else. The firmware can abort its own start-up sequence part-way and
+  carry on looking healthy — the process stays alive and the MQTT session
+  authenticates normally, so from this side it is indistinguishable from a
+  device that simply has nothing to say. Seen on a T5 and on a W7H; a reboot
+  fixed both. If it comes back, the device's own `devRun.log` in **Device logs**
+  names the file and line that handled each response, which is how the T5's
+  cause was found.
 - **Wrong sensor values:** the state parser is tuned from limited samples — turn
   on `capture` and open an issue with the collected `*.jsonl` — but read the
   warning under **Getting help** first.
