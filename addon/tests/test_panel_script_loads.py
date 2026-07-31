@@ -88,3 +88,49 @@ def test_the_panel_script_survives_being_loaded(tmp_path):
         "app.js threw while loading, which blanks every tab in the panel:\n"
         f"{r.stderr.strip()[:2000]}"
     )
+
+
+#: Appended INSIDE app.js's own scope. The harness evaluates the file as one
+#: async function body, so its `function` declarations are locals of that body
+#: and cannot be reached from outside — concatenating the assertions onto the
+#: source is what puts them in scope.
+PROVISION_ASSERTIONS = """
+const cases = [
+  ['http, chrome-with-bluetooth-hidden', false, false],
+  ['http, browser really has none',      false, true ],
+];
+for (const [label, hasBt, secure] of cases) {
+  const {card, tooltip} = provisionWarning(hasBt, secure);
+  if (secure === false && !/secure page/.test(card))
+    throw new Error(label + ': insecure page did not produce the HTTPS warning: ' + card);
+}
+const chromeOnHttps = provisionWarning(false, true);
+if (!/Chrome\\/Edge/.test(chromeOnHttps.card))
+  throw new Error('a secure page with no Web Bluetooth must name the browser');
+const ok = provisionWarning(true, true);
+if (ok.card !== '' || ok.tooltip !== '')
+  throw new Error('a working setup must warn about nothing: ' + JSON.stringify(ok));
+console.log('PROVISION_OK');
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_a_plain_http_page_is_told_it_needs_https_not_a_different_browser(tmp_path):
+    """Two users on Chrome over HTTP were told their browser was unsupported.
+
+    Web Bluetooth is secure-context-only, so `navigator.bluetooth` is undefined
+    on plain HTTP no matter which browser is running. The old code tested for it
+    before testing the context, so the one case that is both the most common and
+    the most fixable — HA served over HTTP — reported the one thing the user
+    could not act on.
+    """
+    harness = tmp_path / "provision.mjs"
+    harness.write_text(
+        DOM_STUB
+        + f"const src = await import('node:fs').then(m => m.readFileSync({str(APP_JS)!r}, 'utf8'));\n"
+        + "const run = new (Object.getPrototypeOf(async () => {}).constructor)("
+        + "src + " + repr(PROVISION_ASSERTIONS) + ");\n"
+        + "await run();\n"
+    )
+    r = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
+    assert "PROVISION_OK" in r.stdout, r.stderr.strip()[:2000]

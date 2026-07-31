@@ -1901,6 +1901,49 @@ async function loadProvision() {
   // certificate purely to obtain that secure context. That published the whole
   // unauthenticated API to the LAN, so it is gone: the secure context now has
   // to come from a certificate the operator actually controls.
+  const { card, tooltip } = provisionWarning(hasBt, secure);
+  // The mDNS hint is ADVISORY: the page works, the URL is just one most PetKit
+  // hardware cannot resolve. It must never switch the form off, and it must not
+  // borrow the blocking colour — a user who can provision perfectly well should
+  // not be shown a stopped form.
+  let mdns = '';
+  if (/\.local(?=[:/]|$)/i.test(srv.value || ''))
+    mdns =
+      "⚠ The apiServers URL uses a <code>.local</code> mDNS host — most embedded PetKit devices can't resolve mDNS. Use your HA host's <b>IP</b> instead (e.g. <code>http://&lt;ha-host-ip&gt;:8080/6/</code>).";
+  const full = [card, mdns].filter(Boolean).join('<br>');
+  w.innerHTML = full;
+  w.style.display = full ? 'block' : 'none';
+  w.classList.toggle('stop', !!card);
+
+  // Switch the form off, rather than leaving it fully lit and letting the
+  // failure arrive on submit. Real `disabled` attributes, so the state reaches
+  // keyboard and screen-reader users too and is not only a CSS dimming.
+  const blocked = !hasBt || !secure;
+  const form = document.getElementById('provForm');
+  if (form) form.classList.toggle('blocked', blocked);
+  for (const id of ['p-ssid', 'p-pass', 'p-server', 'p-tz']) {
+    const field = document.getElementById(id);
+    if (field) field.disabled = blocked;
+  }
+  btn.disabled = blocked;
+  // The reason lives in a warning card that can be scrolled off, so put it on
+  // the control itself too — a disabled button with no explanation reads as a
+  // broken page.
+  btn.title = tooltip;
+}
+
+// Why this is a separate, pure function: the branch order below is the whole
+// bug it exists to pin, and it is not observable from the DOM stub the panel's
+// script test runs against.
+//
+// THE INSECURE CHECK MUST COME FIRST. Web Bluetooth is a secure-context-only
+// API, so on plain HTTP the browser does not expose `navigator.bluetooth` AT
+// ALL — `hasBt` is false in Chrome exactly as it is in Firefox. Testing it
+// first therefore told two users their browser was unsupported while they were
+// on Chrome and the only thing wrong was the page being HTTP. The browser
+// message is only meaningful once the context is secure, because that is the
+// only situation in which the absence of the API means what it says.
+function provisionWarning(hasBt, secure) {
   const HOSTED = 'https://petkit.2442.pl';
   const hosted =
     ' Or use the hosted provisioning page at <a href="' +
@@ -1908,34 +1951,19 @@ async function loadProvision() {
     '" target="_blank"><code>' +
     HOSTED +
     '</code></a>, which runs entirely in your browser and talks to the device over Bluetooth — it never sees your Wi-Fi password.';
-  let msg = '';
+  if (!secure)
+    return {
+      card:
+        '⚠ Web Bluetooth only works on a <b>secure page</b>, and this one is plain HTTP. Serve Home Assistant over HTTPS with your own certificate — provisioning then works from this tab, Ingress included. You will need <b>Chrome or Edge</b> as well; a plain-HTTP page cannot tell whether you have one, because the browser hides Web Bluetooth entirely until the page is secure.' +
+        hosted,
+      tooltip: 'Web Bluetooth needs a secure page, and this one is plain HTTP. See the note above.',
+    };
   if (!hasBt)
-    msg =
-      "⚠ Web Bluetooth is only in <b>Chrome/Edge</b> (desktop or Android). Firefox, Safari and iOS can't provision.";
-  else if (!secure)
-    msg =
-      '⚠ Web Bluetooth only works on a <b>secure page</b>, and this one is plain HTTP. Serve Home Assistant over HTTPS with your own certificate — provisioning then works from this tab, Ingress included.' +
-      hosted;
-  let mdns = '';
-  if (/\.local(?=[:/]|$)/i.test(srv.value || ''))
-    mdns =
-      "⚠ The apiServers URL uses a <code>.local</code> mDNS host — most embedded PetKit devices can't resolve mDNS. Use your HA host's <b>IP</b> instead (e.g. <code>http://&lt;ha-host-ip&gt;:8080/6/</code>).";
-  const full = [msg, mdns].filter(Boolean).join('<br>');
-  if (full) {
-    w.innerHTML = full;
-    w.style.display = 'block';
-  } else {
-    w.style.display = 'none';
-  }
-  btn.disabled = !hasBt || !secure;
-  // The reason lives in a warning card that can be scrolled off, so put it on
-  // the control itself too — a disabled button with no explanation reads as a
-  // broken page.
-  btn.title = !hasBt
-    ? 'This browser has no Web Bluetooth. Use Chrome or Edge, on desktop or Android.'
-    : !secure
-      ? 'Web Bluetooth needs a secure page, and this one is plain HTTP. See the note above.'
-      : '';
+    return {
+      card: "⚠ Web Bluetooth is only in <b>Chrome/Edge</b> (desktop or Android). Firefox, Safari and iOS can't provision.",
+      tooltip: 'This browser has no Web Bluetooth. Use Chrome or Edge, on desktop or Android.',
+    };
+  return { card: '', tooltip: '' };
 }
 function plog(line) {
   const el = document.getElementById('p-log');

@@ -153,6 +153,40 @@ main {
   padding: 16px;
   margin-bottom: 14px;
 }
+/* A warning card. The default `.card` is the same neutral grey as every other
+   panel on the page, so a warning printed into one reads as a caption — two
+   people missed the "this page is not HTTPS" note entirely and reported the
+   feature as broken.
+   Tints are rgba over the existing --warn/--bad, so one rule covers the light
+   and dark themes without a second palette. */
+.card.notice {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 4px solid var(--warn);
+}
+/* Advisory vs blocking. `.notice` alone is "read this"; `.stop` is "the form
+   below is switched off because of this", and the two must not look alike —
+   the mDNS hint appears on a perfectly working page. */
+.card.notice.stop {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.1);
+  border-left-color: var(--bad);
+}
+.card.notice a {
+  color: inherit;
+  text-decoration: underline;
+}
+/* The form the notice above is talking about. Deliberately NOT
+   `pointer-events: none`: the fields carry the `?` help buttons that explain
+   what each one is for, and those stay useful — arguably more so — while the
+   form cannot be submitted. The fields themselves are given a real `disabled`
+   attribute in app.js, so keyboard and screen-reader users get the same
+   answer as the dimming gives everyone else. */
+.card.blocked h3,
+.card.blocked .sub,
+.card.blocked label {
+  opacity: 0.6;
+}
 h3 {
   margin: 0 0 10px;
 }
@@ -316,6 +350,16 @@ select {
   padding: 7px 9px;
   font: inherit;
   width: 100%;
+}
+/* A control that cannot be used has to LOOK unusable. Without this the
+   provisioning form sat there fully lit while every field was disabled, so the
+   only clue was that typing did nothing. */
+input:disabled,
+textarea:disabled,
+select:disabled,
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 a {
   color: var(--accent);
