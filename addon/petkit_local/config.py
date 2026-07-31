@@ -17,6 +17,7 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from petkit_local.utils.coerce import to_bool, to_int
 from petkit_local.utils.jsonio import atomic_write_json, read_json
@@ -187,6 +188,10 @@ class Config:
     log_level: str = "INFO"
 
     bucket_port: int = 9000
+    #: Where the device is told to upload its photos and video. Empty means
+    #: "derive it from `api_url`" — see `resolve_bucket_endpoint`, which runs
+    #: after the CLI flags have been applied. Only the add-on path sets this
+    #: directly, from the host IP the Supervisor reports.
     bucket_endpoint: str = ""
 
     # Device-facing MQTT TLS (Aliyun securemode=2). The plain listener stays up
@@ -279,6 +284,37 @@ class Config:
     def overrides_path(self) -> Path:
         """Where the panel's live setting changes are persisted."""
         return Path(self.data_dir) / OVERRIDES_FILENAME
+
+    def resolve_bucket_endpoint(self) -> None:
+        """Point the media bucket at an address the DEVICE can reach.
+
+        `dev_oss_sts_info_new_v2` hands the device a URL it will upload photos
+        and video to, on its own, from the other side of the network. Without
+        this a standalone run had nothing to put there and fell back to
+        `https://localhost:9000` — which resolves, on the device, to the device.
+        Reported by a user running docker-compose: every upload address in the
+        STS response read `localhost`, so nothing could ever arrive.
+
+        `api_url` is the right source and the only one available: it is the
+        address the operator configured for the device to call, and the request
+        being answered arrived on it. Same reasoning as
+        `handlers/iot_device_info.py::_self_mqtt_host`, which picks the MQTT
+        broker address the same way and for the same reason.
+
+        Does nothing when the endpoint is already set — the add-on path fills it
+        from the Supervisor's host IP — and nothing when `api_url` has no host
+        to give, which leaves the empty value that makes `to_oss_sts` and
+        `to_log_upload_token` answer with no upload target at all. That is the
+        honest outcome: better than naming an address that cannot work.
+        """
+        if self.bucket_endpoint:
+            return
+        host = urlparse(self.api_url).hostname
+        if not host:
+            log.warning("No api_url host, so devices cannot be told where to upload "
+                        "media. Set --api-url to an address the DEVICE can reach.")
+            return
+        self.bucket_endpoint = f"https://{host}:{self.bucket_port}"
 
     def apply_panel_overrides(self) -> None:
         """Layer the panel's saved runtime overrides on top of the add-on options.

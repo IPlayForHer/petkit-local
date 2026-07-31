@@ -10,6 +10,7 @@ serves it and the MQTT service reply that mirrors it.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -32,6 +33,8 @@ from petkit_local.utils.timeutil import local_offset_hours
 
 if TYPE_CHECKING:  # `devices.ble` imports `devices.registry`, which imports us.
     from petkit_local.devices.ble import BLERegistry
+
+log = logging.getLogger(__name__)
 
 
 def split_bucket_authority(bucket_endpoint: str) -> tuple[str, str] | None:
@@ -692,8 +695,8 @@ class Device:
         * The PAR URLs include the full OCI PAR path.
 
         Args:
-            bucket_endpoint: Base URL of our own bucket listener; a missing one
-                degrades to localhost rather than failing the request.
+            bucket_endpoint: Base URL of our own bucket listener. Empty yields
+                an EMPTY capability list — see below.
             aes_key: The 16-character key string whose ASCII bytes the device
                 uses for AES-128-CBC (see `media/crypto.py`).
 
@@ -701,8 +704,22 @@ class Device:
             `{"result": {"type": "oci", "capability": [...]}}`, with one
             `capability[]` entry per ENABLED type — a type toggled off is absent,
             which is what stops the device uploading it at the source.
+
+        With no endpoint the list is empty and the device uploads nothing, which
+        is the honest answer. This used to fall back to `https://localhost:9000`,
+        and a user running docker-compose got exactly that in every upload URL —
+        an address that, resolved on the device, IS the device. Naming somewhere
+        unreachable is worse than naming nowhere: the device cannot tell the
+        difference until it has tried, and it will keep trying. The endpoint is
+        derived from `api_url` now (`config.resolve_bucket_endpoint`), so empty
+        means nothing was configured at all.
         """
-        par_base = bucket_endpoint.rstrip("/") if bucket_endpoint else "https://localhost:9000"
+        if not bucket_endpoint:
+            log.warning("No bucket endpoint, so device %d is being told it has nowhere "
+                        "to upload media. Set --api-url (or --bucket-endpoint) to an "
+                        "address the device can reach.", self.petkit_id)
+            return {"result": {"type": "oci", "capability": []}}
+        par_base = bucket_endpoint.rstrip("/")
         par_url = f"{par_base}/"
         # primaryDomain goes through sscanf("https://%[^/]/%s") → getaddrinfo(domain).
         # Port in hostname breaks getaddrinfo. Use a portless URL with dummy path

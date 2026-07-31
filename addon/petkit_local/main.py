@@ -165,6 +165,11 @@ def main() -> None:
         # with them silently off however the panel was left.
         config.apply_panel_overrides()
 
+    # After the flags, because --api-url and --bucket-port both feed it. The
+    # add-on path already has an endpoint from the Supervisor, so this is a
+    # no-op there.
+    config.resolve_bucket_endpoint()
+
     logging.basicConfig(
         level=getattr(logging, config.log_level),
         format="%(asctime)s [%(name)s] %(levelname)s %(message)s",

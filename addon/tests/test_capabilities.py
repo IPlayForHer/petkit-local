@@ -1,3 +1,5 @@
+import json
+
 from petkit_local.devices.base import Device
 
 
@@ -22,7 +24,7 @@ def test_capability_toggle_off_is_respected():
 def test_oss_sts_omits_disabled_capability():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     d.config["capabilities"] = {"highLight": False}
-    sts = d.to_oss_sts()
+    sts = d.to_oss_sts("https://192.0.2.20:9000")
     types = {c["cycleType"] for c in sts["result"]["capability"]}
     assert "highLight" not in types
     assert types == {"fullVideo", "eventImage", "dynamicVideo"}
@@ -30,15 +32,27 @@ def test_oss_sts_omits_disabled_capability():
 
 def test_oss_sts_pathprefix_is_per_capability():
     d = Device(device_type="t5", petkit_id=42, serial_number="SN")
-    sts = d.to_oss_sts()
+    sts = d.to_oss_sts("https://192.0.2.20:9000")
     for c in sts["result"]["capability"]:
         assert c["pathPrefix"] == f"t5/42/{c['cycleType']}"
+
+
+def test_oss_sts_names_nowhere_rather_than_somewhere_unreachable():
+    """It used to fall back to `https://localhost:9000`, and a user running
+    docker-compose got that in every upload URL — an address that, resolved on
+    the device, is the device. Naming nowhere is the honest answer: the device
+    cannot tell an unreachable address from a working one until it has tried,
+    and then it keeps trying."""
+    d = Device(device_type="t5", petkit_id=1, serial_number="SN")
+    sts = d.to_oss_sts("")
+    assert sts["result"]["capability"] == []
+    assert "localhost" not in json.dumps(sts)
 
 
 def test_oss_sts_empty_when_all_capabilities_disabled():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     d.config["capabilities"] = {ct: False for ct in Device.CAPABILITY_TYPES}
-    sts = d.to_oss_sts()
+    sts = d.to_oss_sts("https://192.0.2.20:9000")
     assert sts["result"]["capability"] == []
 
 

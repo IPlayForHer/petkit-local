@@ -77,10 +77,17 @@ services:
       - -m
       - petkit_local.main
       - --data-dir=/data
-      # The address the DEVICE will call. It must be an IP or a name the device
-      # itself can resolve, most PetKit hardware cannot resolve .local names,
-      # and it is burned in at provisioning, so pick one that will not move.
-      # The port here must match the host side of the mapping above.
+      # The address the DEVICE will call, and the most important line in this
+      # file. It must be an IP or a name the device itself can resolve — most
+      # PetKit hardware cannot resolve .local names — and it is burned in at
+      # provisioning, so pick one that will not move. The port here must match
+      # the host side of the mapping above.
+      #
+      # Three things are derived from it, so a wrong value fails in three
+      # places: the API address itself, the MQTT broker the device is told to
+      # connect to, and the bucket it uploads photos and video to. Leave the
+      # host out and there is nothing to derive them from — media uploads in
+      # particular then have nowhere to go, and the add-on says so at startup.
       - --api-url=http://CHANGE-ME:8080/6/
       - --port=8080
       - --mqtt-tls
