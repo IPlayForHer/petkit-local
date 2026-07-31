@@ -1,0 +1,95 @@
+# Running petkit-local beside Home Assistant, without the add-on system.
+#
+# Add-ons need the Supervisor, so they exist only on Home Assistant OS and
+# Home Assistant Supervised. If you run HA Container or HA Core you have no
+# add-on store at all, and this file is that path: the same image, the same
+# features, configured from the command line instead of an options screen.
+#
+#   docker compose up -d --build
+#
+# Needs BuildKit, which Compose uses by default and Docker has used since 23.
+# On a very old daemon, export DOCKER_BUILDKIT=1 first. See the Dockerfile
+# header for why the per-architecture base cannot fall back safely without it.
+#
+# Change the two CHANGE-ME values before starting. Nothing else is required.
+
+services:
+  petkit-local:
+    build: ./addon
+    container_name: petkit-local
+    restart: unless-stopped
+
+    ports:
+      # Device HTTP API.
+      #
+      # Use "80:8080" instead if you redirect ESP32 models with DNS: those dial
+      # port 80 and there is nowhere to tell them otherwise, so the API has to
+      # answer there. Devices provisioned over Bluetooth are given a URL with
+      # the port in it, so for those any host port works as long as --api-url
+      # below matches.
+      - "8080:8080"
+
+      # Device MQTT over TLS. Not a choice: 443 is where the firmware looks.
+      - "443:443"
+
+      # Media uploads. The device PUTs its photos and video here.
+      - "9000:9000"
+
+      # The web panel. IT HAS NO AUTHENTICATION, and it can control your
+      # devices, read the recordings and run the on-device patchers. Under the
+      # add-on it is reached through Home Assistant Ingress, which does the
+      # authenticating; there is no Ingress here.
+      #
+      # So decide deliberately:
+      #   "127.0.0.1:8099:8099"  reachable only from this machine (safest; use
+      #                          an SSH tunnel or put your own authenticating
+      #                          proxy in front)
+      #   "8099:8099"            reachable from anywhere on your network
+      - "8099:8099"
+
+      # Camera RTSP, served by the bundled go2rtc. This is the address to give
+      # Home Assistant's Generic Camera — rtsp://THIS-HOST:8554/<device-id>,
+      # and the panel shows the exact URL.
+      #
+      # Do NOT point Home Assistant at the device's own stream instead: HA opens
+      # a stream URL with PyAV and the device's FLV segfaults libav, restarting
+      # the whole of Home Assistant. go2rtc exists here to stand between them.
+      #
+      # Under the add-on this port is not published at all, because Home
+      # Assistant can reach add-ons by hostname on its internal network. There
+      # is no such network here, hence the mapping. If you also run the go2rtc
+      # add-on or container, give this a different host port — 8554 is theirs.
+      - "8554:8554"
+
+      # 1883 (plain MQTT) is deliberately NOT published. It is the internal
+      # listener the bridge uses, and publishing it would clash with a broker
+      # you already run.
+
+    volumes:
+      # Device identities, settings, the event database and captures.
+      - ./data:/data
+      # Recordings and snapshots. Point this at your Home Assistant media
+      # directory to browse them from HA, or leave it local.
+      - ./media:/media/petkit
+
+    command:
+      - python3
+      - -m
+      - petkit_local.main
+      - --data-dir=/data
+      # The address the DEVICE will call. It must be an IP or a name the device
+      # itself can resolve, most PetKit hardware cannot resolve .local names,
+      # and it is burned in at provisioning, so pick one that will not move.
+      # The port here must match the host side of the mapping above.
+      - --api-url=http://CHANGE-ME:8080/6/
+      - --port=8080
+      - --mqtt-tls
+      - --mqtt-tls-port=443
+      # Your Home Assistant MQTT broker, so entities appear via MQTT discovery.
+      # Drop these two lines (or pass --no-ha) to run with no Home Assistant at
+      # all: the web panel and the local cloud work regardless.
+      - --ha-mqtt-host=CHANGE-ME
+      - --ha-mqtt-port=1883
+      # Uncomment if your broker requires credentials.
+      # - --ha-mqtt-user=petkit
+      # - --ha-mqtt-pass=secret

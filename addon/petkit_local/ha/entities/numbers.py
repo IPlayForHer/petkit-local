@@ -1,0 +1,53 @@
+"""HA `number` entities — the numeric device settings, per device category.
+
+Each one reads `settings.<field>` from the state document and writes the same
+field back via `property.set`. `min_value`/`max_value`/`step` are HA-side
+validation only: the device does its own clamping, so these bounds exist to
+stop an obviously-wrong value from ever being sent, not to guarantee one.
+
+`devices/categories.py` decides which of these lists a given device type gets.
+"""
+from petkit_local.ha.discovery import EntityDef
+
+LITTER_NUMBERS = [
+    EntityDef(component="number", key="cleaning_delay", name="Cleaning Delay",
+              value_path="settings.stillTime", icon="mdi:timer-sand",
+              unit="s", min_value=0, max_value=3600, step=60),
+]
+
+FEEDER_NUMBERS = [
+]
+
+#: Seeded by `Device.default_settings()` only inside its `is_camera` branch,
+#: so on a non-camera model these render blank forever. Two sources agree
+#: they belong to the camera hardware: the defaults table and the state
+#: parsers (`_parse_litter_camera` is documented as "the ESP32 litter set
+#: PLUS the camera, spray and package fields").
+#:
+#: THE VOLUME RANGE IS UNVERIFIED for a litter box, and 0-9 should not be read
+#: as evidence. The field itself is real — PetKit's own cloud sends `volume` in
+#: `dev_device_info` — but in all 508 captured replies it was `1` and never
+#: anything else, so no capture bounds it. 0-9 comes from localkit's validator
+#: for the YumShare Solo, a FEEDER (`PetkitYumshareSolo.php`, whose own picker
+#: offers 1-9, not 0-9); its litter-box model declares no volume at all. The
+#: panel shows the range so the bound is at least visible to whoever hits it.
+LITTER_CAMERA_NUMBERS = [
+    EntityDef(component="number", key="volume", name="Volume",
+              value_path="settings.volume", icon="mdi:volume-high",
+              min_value=0, max_value=9, step=1),
+]
+
+FEEDER_CAMERA_NUMBERS = [
+    EntityDef(component="number", key="volume", name="Volume",
+              value_path="settings.volume", icon="mdi:volume-high",
+              min_value=0, max_value=9, step=1),
+]
+
+FOUNTAIN_NUMBERS = [
+    EntityDef(component="number", key="fountain_time", name="Fountain Time",
+              value_path="settings.fountainTime", icon="mdi:clock-outline",
+              unit="h", min_value=1, max_value=24, step=1),
+    EntityDef(component="number", key="sleep_time", name="Sleep Time",
+              value_path="settings.sleepTime", icon="mdi:sleep",
+              unit="h", min_value=1, max_value=24, step=1),
+]

@@ -1,0 +1,50 @@
+name: Wrong value, unit or control
+description: An entity shows the wrong thing, or a control does not take effect
+labels: ["entity"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Useful even on a model nobody has tested: most entity definitions for
+        those come from a client of PetKit's *cloud* API, whose field names are
+        not always the device's, so a wrong reading is expected to happen and
+        worth knowing about.
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: Purobot Max Pro 2 (T5)
+    validations:
+      required: true
+
+  - type: input
+    id: entity
+    attributes:
+      label: Which entity
+      description: >
+        Its name, and the `state.*` path beside it in the Devices tab if you can
+        see it.
+      placeholder: Litter Weight (state.sandWeight)
+    validations:
+      required: true
+
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What it shows, and what it should show
+      placeholder: |
+        Shows: 5469 kg
+        Should be: 5.469 kg, or grams
+    validations:
+      required: true
+
+  - type: textarea
+    id: raw
+    attributes:
+      label: Raw state (optional)
+      description: >
+        The Devices tab has "Raw parsed state JSON" under State. Pasting the
+        relevant lines usually settles it immediately. Check it for anything you
+        would rather not post.
+      render: json

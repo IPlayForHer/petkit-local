@@ -1,0 +1,40 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Runtime data, at ANY depth — NOT `/data/`, which is root-anchored and so
+# missed `addon/data/`, the exact path the README tells you to create
+# (`cd addon` … `--data-dir ./data`). What lives in there: the TLS
+# private key (`certs/broker.key`), the real PetKit/Aliyun credentials proxy
+# mode collects (`proxy_upstream.json`), per-device signing secrets
+# (`devices.json`), the media AES key, raw traffic captures, pet photos and
+# video. One `git add -A` after a dev session used to publish all of it.
+data/
+
+# Belt and braces for the same material, wherever it is written.
+*.jsonl
+*.log
+*.key
+*.pem
+*.crt
+.env
+
+# Local virtualenv / build artifacts
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Test/tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# SQLite event store (created at runtime, incl. WAL sidecars)
+*.db
+*.db-wal
+*.db-shm
+
+# Machine-specific Claude Code permissions (contains LAN addresses/paths)
+.claude/settings.local.json

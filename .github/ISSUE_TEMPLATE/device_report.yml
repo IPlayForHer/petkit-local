@@ -1,0 +1,66 @@
+name: Device report
+description: Tell us how your model behaves, including when everything works
+labels: ["device report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **"Everything works" is a useful issue here.** One person owns one litter
+        box, so every other model in the README is inference until somebody says
+        otherwise. A report either way moves a model up the table.
+
+        You do not need captures or logs for this. If something is broken and you
+        want it fixed, the bug report template asks for more.
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The product name, or the codename if you know it.
+      placeholder: Pura Max (T4)
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Shown on the device's panel in the Devices tab.
+      placeholder: "943"
+
+  - type: dropdown
+    id: verdict
+    attributes:
+      label: How did it go?
+      options:
+        - Everything I use works
+        - Mostly works, some things are wrong or missing
+        - Does not work
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: What works, and what does not
+      description: >
+        If everything works, saying so is enough. Otherwise, which entities are
+        wrong or empty, and which controls do not take effect.
+
+  - type: dropdown
+    id: redirect
+    attributes:
+      label: How did you point the device at it?
+      options:
+        - Bluetooth provisioning
+        - DNS redirect
+        - Something else
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How are you running it?
+      options:
+        - Home Assistant add-on
+        - Docker
+        - From source

@@ -1,0 +1,65 @@
+name: Bug report
+description: Something does not work
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+
+  - type: input
+    id: model
+    attributes:
+      label: Model and firmware
+      description: Both are shown on the device's panel in the Devices tab.
+      placeholder: Purobot Max Pro 2 (T5), firmware 943
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How are you running it?
+      options:
+        - Home Assistant add-on
+        - Docker
+        - From source
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "0.2.0"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        The add-on log, and the Log tab has a download button for the device's
+        own traffic.
+      render: shell
+
+  - type: markdown
+    attributes:
+      value: |
+        > **⚠ If you attach a capture, read it first.** It is a verbatim recording
+        > of everything the device said and was told, and nothing in it is
+        > filtered, because it is only useful if it is exact.
+        >
+        > Any of them can hold your **Wi-Fi SSID**, your LAN addresses, the device
+        > serial and its signing secret. If proxy mode was on,
+        > `proxy_http.jsonl` and `proxy_mqtt.jsonl` also carry the **full
+        > exchanges with PetKit, including your account credentials**.
+        >
+        > `requests.jsonl`, `state_report.jsonl` and `mqtt.jsonl` usually answer
+        > the question on their own. Attach only what is needed.

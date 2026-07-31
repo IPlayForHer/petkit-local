@@ -1,0 +1,58 @@
+name: Add support for a model
+description: A device that is not in the supported list, or is listed but barely works
+labels: ["new model"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A model that is not listed should still run with **proxy mode** on: every
+        request goes to PetKit and the device gets the real cloud's answer, so it
+        behaves normally while everything it says is recorded. That recording is
+        what is needed to add it properly.
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      placeholder: EverSweet 3 Pro (W5)
+    validations:
+      required: true
+
+  - type: textarea
+    id: behaviour
+    attributes:
+      label: What happens today
+      description: >
+        Does it connect at all? Does it appear in the Devices tab? Which entities
+        show up, and which of them stay empty?
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Captures
+
+        Turn on **Traffic capture** in Setup, reproduce the behaviour, and attach
+        the files from `/data/capture/`.
+
+        > **⚠ Read a capture before you post it.** It is a verbatim recording of
+        > everything the device said and was told. Nothing is filtered, because it
+        > is only useful if it is exact.
+        >
+        > Any of them can hold your **Wi-Fi SSID**, your LAN addresses, the device
+        > serial and its signing secret. If proxy mode was on,
+        > `proxy_http.jsonl` and `proxy_mqtt.jsonl` also carry the **full
+        > exchanges with PetKit, including your account credentials**.
+        >
+        > `requests.jsonl`, `state_report.jsonl`, `mqtt.jsonl` and
+        > `event_report.jsonl` usually answer the question on their own. Grep your
+        > SSID out first and attach only what is needed.
+
+  - type: checkboxes
+    id: reviewed
+    attributes:
+      label: Before attaching
+      options:
+        - label: I have looked through the files I am attaching
+          required: true

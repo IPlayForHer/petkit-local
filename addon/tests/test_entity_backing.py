@@ -1,0 +1,293 @@
+"""Every published entity must have something that can actually fill it.
+
+An `EntityDef` whose `value_path` nothing can ever produce is published to Home
+Assistant and to the panel, and then reads unknown forever — indistinguishable
+from a device that simply has not reported yet. Four feeder controls shipped in
+that state, and the only reason anyone noticed was someone looking at a blank
+card.
+
+This test is the durable form of that audit: it walks every codename and fails
+when an entity is added without a backing field, instead of waiting for a user
+to spot an empty control.
+"""
+import ast
+import inspect
+
+import pytest
+
+from petkit_local.devices import state_parsers
+from petkit_local.devices.base import Device
+from petkit_local.devices.registry import get_entities_for_device
+from petkit_local.utils.const import DEVICE_TYPES_ALL
+
+#: `state.*` keys that no state parser produces because they are not device
+#: telemetry — each is derived at runtime, and named here with what writes it.
+#: Anything NOT in this list must be produced by the model's own parser.
+RUNTIME_DERIVED = {
+    # events/ingest.py::apply_derived_state, from a completed event
+    "lastClean", "lastVisit", "lastFeed", "petWeight",
+    # ha/publisher.py::publish_media_ready, when the media pipeline files a clip
+    "lastClipPath",
+    # ha/publisher.py::_build_state, from the device IP plus the camera patcher
+    "streamUrl",
+}
+
+#: `settings.*` fields we know are real but deliberately never seed.
+#:
+#: `Device.to_device_info` serves `config["settings"]` straight back to the
+#: device, so a seeded default is not a display convenience — it is a value we
+#: PUSH. Inventing one would silently change the owner's setting, which is why
+#: the litter defaults carry a note saying they were checked against a captured
+#: `dev_device_info`. For a field we can prove exists but whose value we have
+#: never seen, the honest state is "unknown until the device tells us", and the
+#: entity populates on the first settings sync.
+#:
+#: Each entry must name its evidence. Adding one without evidence defeats the
+#: whole test.
+UNSEEDED_BY_DESIGN = {
+    # Both appear as strings in real D4SH firmware (`ctrl`, `libbase.so`),
+    # unlike `feedTone`/`disturbMode`, which appear nowhere and were removed.
+    "feedSound",
+    "surplusControl",
+}
+
+#: `state.*` keys whose ONLY backing is a parser passthrough list, with the
+#: evidence that a device really sends each one.
+#:
+#: A passthrough entry means "copy this key if it shows up" — it is a wish, not
+#: a source. Five entities (`sandLack`, `petError`, `frequentRestroom`,
+#: `lowPower`, `sandTrayState`) lived on that technicality for a year: they were
+#: in the tuples, so the string-literal scan found them and this test passed,
+#: while no device ever sent one and every sensor read unknown forever. That is
+#: the exact failure this file was written to catch, and it walked straight past
+#: it. So a passthrough-only key now has to be listed here with its evidence.
+PASSTHROUGH_ATTESTED = {
+    # In real T5 `ctrl`, and in all 1254 captured litter snapshots.
+    "sprayState": "T5 ctrl string table; 1254/1254 captured snapshots",
+    "boxState": "T5 ctrl string table; 1254/1254 captured snapshots",
+    # In real T5 `ctrl`, beside `lightState` in the same json-builder block.
+    # Presence-signalled, so read via PRESENCE_FLAGS rather than directly.
+    "refreshState": "T5 ctrl string table; 32/1254 captured snapshots",
+    # Fountain and purifier fields. We own neither, so there is no capture of
+    # our own; the evidence is that the reference integration reads each one as
+    # a real attribute of its parsed device model (snake_case there, camelCase
+    # on the wire). Each line names the call site that was checked.
+    "lowBattery": "reference integration binary_sensor.py:237 device.low_battery",
+    "filterWarning": "reference integration binary_sensor.py:243 device.filter_warning",
+    "filterPercent": "reference integration sensor.py:585 device.filter_percent",
+    "humidity": "reference integration sensor.py:741 device.state.humidity",
+    "refresh": "reference integration sensor.py:757 device.state.refresh",
+    "refreshing": "reference integration binary_sensor.py:372 device.refreshing",
+    "liquidLack": "reference integration binary_sensor.py:379 device.liquid_lack",
+}
+
+#: Pre-existing passthrough-only keys that were already published when the
+#: check above was added. They are NOT evidence — they are debt, listed so the
+#: guard can stop NEW ones without either blessing these silently or deleting
+#: entities for hardware nobody here owns and nobody can test.
+#:
+#: Clearing an entry means one of two things: someone captures the field on real
+#: hardware and it moves to PASSTHROUGH_ATTESTED, or it goes the way of
+#: `sandLack` and friends. See the K2/K3 note in CLAUDE.md — both are BLE-only
+#: today, so their WiFi-purifier entities cannot be exercised at all.
+PASSTHROUGH_UNVERIFIED = {
+    "filterLeftDays", "lackWarning", "heatRealTemp", "drinkTime",
+    "desiccantLeftDays", "batteryPower",
+    "bowl", "food", "weight", "feeding", "eating",
+    "liquid", "battery", "temp",
+}
+
+
+def _parser_for(device_type: str):
+    """The `_parse_*` function `parse_state_report` dispatches this model to."""
+    dispatch = {
+        ("t5", "t6", "t7"): state_parsers._parse_litter_camera,
+        ("t3", "t4"): state_parsers._parse_litter_esp32,
+        ("d4h", "d4sh", "d4", "d3", "d4s", "feeder", "feedermini"): state_parsers._parse_feeder,
+        ("w4", "w5", "ctw2", "ctw3", "w7h"): state_parsers._parse_water_fountain,
+        ("k2", "k3"): state_parsers._parse_purifier,
+    }
+    for types, fn in dispatch.items():
+        if device_type in types:
+            return fn
+    return None
+
+
+def _keys_a_parser_can_emit(fn) -> set[str]:
+    """Every string literal in a parser and the helpers it calls.
+
+    A superset of what it can emit, which is the right direction: this test
+    should fail only on an entity NOTHING could fill, never on one whose field
+    merely depends on the payload.
+    """
+    keys: set[str] = set()
+    for source in (fn, state_parsers._extract_camel, state_parsers._extract_litter_nested,
+                   state_parsers._extract_consumable_days, state_parsers._extract_shared,
+                   state_parsers._extract_presence_flags,
+                   state_parsers._extract_wifi_rssi, state_parsers._extract_work_mode,
+                   state_parsers._parse_content_field):
+        tree = ast.parse(inspect.getsource(source).lstrip())
+        keys |= {n.value for n in ast.walk(tree)
+                 if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+    # Names produced from a module-level table rather than a literal in the
+    # function body, so the AST walk above cannot see them.
+    keys |= set(state_parsers.PRESENCE_FLAGS.values())
+    return keys
+
+
+#: Helpers every litter/feeder/fountain parser shares, scanned alongside it.
+_SHARED_HELPERS = (
+    state_parsers._extract_camel, state_parsers._extract_litter_nested,
+    state_parsers._extract_consumable_days, state_parsers._extract_shared,
+    state_parsers._extract_presence_flags,
+    state_parsers._extract_wifi_rssi, state_parsers._extract_work_mode,
+    state_parsers._parse_content_field, state_parsers.normalize_property_params,
+)
+
+
+def _passthrough_only_keys(fn) -> set[str]:
+    """Names a parser can ONLY ever copy verbatim from the device payload.
+
+    Two sets, and the difference is what matters:
+
+    * *listed* — every string inside a list/tuple literal, i.e. the names handed
+      to `_extract_camel` and the flat loop in `normalize_property_params`.
+      Being here means "copy this if the device sends it", which says nothing
+      about whether any device does.
+    * *assigned* — names written through a real subscript assignment
+      (``state["boxFull"] = ...``), i.e. a value this code derives or maps.
+
+    A key that is only ever listed has no producer at all; a key that is also
+    assigned does. `errorMsg` and `rssi` appear in both, which is why a blanket
+    "is it in a passthrough list" check flags half the codebase.
+    """
+    listed: set[str] = set()
+    assigned: set[str] = set()
+    for source in (fn, *_SHARED_HELPERS):
+        tree = ast.parse(inspect.getsource(source).lstrip())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.List, ast.Tuple)):
+                listed |= {el.value for el in node.elts
+                           if isinstance(el, ast.Constant) and isinstance(el.value, str)}
+            elif isinstance(node, (ast.Assign, ast.AugAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for t in targets:
+                    if (isinstance(t, ast.Subscript)
+                            and isinstance(t.slice, ast.Constant)
+                            and isinstance(t.slice.value, str)):
+                        assigned.add(t.slice.value)
+    return listed - assigned
+
+
+@pytest.mark.parametrize("device_type", sorted(DEVICE_TYPES_ALL))
+def test_every_entity_a_model_publishes_has_something_that_can_fill_it(device_type):
+    device = Device(petkit_id=1, device_type=device_type, serial_number="SN")
+    entities = get_entities_for_device(device)
+    if not entities:
+        pytest.skip(f"{device_type} publishes no entities")
+
+    parser = _parser_for(device_type)
+    producible = _keys_a_parser_can_emit(parser) if parser else set()
+    passthrough = _passthrough_only_keys(parser) if parser else set()
+    seeded = set(device.default_settings())
+
+    unbacked = []
+    for e in entities:
+        if not e.value_path:
+            continue
+        parts = e.value_path.split(".")
+        root, leaf = parts[0], parts[-1]
+        if root == "state":
+            if leaf in RUNTIME_DERIVED:
+                continue
+            if leaf not in producible:
+                unbacked.append(f"{e.component} {e.key} -> {e.value_path} (no parser produces it)")
+            # Only top-level `state.<key>`: a nested path like
+            # `state.feedState.times` is vouched for by its parent being built.
+            elif (len(parts) == 2 and leaf in passthrough
+                  and leaf not in PASSTHROUGH_ATTESTED
+                  and leaf not in PASSTHROUGH_UNVERIFIED):
+                # The hole this closes: being listed for copying is not evidence
+                # any device sends it. Say where you saw it, or drop the entity.
+                unbacked.append(
+                    f"{e.component} {e.key} -> {e.value_path} (only a parser passthrough "
+                    f"backs it — add {leaf!r} to PASSTHROUGH_ATTESTED with the capture, "
+                    f"firmware string or reference model you saw it in)")
+        elif root == "settings" and leaf not in seeded and leaf not in UNSEEDED_BY_DESIGN:
+            unbacked.append(f"{e.component} {e.key} -> {e.value_path} (not in default_settings)")
+
+    assert not unbacked, (
+        f"{device_type} publishes entities nothing can fill:\n  " + "\n  ".join(unbacked)
+        + "\n\nEither seed the setting in Device.default_settings(), move the entity onto a "
+          "capability-gated list, or remove it. An entity that can never hold a value is "
+          "worse than a missing one."
+    )
+
+
+def test_the_passthrough_allowlist_does_not_outlive_its_entities():
+    """An entry here exempts a key from needing a real producer, so a stale one
+    silently re-opens the hole for whatever entity is added next under that
+    name. Every entry must still be reachable from some model's parser."""
+    reachable: set[str] = set()
+    for device_type in DEVICE_TYPES_ALL:
+        parser = _parser_for(device_type)
+        if parser:
+            reachable |= _passthrough_only_keys(parser)
+    stale = sorted((set(PASSTHROUGH_ATTESTED) | PASSTHROUGH_UNVERIFIED) - reachable)
+    assert not stale, f"attested but no parser passes them through any more: {stale}"
+
+    overlap = sorted(set(PASSTHROUGH_ATTESTED) & PASSTHROUGH_UNVERIFIED)
+    assert not overlap, (
+        f"listed as both attested and unverified, so the evidence is ambiguous: {overlap}")
+
+
+def test_the_runtime_derived_allowlist_stays_honest():
+    """Each exemption above claims something writes it. If that stops being
+    true the allow-list silently starts hiding real gaps, so check the two
+    writers still exist."""
+    from petkit_local.events.ingest import apply_derived_state
+    from petkit_local.ha.publisher import HAPublisher
+
+    src = inspect.getsource(apply_derived_state)
+    for key in ("lastClean", "lastVisit", "lastFeed", "petWeight"):
+        assert key in src, f"{key} is exempted but apply_derived_state no longer writes it"
+    assert "lastClipPath" in inspect.getsource(HAPublisher.publish_media_ready)
+    assert "streamUrl" in inspect.getsource(HAPublisher._build_state)
+
+
+def test_no_entity_key_changed_when_a_label_did():
+    """Entity keys are user state: renaming one orphans the live entity and
+    loses its history. The Sand -> Litter pass renamed labels only.
+
+    `sand_lack` used to be checked here too and is now deleted outright — a
+    removal is honest (the entity could never hold a value), a rename is not.
+    `total_time` is the live example of the rule: it is labelled "Uptime"
+    because that is what the device reports, while the key stays `total_time`.
+    """
+    device = Device(petkit_id=1, device_type="t5", serial_number="SN")
+    names = {e.key: e.name for e in get_entities_for_device(device)}
+    assert "sand_saving" in names and "total_time" in names
+    assert "Sand" not in names["sand_saving"]
+
+
+def test_no_user_facing_label_still_says_sand():
+    """The device stores `sandWeight`/`sandPercent` on the wire, but nothing a
+    user reads should say "sand" — the product is litter.
+
+    Covers the event code table as well as the entity names. The first pass at
+    this rename only checked `EntityDef.name` and so missed four labels in
+    `events/codes.py`, which render straight onto Timeline cards.
+    """
+    from petkit_local.events import codes
+
+    for device_type in ("t3", "t5"):
+        device = Device(petkit_id=1, device_type=device_type, serial_number="SN")
+        offenders = [e.key for e in get_entities_for_device(device) if "sand" in e.name.lower()]
+        assert not offenders, f"entity labels: {offenders}"
+
+    bad = []
+    for key, code in codes.ALL_EVENT_CODES.items():
+        for field in (code.label, code.done_word):
+            if "sand" in (field or "").lower():
+                bad.append(f"{key}: {field!r}")
+    assert not bad, f"event labels a user reads: {bad}"

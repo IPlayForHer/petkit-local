@@ -1,0 +1,108 @@
+name: tests
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push supersedes an in-flight run for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: addon
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # A 3.11-only breakage must not cancel the 3.12 job, and vice versa.
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor declared in pyproject.toml, 3.12 is what the
+        # add-on image actually ships (Dockerfile: python:3.12-alpine on 64-bit).
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          # setup-python resolves this from the repo root, not from
+          # defaults.run.working-directory.
+          cache-dependency-path: |
+            addon/requirements.txt
+            addon/pyproject.toml
+      - name: Install dependencies
+        # requirements.txt is what the Docker image installs and pyproject.toml
+        # is what a pip install resolves — install both so the two cannot drift
+        # apart unnoticed. The dev extra brings pytest + pytest-asyncio.
+        run: pip install -r requirements.txt -e ".[dev]"
+      - name: Import every module
+        # The suite never imports some runtime-only modules (mqtt/broker.py is
+        # one), so an ImportError there would otherwise reach a device instead
+        # of failing CI.
+        run: |
+          python -c "
+          import importlib, pkgutil, petkit_local
+          for mod in pkgutil.walk_packages(petkit_local.__path__, 'petkit_local.'):
+              importlib.import_module(mod.name)
+          "
+      - name: Run test suite
+        run: pytest -q
+
+  # The image has to BUILD on every architecture config.yaml advertises, and
+  # nobody here owns 32-bit ARM hardware to find out on. Nothing else catches
+  # this: the Python suite above passes happily while the image is unbuildable,
+  # which is exactly what shipped — armv7 was listed as supported while
+  # `cryptography` had no musllinux armv7 wheel, so it would have failed on
+  # first install for every one of those users.
+  #
+  # QEMU makes it slow but it only has to be correct. armv7 is the whole point:
+  # it takes the Debian branch of the Dockerfile and is the only arch that
+  # compiles psutil and pyyaml from source.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64, linux/arm/v7]
+    steps:
+      - uses: actions/checkout@v4
+      # Emulation for the two ARM targets. Free on amd64, so not conditional.
+      - uses: docker/setup-qemu-action@v3
+      # TARGETARCH is a BuildKit built-in and the legacy builder leaves it
+      # empty, so the per-arch base selection needs buildx to work at all.
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the add-on image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./addon
+          platforms: ${{ matrix.platform }}
+          push: false
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Narrow on purpose (see [tool.ruff.lint] in pyproject.toml): a gate
+      # against real defects, not a style enforcer. Four unused imports reached
+      # main before this existed, because the only check anyone ran locally was
+      # a pyflakes that turned out not to be installed.
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check petkit_local/ tests/
+      # The panel's CSS/JS are prettier-formatted, and until now the only thing
+      # enforcing that was a line in CLAUDE.md asking people to run it by hand.
+      # No package.json needed — npx matches how it is run locally.
+      - name: Check panel formatting
+        run: npx prettier@3 --check petkit_local/web/static/app.js petkit_local/web/static/styles.css
