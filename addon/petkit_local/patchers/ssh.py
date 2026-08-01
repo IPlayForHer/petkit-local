@@ -9,9 +9,11 @@ a public key. The panel accepts it at apply time, stores it on
 `device.config["ssh_pubkey"]`, and writes it to `/system/authorized_keys` on
 the device. Password auth is disabled.
 
-The dropbear binary is a pre-built static MIPS32 LE build (musl, UPX, ~153 KB)
-served from the device-facing patcher download path, NOT from the panel's
-/static/ — the device wget's from api_url, which is the device-facing app.
+Two pre-built dropbear binaries are shipped — one per CPU family:
+  dropbear-mipsel  165 KB  Ingenic MIPS32r2 LE (T5, T6, T7, D4H, D4SH)
+  dropbear-armv7   128 KB  ARMv7-A hard-float  (W7H)
+Both are static musl builds, UPX-packed, from the same source and patches.
+`dropbear_binary_for` picks the right one from `DEVICE_CPU_ARCH`.
 
 If an older `test_case_root` persistence script exists from a prior ssh method,
 it is renamed out of the `test_case_*` glob so only one thing listens on port 22.
@@ -26,16 +28,28 @@ log = logging.getLogger(__name__)
 DROPBEAR_PATH = "/system/dropbear"
 DBKEY_PATH = "/system/dbkey_ecdsa"
 AUTHKEYS_PATH = "/system/authorized_keys"
-#: The ECDSA host key is generated ON the device by `dropbearkey`, so its size
-#: is not known here. An ECDSA-256 dropbear key file is a few hundred bytes;
-#: reserve 4 KB so the space check accounts for a file we never see.
 DBKEY_RESERVE_BYTES = 4096
 TEST_CASE_ROOT = "/system/test_case_root"
 TEST_CASE_ROOT_OLD = "/system/old_test_case_root"
 
-# The binary lives inside the package and is staged for download on apply.
+_BIN_DIR = os.path.join(os.path.dirname(__file__), "..", "web", "static", "bin")
+
+ARCH_TO_BINARY: dict[str, str] = {
+    "mips": "dropbear-mipsel",
+    "arm":  "dropbear-armv7",
+}
+
 DROPBEAR_BIN_NAME = "dropbear-mipsel"
-DROPBEAR_LOCAL = os.path.join(os.path.dirname(__file__), "..", "web", "static", "bin", DROPBEAR_BIN_NAME)
+DROPBEAR_LOCAL = os.path.join(_BIN_DIR, DROPBEAR_BIN_NAME)
+
+
+def dropbear_path_for(arch: str) -> str:
+    """Return the local filesystem path of the dropbear binary for `arch`."""
+    name = ARCH_TO_BINARY.get(arch)
+    if not name:
+        raise ValueError(f"no dropbear binary for arch {arch!r}")
+    return os.path.join(_BIN_DIR, name)
+
 
 PATCHER_INFO = {
     "id": "ssh",
@@ -45,10 +59,11 @@ PATCHER_INFO = {
         "Uses the /system/app_init.sh boot hook for persistence — SSH starts "
         "before any PetKit processes and survives reboots, app OTA updates, and "
         "factory resets (as long as /system is not formatted).\n\n"
-        "The dropbear binary is a static MIPS32 LE build (musl, UPX, ~153 KB) "
-        "with ECDSA host key and RSA/ECDSA pubkey auth. Password auth is "
-        "disabled. The host key is generated once at install and kept on "
-        "/system, so the fingerprint stays the same across reboots.\n\n"
+        "A static build is shipped for each CPU family (MIPS and ARM), so this "
+        "works on every Linux-based PetKit model. ECDSA host key, RSA/ECDSA "
+        "pubkey auth, password auth disabled. The host key is generated once "
+        "at install and kept on /system, so the fingerprint stays the same "
+        "across reboots.\n\n"
         "Requires a public key — paste one in the field below before applying. "
         "The key is stored per device and reused on re-apply.\n\n"
         "If a test_case_root script from a prior ssh method is found, it is "
@@ -56,13 +71,7 @@ PATCHER_INFO = {
         "running two SSH servers on port 22."
     ),
     "files": [DROPBEAR_PATH, DBKEY_PATH, AUTHKEYS_PATH],
-    # Installs a prebuilt binary — the shipped dropbear is a static MIPS32 LE
-    # build. Unlike the two code patchers this needs no new logic for another
-    # CPU, only a dropbear built for it.
-    "arch": "mips",
-    # Conservative UI figure: what to tell the user BEFORE we know the model.
-    # the shipped dropbear-mipsel is 156,208 B, plus a host key and
-    # authorized_keys.
+    "arch": None,
     "needs_bytes": 262144,
     "needs_pubkey": True,
 }
@@ -71,7 +80,7 @@ PATCHER_INFO = {
 AUTHKEYS_STAGED_NAME = "authorized_keys"
 
 
-def build_install_commands(download_base: str) -> list[str]:
+def build_install_commands(download_base: str, bin_name: str = DROPBEAR_BIN_NAME) -> list[str]:
     """Shell commands to install dropbear on the device.
 
     Each is queued as a separate run_cmd and waited on individually, because
@@ -98,7 +107,7 @@ def build_install_commands(download_base: str) -> list[str]:
         f'[ -f {TEST_CASE_ROOT} ] && mv {TEST_CASE_ROOT} {TEST_CASE_ROOT_OLD} || true',
 
         # 2. Download the dropbear binary.
-        f'wget -q -O {DROPBEAR_PATH} "{download_base}/{DROPBEAR_BIN_NAME}" '
+        f'wget -q -O {DROPBEAR_PATH} "{download_base}/{bin_name}" '
         f'&& chmod +x {DROPBEAR_PATH}',
 
         # 3. Download authorized_keys (staged from the stored pubkey).

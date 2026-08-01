@@ -85,10 +85,11 @@ from petkit_local.patchers.common import (
 from petkit_local.patchers.mqtt import PATCHER_INFO as MQTT_PATCHER, patch_ctrl
 from petkit_local.patchers.ssh import (
     PATCHER_INFO as SSH_PATCHER, build_install_commands as ssh_install_commands,
-    AUTHKEYS_PATH, DBKEY_PATH, DBKEY_RESERVE_BYTES, DROPBEAR_LOCAL, DROPBEAR_BIN_NAME,
-    DROPBEAR_PATH,
+    ARCH_TO_BINARY as SSH_ARCH_TO_BINARY,
+    AUTHKEYS_PATH, DBKEY_PATH, DBKEY_RESERVE_BYTES,
+    DROPBEAR_PATH, dropbear_path_for,
 )
-from petkit_local.patchers.verify import assert_download_plausible, assert_mips_elf
+from petkit_local.patchers.verify import assert_download_plausible, elf_arch
 from petkit_local.utils.coerce import to_int
 from petkit_local.utils.const import (
     DEVICE_NAMES, DEVICE_TYPES_AI, VERSION, device_display_name,
@@ -2096,17 +2097,28 @@ async def _patcher_apply(d: Device, patcher_id: str, device_ip: str, download_ba
             hub.publish("patcher", did, f"{P} FAILED: no public key configured")
             return
 
-        # Stage both files the device will wget: the binary and the pubkey.
-        # The pubkey is staged as a plain file rather than written through
-        # `echo '...' > path` — an RSA key is ~580 bytes passing through JSON
-        # inside a heartbeat HTTP response, and the escaping produced a garbled
-        # filename on the device. wget is the proven delivery path.
-        with open(DROPBEAR_LOCAL, "rb") as f:
+        hub.publish("patcher", did, f"{P} starting temp httpd on device...")
+        await send_run_cmd(d, f"busybox httpd -p {DEVICE_HTTPD_PORT} -h /app/bin &", bridge)
+        await asyncio.sleep(12)
+
+        try:
+            hub.publish("patcher", did, f"{P} downloading ctrl header to detect CPU...")
+            ctrl_head = await download_from_device(device_ip, "ctrl")
+            arch = elf_arch(ctrl_head)
+            if not arch or arch not in SSH_ARCH_TO_BINARY:
+                hub.publish("patcher", did,
+                            f"{P} FAILED: ctrl is not a recognised architecture "
+                            f"({arch or 'not an ELF'})")
+                return
+            bin_name = SSH_ARCH_TO_BINARY[arch]
+            hub.publish("patcher", did, f"{P} device is {arch}, using {bin_name}")
+        finally:
+            await send_run_cmd(d, "killall httpd 2>/dev/null", bridge)
+            await asyncio.sleep(2)
+
+        bin_path = dropbear_path_for(arch)
+        with open(bin_path, "rb") as f:
             dropbear = f.read()
-        # The shipped dropbear is ET_DYN (PIE), so the permissive form: this
-        # catches a corrupted or substituted package file before it is installed
-        # as the device's SSH daemon.
-        assert_mips_elf(dropbear, "dropbear-mipsel")
 
         from petkit_local.patchers.ssh import AUTHKEYS_STAGED_NAME
         authkeys = (pubkey.strip() + "\n").encode()
@@ -2116,11 +2128,11 @@ async def _patcher_apply(d: Device, patcher_id: str, device_ip: str, download_ba
             targets=[DROPBEAR_PATH, AUTHKEYS_PATH, DBKEY_PATH, APP_INIT_WRAPPER],
             bridge=bridge))
 
-        stage_file(DROPBEAR_BIN_NAME, dropbear)
+        stage_file(bin_name, dropbear)
         stage_file(AUTHKEYS_STAGED_NAME, authkeys)
-        hub.publish("patcher", did, f"{P} staged dropbear + authorized_keys for download")
+        hub.publish("patcher", did, f"{P} staged {bin_name} + authorized_keys for download")
 
-        cmds = ssh_install_commands(download_base)
+        cmds = ssh_install_commands(download_base, bin_name)
         for i, cmd in enumerate(cmds, 1):
             hub.publish("patcher", did, f"{P} step {i}/{len(cmds)}: {cmd[:80]}...")
             await send_run_cmd(d, cmd, bridge)
@@ -2128,7 +2140,7 @@ async def _patcher_apply(d: Device, patcher_id: str, device_ip: str, download_ba
                 hub.publish("patcher", did, f"{P} step {i} timed out (device may not have polled)")
             await asyncio.sleep(12)
 
-        cleanup_staged(DROPBEAR_BIN_NAME)
+        cleanup_staged(bin_name)
         cleanup_staged(AUTHKEYS_STAGED_NAME)
         hub.publish("patcher", did, f"{P} dropbear installed, SSH should be reachable now")
 

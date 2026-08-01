@@ -956,11 +956,9 @@ async def test_a_device_with_no_confirmed_stream_is_offered_no_address():
 
 
 async def test_a_patcher_is_gated_on_the_cpu_it_needs_not_on_the_device():
-    """W7H runs the same Linux userland as the T-series on an ARM CPU. Only the
-    patchers that rewrite machine code or ship a prebuilt binary are MIPS-bound;
-    gating the whole tab on the device would withhold the two that work
-    anywhere, and gating on nothing would fail at `assert_mips_elf` — after a
-    binary had been pulled off the device."""
+    """W7H runs the same Linux userland as the T-series on an ARM CPU. The
+    patchers that rewrite machine code (mqtt, cloud) are MIPS-only; the ones
+    that ship a prebuilt (ssh) or move files (cacert, camera) work on both."""
     reg = DeviceRegistry()
     reg.get_or_create(petkit_id=1, device_type="w7h", serial_number="SN")
     reg.get_or_create(petkit_id=2, device_type="t5", serial_number="SN2")
@@ -970,7 +968,7 @@ async def test_a_patcher_is_gated_on_the_cpu_it_needs_not_on_the_device():
         arm = await (await c.get("/api/devices/1/patcher")).json()
         assert arm["supported"] is True
         blocked = {p for p, e in arm["patchers"].items() if e["unavailable"]}
-        assert blocked == {"mqtt", "cloud", "ssh"}
+        assert blocked == {"mqtt", "cloud"}
         assert "arm" in arm["patchers"]["mqtt"]["unavailable"]
 
         mips = await (await c.get("/api/devices/2/patcher")).json()

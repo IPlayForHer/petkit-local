@@ -79,6 +79,15 @@ def test_the_shipped_dropbear_is_a_mips_binary():
     assert is_mips_elf(head, exec_only=True) is False
 
 
+def test_the_shipped_dropbear_arm_is_an_arm_binary():
+    from petkit_local.patchers.ssh import dropbear_path_for
+    path = dropbear_path_for("arm")
+    with open(os.path.normpath(path), "rb") as f:
+        head = f.read(64)
+    assert head[:4] == b'\x7fELF'
+    assert head[18:20] == b'\x28\x00'  # EM_ARM = 40
+
+
 def test_the_error_says_what_actually_arrived():
     """Naming the real content is what stops a transport failure being read as
     a firmware mismatch."""

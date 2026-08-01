@@ -111,6 +111,13 @@ def assert_mips_elf(data: bytes, what: str, *, exec_only: bool = False) -> None:
     raise ValueError(f"{what} is not a {wanted} — got {describe_elf(data)}")
 
 
+def elf_arch(data: bytes) -> str:
+    """Return ``"mips"`` or ``"arm"`` for a 32-bit LE ELF, or ``""``."""
+    if len(data) < _MIN_ELF_HEADER or data[:4] != ELF_MAGIC:
+        return ""
+    return {EM_MIPS: "mips", EM_ARM: "arm"}.get(_u16le(data, _E_MACHINE), "")
+
+
 def assert_ca_bundle(data: bytes, what: str) -> None:
     """Raise unless `data` looks like a PEM certificate bundle.
 
