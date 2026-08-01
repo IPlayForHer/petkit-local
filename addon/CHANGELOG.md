@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.0 — 2026-08-01
+
+### The EverSweet Ultra AI can be patched
+
+The MQTT TLS bypass and Local Storage patches now work on the W7H — the first
+ARM device. Previously only the Ingenic MIPS models (T5, T6, T7, D4H, D4SH)
+could be patched; the W7H showed "no arm variant yet" on every card.
+
+The patchers detect the device's CPU from the binary they download rather than
+from a static table, so a device the table has never heard of still gets the
+right patch — and one the table has wrong (such as a hypothetical ARM
+generation of an existing codename) is refused instead of silently mis-patched.
+`DEVICE_CPU_ARCH` and the panel's architecture gate are removed; the binary
+itself is the authority now.
+
+ARM patch points were contributed by an external reverse engineer and verified
+against the W7H 456 firmware image in the test suite. The MQTT stub is an
+8-byte Thumb sequence that clears the TLS verification flags and returns
+success, mirroring the 16-byte MIPS stub. The cloud patcher finds isCClassIP
+by its unique ITE instruction tail and the five CONNECT_TO guards by the
+CURLOPT constant they load, distinguishing them from two structurally similar
+sites that must not be touched.
+
 ## 1.2.0 — 2026-08-01
 
 ### The YumShare Dual-Hopper can be patched again

@@ -23,7 +23,7 @@ predicates the rest of the code actually reads.
 #: the old entities, and there was no way — for them or for us — to tell whether
 #: the new code was running. The entity COUNT eventually gave it away. A version
 #: on the screen answers in one glance what took a screenshot and an inference.
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 DEVICE_TYPES_LITTER = {"t3", "t4", "t5", "t6", "t7"}
 DEVICE_TYPES_FEEDER = {"feeder", "feedermini", "d3", "d4", "d4s", "d4h", "d4sh"}
@@ -37,21 +37,6 @@ DEVICE_TYPES_CAMERA = {"t5", "t6", "t7", "d4h", "d4sh", "w7h"}
 # behaviour, "next gen" decides how the device talks to us (HTTPS, MQTT-capable
 # ctrl binary, BLE provisioning).
 DEVICE_TYPES_NEXT_GEN = {"t5", "t6", "t7", "d4h", "d4sh", "w7h"}
-
-# The CPU behind that Linux userland, which is NOT the same across the family.
-# The T-series and the camera feeders are Ingenic MIPS; W7H is ARM — its app
-# partition (W7-262863, extracted) holds 14 binaries, every one of them
-# `ELF 32-bit LSB executable, ARM, EABI5, /lib/ld-linux-armhf.so.3`, with `ctrl`
-# an ET_EXEC loading at 0x10000 rather than MIPS's 0x400000. Do not take this
-# from the firmware's uImage header: it says "Linux/MIPS" on every W7H part.
-#
-# Only the patchers that rewrite machine code or install a prebuilt binary care
-# — see `PATCHER_INFO["arch"]`. The ones that move files around do not, and a
-# device is not disqualified from the whole tab by its CPU.
-DEVICE_CPU_ARCH = {
-    "t5": "mips", "t6": "mips", "t7": "mips", "d4h": "mips", "d4sh": "mips",
-    "w7h": "arm",
-}
 
 # Devices whose NPU runs on-device facial recognition (dev_discern_pic /
 # dev_discern_config). This is only a SEED: `Device.supports_ai` also returns

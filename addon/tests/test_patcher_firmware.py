@@ -27,17 +27,8 @@ from pathlib import Path
 
 import pytest
 
-from petkit_local.utils.const import DEVICE_CPU_ARCH
-
 FIRMWARE_DIR = Path(__file__).parent / "firmware"
 UIMAGE_HEADER_SIZE = 64
-
-MIPS_DEVICES = frozenset(
-    dev for dev, arch in DEVICE_CPU_ARCH.items() if arch == "mips"
-)
-ARM_DEVICES = frozenset(
-    dev for dev, arch in DEVICE_CPU_ARCH.items() if arch == "arm"
-)
 
 _extract_cache: dict[str, Path] = {}
 
@@ -65,8 +56,16 @@ ALL_FIRMWARE = _discover_firmware()
 if not ALL_FIRMWARE:
     pytest.skip("tests/firmware/ not found or empty", allow_module_level=True)
 
-MIPS_FIRMWARE = [(d, v, p) for d, v, p in ALL_FIRMWARE if d in MIPS_DEVICES]
-ARM_FIRMWARE = [(d, v, p) for d, v, p in ALL_FIRMWARE if d in ARM_DEVICES]
+
+# Classified at test time by reading the extracted ctrl ELF header, not by a
+# static table. At COLLECTION time we use the directory name as a proxy —
+# the firmware is compressed squashfs so the ELF cannot be read without
+# extraction, and extraction requires unsquashfs which may be absent.
+# The first test (`test_all_firmware_is_uimage_squashfs`) extracts everything,
+# so by the time an arch-specific test runs, `_read_binary` works.
+_ARM_DEVICE_DIRS = {"w7h"}
+MIPS_FIRMWARE = [(d, v, p) for d, v, p in ALL_FIRMWARE if d not in _ARM_DEVICE_DIRS]
+ARM_FIRMWARE = [(d, v, p) for d, v, p in ALL_FIRMWARE if d in _ARM_DEVICE_DIRS]
 
 
 def _fw_id(val):
@@ -191,27 +190,31 @@ def test_mips_ctrl_symbol_offset_in_bounds(mips_fw):
 
 
 @pytest.mark.firmware
-def test_mqtt_refuses_arm(arm_fw):
+def test_mqtt_patch_ctrl_arm(arm_fw):
     from petkit_local.patchers.mqtt import patch_ctrl
     device, version, bin_path = arm_fw
     data = _read_binary(bin_path, "ctrl")
-    with pytest.raises(ValueError, match="MIPS32"):
-        patch_ctrl(data)
+    patched, offset = patch_ctrl(data)
+    assert len(patched) == len(data)
+    assert offset > 0
 
 
 @pytest.mark.firmware
-def test_w7h_ctrl_has_no_mbedtls_verify_symbol(arm_fw):
-    from elftools.elf.elffile import ELFFile
-    from petkit_local.patchers.mqtt import SYMBOL_NAME
+def test_mqtt_patch_already_patched_arm(arm_fw):
+    from petkit_local.patchers.mqtt import patch_ctrl
     device, version, bin_path = arm_fw
     data = _read_binary(bin_path, "ctrl")
-    elf = ELFFile(io.BytesIO(data))
-    dynsym = elf.get_section_by_name(".dynsym")
-    if dynsym is None:
-        return
-    names = [s.name for s in dynsym.iter_symbols()
-             if s["st_info"]["type"] == "STT_FUNC"]
-    assert SYMBOL_NAME not in names
+    patched, _ = patch_ctrl(data)
+    with pytest.raises(ValueError, match="already patched"):
+        patch_ctrl(patched)
+
+
+@pytest.mark.firmware
+def test_mqtt_arm_prologue_is_unique(arm_fw):
+    from petkit_local.patchers.mqtt import _ARM_PROLOGUE
+    device, version, bin_path = arm_fw
+    data = _read_binary(bin_path, "ctrl")
+    assert data.count(_ARM_PROLOGUE) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +246,8 @@ def test_cloud_patch_already_patched(mips_fw):
 def test_cloud_isCClassIP_xori_within_function(mips_fw):
     """The xori instruction is inside the symbol range, not necessarily the last word."""
     from elftools.elf.elffile import ELFFile
-    from petkit_local.patchers.cloud import ISCC_ORIGINAL, MIPS_ELF_BASE
+    from petkit_local.patchers.cloud import ISCC_ORIGINAL
+    from petkit_local.patchers.verify import MIPS_ELF_BASE
     device, version, bin_path = mips_fw
     data = _read_binary(bin_path, "cloud")
     elf = ELFFile(io.BytesIO(data))
@@ -265,7 +269,8 @@ def test_cloud_isCClassIP_xori_within_function(mips_fw):
 @pytest.mark.firmware
 def test_cloud_connect_to_within_function(mips_fw):
     from elftools.elf.elffile import ELFFile
-    from petkit_local.patchers.cloud import CONNECT_TO_PATTERN, MIPS_ELF_BASE
+    from petkit_local.patchers.cloud import CONNECT_TO_PATTERN
+    from petkit_local.patchers.verify import MIPS_ELF_BASE
     device, version, bin_path = mips_fw
     data = _read_binary(bin_path, "cloud")
     elf = ELFFile(io.BytesIO(data))
@@ -285,12 +290,31 @@ def test_cloud_connect_to_within_function(mips_fw):
 
 
 @pytest.mark.firmware
-def test_cloud_refuses_arm(arm_fw):
+def test_cloud_patch_arm(arm_fw):
     from petkit_local.patchers.cloud import patch_cloud
     device, version, bin_path = arm_fw
     data = _read_binary(bin_path, "cloud")
-    with pytest.raises(ValueError, match="MIPS32"):
-        patch_cloud(data)
+    patched, applied = patch_cloud(data)
+    assert len(patched) == len(data)
+    newly = [a for a in applied if a["status"] == "applied"]
+    assert len(newly) == 6, f"expected 6 patches (1 isCC + 5 CT), got {[a['name'] for a in newly]}"
+
+
+@pytest.mark.firmware
+def test_cloud_patch_already_patched_arm(arm_fw):
+    from petkit_local.patchers.cloud import patch_cloud
+    device, version, bin_path = arm_fw
+    data = _read_binary(bin_path, "cloud")
+    patched, _ = patch_cloud(data)
+    with pytest.raises(ValueError, match="already patched"):
+        patch_cloud(patched)
+
+
+@pytest.mark.firmware
+def test_cloud_arm_isCClassIP_string_present(arm_fw):
+    device, version, bin_path = arm_fw
+    data = _read_binary(bin_path, "cloud")
+    assert b"isCClassIP" in data
 
 
 # ---------------------------------------------------------------------------

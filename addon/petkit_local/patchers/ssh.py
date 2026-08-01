@@ -13,7 +13,8 @@ Two pre-built dropbear binaries are shipped — one per CPU family:
   dropbear-mipsel  165 KB  Ingenic MIPS32r2 LE (T5, T6, T7, D4H, D4SH)
   dropbear-armv7   128 KB  ARMv7-A hard-float  (W7H)
 Both are static musl builds, UPX-packed, from the same source and patches.
-`dropbear_binary_for` picks the right one from `DEVICE_CPU_ARCH`.
+The panel reads the ELF header of the device's own ctrl binary to detect
+the architecture and picks the matching dropbear.
 
 If an older `test_case_root` persistence script exists from a prior ssh method,
 it is renamed out of the `test_case_*` glob so only one thing listens on port 22.

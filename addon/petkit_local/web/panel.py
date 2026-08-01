@@ -1853,11 +1853,8 @@ async def api_patcher_status(request: web.Request) -> web.Response:
     result: dict[str, dict[str, Any]] = {}
     for pid, pinfo in ALL_PATCHERS.items():
         applied = pid in active
-        unavailable = _arch_mismatch(pinfo, d)
         status = "applied" if applied else "not applied"
-        if unavailable:
-            status = unavailable
-        elif pid == "mqtt" and d.mqtt_connected:
+        if pid == "mqtt" and d.mqtt_connected:
             status = "active (MQTT connected)"
         entry: dict[str, Any] = {
             "id": pid,
@@ -1865,8 +1862,8 @@ async def api_patcher_status(request: web.Request) -> web.Response:
             "description": pinfo["description"],
             "status": status,
             "applied": applied,
-            "unavailable": unavailable,
-            "greyed": bool(unavailable) or (pid == "mqtt" and d.mqtt_connected),
+            "unavailable": "",
+            "greyed": pid == "mqtt" and d.mqtt_connected,
             # What to warn about before we know the model. The actual gate at
             # apply time uses the measured size of the patched file, which is
             # smaller on every model we have measured.
@@ -1910,14 +1907,6 @@ async def api_patcher_apply(request: web.Request) -> web.Response:
     action = body.get("action", "apply")
     if patcher_id not in ALL_PATCHERS:
         return web.json_response({"error": f"unknown patcher: {patcher_id}"}, status=400)
-
-    # Removal is file management — undoing a bind-mount and deleting from
-    # /system — so it stays available even for a patch whose apply side has no
-    # variant for this CPU. Only applying needs the architecture to match.
-    mismatch = _arch_mismatch(ALL_PATCHERS[patcher_id], d)
-    if mismatch and action != "remove":
-        return web.json_response({"error": f"{ALL_PATCHERS[patcher_id]['name']}: {mismatch}"},
-                                 status=400)
 
     # SSH needs a public key. Accept it in the request, persist it on the device
     # config so a re-apply after an OTA does not ask again, and validate it
@@ -1975,23 +1964,6 @@ async def api_patcher_apply(request: web.Request) -> web.Response:
     _spawn_background(request.app, _run(), name=f"patcher-{patcher_id}-{action}-{did}")
     hub.publish("patcher", did, f"[{patcher_id}] {action} started")
     return web.json_response({"ok": True, "patcher": patcher_id, "action": action})
-
-
-def _arch_mismatch(pinfo: dict, d: Device) -> str:
-    """Why this patcher cannot run on this device's CPU, or `""` if it can.
-
-    Most patchers move files around and do not care. The two that rewrite
-    machine code, and the one that installs a prebuilt binary, do — and the
-    family is not all one architecture (`DEVICE_CPU_ARCH`). A missing variant is
-    reported here rather than at `assert_mips_elf`, which would only refuse
-    after a binary had been pulled off the device.
-    """
-    wanted = pinfo.get("arch")
-    if not wanted or wanted == d.cpu_arch:
-        return ""
-    # Short: this is rendered as a badge beside the patcher's name, and the
-    # description right under it already says what the patch does.
-    return f"no {d.cpu_arch or 'unknown'} variant yet"
 
 
 def _get_active_patchers(d: Device) -> set[str]:

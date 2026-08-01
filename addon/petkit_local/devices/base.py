@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from petkit_local.utils.const import (
-    DEVICE_CPU_ARCH,
     DEVICE_LOG_KEY_PREFIX,
     DEVICE_TYPES_AI,
     DEVICE_TYPES_CAMERA,
@@ -177,16 +176,6 @@ class Device:
     def is_next_gen(self) -> bool:
         """Whether this is an embedded-Linux model rather than an ESP32 one."""
         return self.device_type in DEVICE_TYPES_NEXT_GEN
-
-    @property
-    def cpu_arch(self) -> str:
-        """The CPU this model's binaries are built for, or `""` if unknown.
-
-        Only the patchers that rewrite machine code or ship a prebuilt binary
-        consult this; the rest work on any of these devices. See
-        `DEVICE_CPU_ARCH` — the family is not all one architecture.
-        """
-        return DEVICE_CPU_ARCH.get(self.device_type, "")
 
     @property
     def is_litter(self) -> bool:

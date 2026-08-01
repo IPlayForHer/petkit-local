@@ -955,33 +955,20 @@ async def test_a_device_with_no_confirmed_stream_is_offered_no_address():
         await c.close()
 
 
-async def test_a_patcher_is_gated_on_the_cpu_it_needs_not_on_the_device():
-    """W7H runs the same Linux userland as the T-series on an ARM CPU. The
-    patchers that rewrite machine code (mqtt, cloud) are MIPS-only; the ones
-    that ship a prebuilt (ssh) or move files (cacert, camera) work on both."""
+async def test_all_patchers_are_offered_on_every_next_gen_device():
+    """No patcher is gated by architecture in the listing. The patchers
+    themselves validate the binary they download from the device."""
     reg = DeviceRegistry()
     reg.get_or_create(petkit_id=1, device_type="w7h", serial_number="SN")
     reg.get_or_create(petkit_id=2, device_type="t5", serial_number="SN2")
     app, reg, hub = _panel(reg=reg)
     c = await _mk_client(app)
     try:
-        arm = await (await c.get("/api/devices/1/patcher")).json()
-        assert arm["supported"] is True
-        blocked = {p for p, e in arm["patchers"].items() if e["unavailable"]}
-        assert blocked == {"mqtt", "cloud"}
-        assert "arm" in arm["patchers"]["mqtt"]["unavailable"]
-
-        mips = await (await c.get("/api/devices/2/patcher")).json()
-        assert not [p for p, e in mips["patchers"].items() if e["unavailable"]]
-
-        r = await c.post("/api/devices/1/patcher", data=json.dumps({"patcher": "mqtt"}))
-        assert r.status == 400
-        assert "variant" in (await r.json())["error"]
-
-        # cacert only moves PEM text about, so ARM is no obstacle. It gets past
-        # the arch gate and stops at the next real precondition instead.
-        r = await c.post("/api/devices/1/patcher", data=json.dumps({"patcher": "cacert"}))
-        assert "variant" not in (await r.json()).get("error", "")
+        for did in (1, 2):
+            resp = await (await c.get(f"/api/devices/{did}/patcher")).json()
+            assert resp["supported"] is True
+            blocked = {p for p, e in resp["patchers"].items() if e["unavailable"]}
+            assert blocked == set(), f"device {did} has blocked patchers: {blocked}"
     finally:
         await c.close()
 

@@ -35,6 +35,9 @@ ET_DYN = 3
 EM_MIPS = 8
 EM_ARM = 40
 
+MIPS_ELF_BASE = 0x400000
+ARM_ELF_BASE = 0x10000
+
 #: Enough bytes to read `e_machine`, which is the last field we look at.
 _MIN_ELF_HEADER = 20
 
@@ -106,6 +109,28 @@ def assert_mips_elf(data: bytes, what: str, *, exec_only: bool = False) -> None:
     if is_mips_elf(data, exec_only=exec_only):
         return
     wanted = "MIPS32 little-endian ELF executable"
+    if exec_only:
+        wanted += " with a fixed load address (not PIE)"
+    raise ValueError(f"{what} is not a {wanted} — got {describe_elf(data)}")
+
+
+def is_arm_elf(data: bytes, *, exec_only: bool = False) -> bool:
+    if len(data) < _MIN_ELF_HEADER or data[:4] != ELF_MAGIC:
+        return False
+    if data[_EI_CLASS] != ELFCLASS32 or data[_EI_DATA] != ELFDATA2LSB:
+        return False
+    if _u16le(data, _E_MACHINE) != EM_ARM:
+        return False
+    e_type = _u16le(data, _E_TYPE)
+    if exec_only:
+        return e_type == ET_EXEC
+    return e_type in (ET_EXEC, ET_DYN)
+
+
+def assert_arm_elf(data: bytes, what: str, *, exec_only: bool = False) -> None:
+    if is_arm_elf(data, exec_only=exec_only):
+        return
+    wanted = "ARM 32-bit little-endian ELF executable"
     if exec_only:
         wanted += " with a fixed load address (not PIE)"
     raise ValueError(f"{what} is not a {wanted} — got {describe_elf(data)}")

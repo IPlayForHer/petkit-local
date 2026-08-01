@@ -16,14 +16,11 @@ import io
 import logging
 
 from petkit_local.patchers.common import md5hex
-from petkit_local.patchers.verify import assert_mips_elf
+from petkit_local.patchers.verify import (
+    MIPS_ELF_BASE, assert_arm_elf, assert_mips_elf, describe_elf, elf_arch,
+)
 
 log = logging.getLogger(__name__)
-
-#: Fixed load address of an ET_EXEC MIPS binary — `vaddr - MIPS_ELF_BASE` is
-#: the file offset. Only valid for a non-PIE executable, which is why
-#: `patch_cloud` asserts `exec_only`.
-MIPS_ELF_BASE = 0x400000
 
 
 # --- Patch 1: isCClassIP → always return 0 -----------------------------------
@@ -159,17 +156,111 @@ def _patch_beqz_to_branch(data: bytes, offset: int) -> bytes:
     return word.to_bytes(4, "little")
 
 
+# --- ARM Thumb variants -------------------------------------------------------
+
+# isCClassIP on ARM ends with  ite lo / movlo r4,#0 / movhs r4,#1.
+# The 6-byte sequence is the locator; we patch the last 2 bytes.
+_ARM_ISCC_PATTERN = b'\x34\xbf\x00\x24\x01\x24'  # ite lo; movlo r4,#0; movhs r4,#1
+_ARM_ISCC_PATCHED = b'\x34\xbf\x00\x24\x00\x24'  # ite lo; movlo r4,#0; movhs r4,#0
+
+# movw r1, #0x2803 — the ARM Thumb2 encoding of the CURLOPT_CONNECT_TO constant.
+_ARM_CT_PATTERN = b'\x42\xf6\x03\x01'
+_ARM_CMP_R0_ZERO = b'\x00\x28'   # cmp r0, #0 — the guard we patch
+_ARM_CMP_R0_R0   = b'\x80\x42'   # cmp r0, r0 — always Z=1
+
+
+def _patch_cloud_arm(data: bytes) -> tuple[bytes, list[dict]]:
+    patched = bytearray(data)
+    applied: list[dict] = []
+
+    # Patch 1: isCClassIP
+    iscc_string = data.find(b"isCClassIP")
+
+    idx = data.find(_ARM_ISCC_PATTERN)
+    patched_idx = data.find(_ARM_ISCC_PATCHED) if idx == -1 else -1
+    if idx == -1 and patched_idx == -1:
+        raise ValueError("Cannot find isCClassIP ITE pattern in ARM cloud binary")
+    if idx != -1 and data.count(_ARM_ISCC_PATTERN) > 1:
+        raise ValueError("Multiple isCClassIP ITE matches — ambiguous")
+    if patched_idx != -1 and data.count(_ARM_ISCC_PATCHED) > 1:
+        raise ValueError("Multiple already-patched isCClassIP matches — ambiguous")
+
+    iscc_off = idx if idx != -1 else patched_idx
+    if iscc_string == -1:
+        log.warning("isCClassIP string not found in ARM cloud — "
+                     "cannot cross-check pattern location")
+
+    patch_off = iscc_off + 4  # the movhs r4,#1 is the last 2 bytes
+    if idx != -1:
+        patched[patch_off:patch_off + 2] = b'\x00\x24'
+        applied.append({"name": "isCClassIP", "offset": patch_off, "status": "applied"})
+    else:
+        applied.append({"name": "isCClassIP", "offset": patch_off, "status": "already_applied"})
+
+    # Patch 2: skip CONNECT_TO (expect exactly 5 cmp-r0 sites)
+    ct_sites: list[int] = []
+    pos = 0
+    while True:
+        idx = data.find(_ARM_CT_PATTERN, pos)
+        if idx == -1:
+            break
+        for back in range(2, 18, 2):
+            cmp_off = idx - back
+            if cmp_off < 0:
+                break
+            two = data[cmp_off:cmp_off + 2]
+            if two == _ARM_CMP_R0_ZERO or two == _ARM_CMP_R0_R0:
+                ct_sites.append(cmp_off)
+                break
+            if two[1:] == b'\x2b' and two[0] == 0:
+                break
+        pos = idx + 2
+
+    if len(ct_sites) != 5:
+        raise ValueError(
+            f"Expected 5 CONNECT_TO guard sites in ARM cloud, found {len(ct_sites)}")
+
+    for off in ct_sites:
+        cur = data[off:off + 2]
+        if cur == _ARM_CMP_R0_R0:
+            applied.append({"name": f"skip CONNECT_TO @0x{off:x}",
+                            "offset": off, "status": "already_applied"})
+        else:
+            patched[off:off + 2] = _ARM_CMP_R0_R0
+            applied.append({"name": f"skip CONNECT_TO @0x{off:x}",
+                            "offset": off, "status": "applied"})
+
+    patched = bytes(patched)
+    if len(patched) != len(data):
+        raise RuntimeError(f"Size changed: {len(data)} -> {len(patched)}")
+
+    newly = [a for a in applied if a["status"] == "applied"]
+    if not newly:
+        raise ValueError("All patches already applied - cloud binary is already patched")
+
+    log.info("Patched ARM cloud binary: %d/%d patches applied (md5 %s -> %s)",
+             len(newly), len(applied), md5hex(data), md5hex(patched))
+    return patched, applied
+
+
 # --- Main entry point ---------------------------------------------------------
 
 def patch_cloud(data: bytes) -> tuple[bytes, list[dict]]:
     """Patch the cloud binary. Returns (patched_data, applied_patches).
 
+    Works on both MIPS (Ingenic) and ARM (W7H) binaries.
+
     Raises:
-        ValueError: If `data` is not a fixed-load-address MIPS32 LE executable,
-            if a patch point cannot be found, or if both patches are already in.
+        ValueError: If the architecture is unsupported, a patch point cannot
+            be found, or all patches are already applied.
     """
-    # Both patch points are located by virtual address minus MIPS_ELF_BASE, so
-    # a PIE binary would resolve to a wrong offset and be patched silently.
+    arch = elf_arch(data)
+    if arch == "arm":
+        assert_arm_elf(data, "cloud", exec_only=True)
+        return _patch_cloud_arm(data)
+    if arch != "mips":
+        raise ValueError(f"cloud is not a supported architecture — "
+                         f"got {describe_elf(data)}")
     assert_mips_elf(data, "cloud", exec_only=True)
     patched = bytearray(data)
     applied = []
@@ -227,10 +318,7 @@ PATCHER_INFO = {
         "/system/app_init.sh to bind-mount the patched binary at boot."
     ),
     "files": ["/system/cloud_patched"],
-    # Rewrites machine code: both patch points are found by symbol address and
-    # converted with `vaddr - MIPS_ELF_BASE`, and the bytes written are MIPS
-    # instructions. Needs a variant per CPU, not a recompile.
-    "arch": "mips",
+    "arch": None,
     # Conservative UI figure: what to tell the user BEFORE we know the model.
     # cloud is 304,204 B on a T5 and 188,452 B on a D4SH; size-preserving.
     "needs_bytes": 524288,

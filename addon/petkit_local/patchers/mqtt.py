@@ -23,14 +23,11 @@ import io
 import logging
 
 from petkit_local.patchers.common import md5hex
-from petkit_local.patchers.verify import assert_mips_elf
+from petkit_local.patchers.verify import (
+    MIPS_ELF_BASE, assert_arm_elf, assert_mips_elf, describe_elf, elf_arch,
+)
 
 log = logging.getLogger(__name__)
-
-#: Fixed load address of an ET_EXEC MIPS binary — `vaddr - MIPS_ELF_BASE` is
-#: the file offset. Only valid for a non-PIE executable, which is why
-#: `patch_ctrl` asserts `exec_only`.
-MIPS_ELF_BASE = 0x400000
 
 SYMBOL_NAME = "mbedtls_x509_crt_verify_with_profile"
 
@@ -137,6 +134,50 @@ def _find_via_pattern(data: bytes) -> int | None:
     return None
 
 
+# --- ARM Thumb: same function, different encoding --------------------------
+# ARM EABI: args 1-4 in r0-r3, args 5-6 on stack at sp+0 and sp+4.
+#   arg6 = uint32_t *flags  →  at [sp, #4] on entry
+ARM_PATCH_BYTES = (
+    b'\x01\x99'   # ldr  r1, [sp, #4]  — flags ptr (arg6)
+    b'\x00\x20'   # movs r0, #0        — return 0
+    b'\x08\x60'   # str  r0, [r1]      — *flags = 0
+    b'\x70\x47'   # bx   lr            — return
+)
+
+# The function's Thumb2 prologue on the W7H 456 firmware. Unique in the binary
+# (verified: exactly 1 match in 939,176 bytes). The function has no .dynsym
+# symbol and its name string does not appear in the binary at all, so this
+# prologue is the only search key.
+_ARM_PROLOGUE = bytes.fromhex("2de9f04f8bb0dde91484")
+
+
+def _find_arm_verify(data: bytes) -> int:
+    """Find mbedtls_x509_crt_verify_with_profile in an ARM ctrl binary."""
+    idx = data.find(ARM_PATCH_BYTES)
+    if idx != -1:
+        log.info("Found already-patched ARM verify stub at 0x%x", idx)
+        return idx
+
+    candidates: list[int] = []
+    pos = 0
+    while True:
+        idx = data.find(_ARM_PROLOGUE, pos)
+        if idx == -1:
+            break
+        candidates.append(idx)
+        pos = idx + 2
+    if len(candidates) == 1:
+        log.info("Found ARM verify prologue at file offset 0x%x", candidates[0])
+        return candidates[0]
+    if not candidates:
+        raise ValueError(
+            f"Cannot find {SYMBOL_NAME} in ARM ctrl binary — "
+            "prologue pattern not found")
+    raise ValueError(
+        f"Cannot find {SYMBOL_NAME} in ARM ctrl binary — "
+        f"{len(candidates)} prologue matches, ambiguous")
+
+
 def find_offset(data: bytes) -> int:
     """Find mbedtls_x509_crt_verify_with_profile in the ctrl binary."""
     offset = _find_via_dynsym(data)
@@ -151,30 +192,39 @@ def find_offset(data: bytes) -> int:
 def patch_ctrl(data: bytes) -> tuple[bytes, int]:
     """Patch the ctrl binary. Returns (patched_data, offset).
 
-    Raises:
-        ValueError: If `data` is not a fixed-load-address MIPS32 LE executable,
-            or if the symbol cannot be located, or if it is already patched.
-    """
-    # Before searching for anything: both offset paths below convert a virtual
-    # address with MIPS_ELF_BASE, so a PIE binary would yield a plausible-looking
-    # offset into the wrong place and be patched without complaint.
-    assert_mips_elf(data, "ctrl", exec_only=True)
-    offset = find_offset(data)
+    Works on both MIPS (Ingenic T5/T6/T7/D4H/D4SH) and ARM (W7H) binaries.
+    The architecture is detected from the ELF header, and the right patch
+    bytes and search strategy are chosen automatically.
 
-    if data[offset:offset + len(PATCH_BYTES)] == PATCH_BYTES:
+    Raises:
+        ValueError: If the architecture is unsupported, the function cannot be
+            located, or the binary is already patched.
+    """
+    arch = elf_arch(data)
+    if arch == "mips":
+        assert_mips_elf(data, "ctrl", exec_only=True)
+        offset = find_offset(data)
+        patch = PATCH_BYTES
+    elif arch == "arm":
+        assert_arm_elf(data, "ctrl", exec_only=True)
+        offset = _find_arm_verify(data)
+        patch = ARM_PATCH_BYTES
+    else:
+        raise ValueError(f"ctrl is not a supported architecture — "
+                         f"got {describe_elf(data)}")
+
+    if data[offset:offset + len(patch)] == patch:
         raise ValueError("ctrl binary is already patched")
 
     patched = bytearray(data)
-    patched[offset:offset + len(PATCH_BYTES)] = PATCH_BYTES
+    patched[offset:offset + len(patch)] = patch
     patched = bytes(patched)
 
-    if patched[offset:offset + len(PATCH_BYTES)] != PATCH_BYTES:
-        raise RuntimeError("Patch verification failed — bytes don't match after write")
     if len(patched) != len(data):
         raise RuntimeError(f"Size changed: {len(data)} -> {len(patched)}")
 
-    log.info("Patched %s at offset 0x%x (md5 %s -> %s)",
-             SYMBOL_NAME, offset, md5hex(data), md5hex(patched))
+    log.info("Patched %s at offset 0x%x (%s, md5 %s -> %s)",
+             SYMBOL_NAME, offset, arch, md5hex(data), md5hex(patched))
     return patched, offset
 
 
@@ -190,16 +240,15 @@ PATCHER_INFO = {
         "This allows the device to connect to petkit-local's embedded MQTT "
         "broker over TLS, enabling real-time commands and event streaming "
         "instead of the slower HTTP heartbeat polling.\n\n"
+        "Works on both MIPS (Ingenic) and ARM (W7H) devices — the right "
+        "patch is chosen from the binary itself.\n\n"
         "What it does: copies /app/bin/ctrl to /system/ctrl_patched, patches "
-        "16 bytes (the x509 certificate chain verification function), then "
-        "updates /system/app_init.sh to bind-mount the patched binary before "
-        "the stock init starts ctrl. Requires a reboot to take effect."
+        "the x509 certificate chain verification function (16 bytes on MIPS, "
+        "8 bytes on ARM), then updates /system/app_init.sh to bind-mount the "
+        "patched binary before the stock init starts ctrl."
     ),
     "files": ["/system/ctrl_patched"],
-    # Rewrites machine code: the verify function is neutered by writing a MIPS
-    # `return 0` at an address found with `vaddr - MIPS_ELF_BASE`. Needs a
-    # variant per CPU, not a recompile.
-    "arch": "mips",
+    "arch": None,
     # Conservative UI figure: what to tell the user BEFORE we know the model.
     # ctrl is 1,420,656 B on a T5 and 903,148 B on a D4SH; the patch
     # preserves size, so the write is one full copy of the binary.
