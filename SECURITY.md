@@ -6,7 +6,7 @@ Open a [GitHub security advisory](https://github.com/alex-so-3/petkit-local/secu
 or a normal issue if the problem is not sensitive. There is no formal SLA — this
 is a hobby project — but security reports are read first.
 
-## What this add-on is, in security terms
+## What this app is, in security terms
 
 It impersonates a cloud service to hardware on your LAN, and it can modify that
 hardware. That is the point of it, and it means the threat model is unusual
@@ -17,7 +17,7 @@ enough to be worth stating plainly.
 | Surface | Why |
 |---|---|
 | Device API (host `8080`) | The firmware has no credential to offer beyond an `X-Device` header it also computes itself. Anything on the LAN can talk to it. |
-| Media bucket (host `9000`) | It stands in for Aliyun OSS, whose credentials this add-on issues to the device. Object keys are containment-checked, so an upload cannot escape the media root — but anyone on the LAN can upload. |
+| Media bucket (host `9000`) | It stands in for Aliyun OSS, whose credentials this app issues to the device. Object keys are containment-checked, so an upload cannot escape the media root — but anyone on the LAN can upload. |
 | Web panel (container `8099`) | Unmapped by default and reached through Home Assistant Ingress, which authenticates. **Map it to a host port and the whole API — device settings, commands, pet records, the patchers — is available with no login.** |
 
 The panel was once served a second time over HTTPS on port 8098 with a

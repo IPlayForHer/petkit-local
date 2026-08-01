@@ -1,7 +1,7 @@
 # PetKit Local
 
-Local cloud replacement for PetKit devices, packaged as a Home Assistant add-on.
-Your PetKit litter boxes, feeders, fountains and Bluetooth accessories talk to this add-on
+Local cloud replacement for PetKit devices, packaged as a Home Assistant app.
+Your PetKit litter boxes, feeders, fountains and Bluetooth accessories talk to this app
 instead of PetKit's servers; entities appear in Home Assistant via MQTT
 discovery. Nothing leaves your network.
 
@@ -14,20 +14,22 @@ PetKit device ──HTTP───► petkit-local ──MQTT discovery──► 
 ## Requirements
 
 - A broker for the **MQTT** integration, so entities can be published. With the
-  Mosquitto add-on the credentials come from the Supervisor and there is nothing
+  Mosquitto app the credentials come from the Supervisor and there is nothing
   to configure. With any other broker — one on your LAN, or in another
   container — **set `ha_mqtt_host` in Options**, plus `ha_mqtt_user` and
   `ha_mqtt_pass` if it needs them. Nothing warns you if you skip this: the
   device side works, the panel works, and Home Assistant simply never sees a
   single entity.
-- A way to point the device at this add-on. BLE provisioning works on every
+- A way to point the device at this app. BLE provisioning works on every
   model; ESP32 models can also be redirected by DNS. See the repository README.
 
 ## Installation
 
-1. Add the repository to your add-on store and install **PetKit Local**.
-2. Configure the options (below) and start the add-on.
-3. Redirect your device to the add-on, then power-cycle it. It registers itself
+1. **Settings → Apps → Install app → ⋮ → Repositories**, add this repository's URL,
+   then install **PetKit Local**. (Older Home Assistant releases call the same
+   place *Settings → Add-ons → Add-on Store*.)
+2. Configure the options (below) and start it.
+3. Redirect your device to the app, then power-cycle it. It registers itself
    and its entities show up in Home Assistant.
 
 ## Options
@@ -35,8 +37,8 @@ PetKit device ──HTTP───► petkit-local ──MQTT discovery──► 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `api_url` | *(empty = auto)* | URL the device is told to use for the HTTP API. **Leave empty to auto-detect the HA host's LAN IP** (recommended — embedded PetKit devices can't resolve mDNS `.local`). Override only for a specific address/port, e.g. `http://<ha-host-ip>:8080/6/`. A `.local` value is ignored in favour of the detected IP. |
-| `mqtt_host` | *(ignored)* | Accepted by the schema but not used: the broker address handed to a device is derived per request from the address that device reached the add-on on, so one add-on can serve devices that see it under different addresses. |
-| `ha_mqtt_host` | *(empty)* | **Your Home Assistant MQTT broker**, so entities can be published to HA. Auto-detected if you run the Mosquitto add-on; otherwise set it (an external broker's hostname or IP). Leave empty to skip HA publishing entirely — the device side still works. |
+| `mqtt_host` | *(ignored)* | Accepted by the schema but not used: the broker address handed to a device is derived per request from the address that device reached it on, so one instance can serve devices that see it under different addresses. |
+| `ha_mqtt_host` | *(empty)* | **Your Home Assistant MQTT broker**, so entities can be published to HA. Auto-detected if you run the Mosquitto app; otherwise set it (an external broker's hostname or IP). Leave empty to skip HA publishing entirely — the device side still works. |
 | `ha_mqtt_port` | `1883` | HA MQTT broker port. |
 | `ha_mqtt_user` / `ha_mqtt_pass` | *(empty)* | HA MQTT broker credentials (leave empty for anonymous). |
 | `log_level` | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
@@ -55,13 +57,13 @@ effect immediately, and persist to `/data/settings_overrides.json`.
 |------|------|---------|
 | `80` | `8080` | Device HTTP API. ESP32 models redirected by DNS need this on host port 80. |
 | `443` | `443` | Device MQTT over TLS. |
-| `1883` | *(unmapped)* | Plain MQTT listener, internal to the add-on. Map it only if a device connects in plaintext. |
+| `1883` | *(unmapped)* | Plain MQTT listener, internal to this app. Map it only if a device connects in plaintext. |
 | `9000` | `9000` | Media upload bucket the device PUTs photos and videos to. |
 | `8099` | *(unmapped)* | The web panel over plain HTTP, **no authentication**. Ingress proxies this internally. |
 
 **MQTT port coexistence:** the device-facing broker is a *separate* broker from
 Home Assistant's. Its plain listener is unmapped by default, so it cannot clash
-with the Mosquitto add-on.
+with the Mosquitto app.
 
 **The panel is unauthenticated on port 8099.** The sidebar entry goes through
 Ingress and is authenticated by Home Assistant; port 8099 is the same
@@ -76,11 +78,11 @@ certificate your browser trusts; the Provision tab explains this and links a
 hosted alternative when it is not.
 
 Port 9000 likewise accepts uploads without authentication — it stands in for
-Aliyun OSS, whose credentials this add-on issues to the device itself.
+Aliyun OSS, whose credentials this app issues to the device itself.
 
 ## Networking
 
-The device must resolve `api_url` to this add-on.
+The device must resolve `api_url` to this app.
 
 **BLE provisioning works on every model** and is the most reliable route — see
 below.
@@ -92,7 +94,7 @@ whichever of PetKit's regional servers the app handed that device. Find it in
 your DNS server's query log, or redirect every PetKit domain. The device dials
 **port 80** and cannot be told otherwise, so the API has to be reachable there.
 
-Redirecting a name redirects it for this add-on too, so **proxy mode then
+Redirecting a name redirects it for this app too, so **proxy mode then
 reaches itself instead of the cloud**. It notices and stops forwarding rather
 than serving you its own reply labelled as PetKit's. To use proxy mode on such a
 network, set *DNS for upstream lookups* in Setup to a resolver that still answers
@@ -112,10 +114,10 @@ and the tab says so per patch rather than hiding itself.
 
 ## The camera in Home Assistant
 
-Apply **Local Camera Streaming** and the add-on's bundled go2rtc republishes the
+Apply **Local Camera Streaming** and the bundled go2rtc republishes the
 feed as RTSP. The address appears on that patcher's card in the panel and as the
 `Camera Stream URL` sensor — copy it from one of those rather than typing it,
-because the hostname depends on how the add-on was installed. Paste it into a
+because the hostname depends on how this was installed. Paste it into a
 **Generic Camera** in Home Assistant.
 
 Two things worth knowing:
@@ -153,7 +155,7 @@ Bluetooth at all.
 
 ## Troubleshooting
 
-- **No entities appear:** confirm the device reached the add-on (the add-on log
+- **No entities appear:** confirm the device reached it (the log
   shows `Signup` / `State report`), and that the MQTT integration is configured.
 - **Controls show "unknown":** they render from device settings; they populate
   from defaults immediately and update on the first change.

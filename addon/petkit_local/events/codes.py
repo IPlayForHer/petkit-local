@@ -477,9 +477,16 @@ CLOUD_RECORD_TYPES: dict[int, str] = {
 
 MQTT_EVENT_TOPICS: dict[str, EventCode] = {
     # -- litter: work cycle
+    # A real W7H sends this too (live log, 2026-08-01), so the fountain is in
+    # `families` — the set says who EMITS a code, and leaving it litter-only
+    # while a fountain sends it is the sort of gap that makes a table look
+    # complete when it is not. The `mode_from="action"` qualifier is a litter
+    # work mode (NS5) and simply does not resolve on a fountain, which is the
+    # correct outcome: the label stays the plain one rather than borrowing a
+    # litter box's vocabulary.
     "work_start": EventCode(
         kind=KIND_CLEANING, label="Work started", role=ROLE_START,
-        mode_from="action", families=LITTER),
+        mode_from="action", families=LITTER | FOUNTAIN),
     "work_suspend": EventCode(
         kind=KIND_CLEANING, label="Work paused", detail=True, role=ROLE_STOP,
         families=LITTER),
@@ -598,6 +605,19 @@ MQTT_EVENT_TOPICS: dict[str, EventCode] = {
     "drink_start": EventCode(
         kind=KIND_DRINKING, label="Drinking started", detail=True,
         role=ROLE_START, families=FOUNTAIN),
+    # CONFIRMED on a real W7H (live log, 2026-08-01), where it arrived one
+    # second after a `drink_start`. The meaning is the device's own vocabulary
+    # rather than a guess: the reverse-engineered field map names
+    # `addWaterState` "add-water (refill) procedure active", alongside the
+    # `addWaterSwitch` / `addWaterMode` / `addWaterFrequent` settings this same
+    # fountain accepts. Without a row it rendered as "add_water_over (other)".
+    #
+    # Graded on the SHAPE being seen and the name being sourced. Whether it also
+    # reports a result or a volume in `content` is not known — no capture of the
+    # payload itself, only of the topic.
+    "add_water_over": EventCode(
+        kind=KIND_CLEANING, label="Refill done", grade=INFERRED, anchor=True,
+        role=ROLE_DONE, done_word="refilling", families=FOUNTAIN),
     "drink_over": EventCode(
         kind=KIND_DRINKING, label="Drinking done", grade=UNVERIFIED,
         anchor=True, role=ROLE_DONE, done_word="drinking", families=FOUNTAIN),
@@ -756,6 +776,37 @@ FOUNTAIN_ERROR_FLAGS: dict[str, str] = {
     "repL": "Refill pump stalled",
     "repM": "Refill pump fault",
 }
+
+#: Wire names the W7H's `ctrl` registers a settings handler for, from the
+#: reverse-engineered map supplied 2026-07-31 (`wire_to_set_handler`).
+#:
+#: This is the SET side of the protocol, and it is worth writing down because
+#: nothing on our side can detect getting it wrong. A `property.set` naming a
+#: field the firmware has no handler for is accepted by the broker, delivered,
+#: and silently dropped by the device — no error, no reply, no change. From
+#: here that is indistinguishable from a device that is not listening, which is
+#: exactly the report this list exists to make impossible.
+#:
+#: It is also why `pause_fountain`/`resume_fountain` are not published for a
+#: W7H: they wrote `power`, which is absent here.
+#:
+#: The map gives the wire name and the handler it dispatches to; only the wire
+#: name matters to us, so only that is kept. Five differ from the handler
+#: (`timeDisplay`->`timestamp_enable`, `microphone`->`mic_enable`,
+#: `camera`->`camera_enable`, `night`->`irlight_enable`,
+#: `logSwitch`->`log_upload`), which is precisely the trap: the handler name is
+#: NOT what goes on the wire.
+FOUNTAIN_W7H_SET_FIELDS = frozenset({
+    "addWaterMode", "addWaterSwitch", "autoFlush", "autoWaterChange",
+    "awDisturbMode", "camera", "cleanWaterEmptyLight", "cleanWaterLackLight",
+    "disturbMode", "drinkDetection", "flushCycle", "flushIntensity",
+    "flushTime", "fountainMode", "fountainTime", "heaterSwitch", "language",
+    "lightAssist", "lightMode", "logSwitch", "manualLock", "microLight",
+    "microphone", "night", "petDetection", "sleepTime", "smartFrame",
+    "systemSoundEnable", "timeDisplay", "timezone", "toneMode", "upload",
+    "volume", "vomitDetection", "wasteWaterFullLight", "waterChangeCycle",
+    "waterChangeTime", "wifiLightAssist", "wlDisturbMode",
+})
 
 #: Family -> that family's flag names. Litter boxes and feeders send an `err`
 #: object too, but no source names their bits, so they are absent here and

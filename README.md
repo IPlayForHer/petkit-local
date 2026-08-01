@@ -45,7 +45,7 @@ shell commands or a log upload through it.
 ## ✨ Features
 
 - **One container, nothing to maintain around it.** Python in a single process. No database server,
-  no web server, no queue. Install it as a Home Assistant add-on, or `docker compose up`.
+  no web server, no queue. Install it as a Home Assistant app, or `docker compose up`.
 - **Set a device up without the PetKit app at all.** Wi-Fi credentials, the server address and the
   timezone go over Bluetooth straight from your browser.
 - **The recordings stay on your disk.** It stands in for the cloud's object storage, so the clips
@@ -159,19 +159,24 @@ talk you out of it.
 ## 📦 Install
 
 <details>
-<summary><b>Home Assistant add-on</b> — for Home Assistant OS or Supervised</summary>
+<summary><b>Home Assistant app</b> — for Home Assistant OS or Supervised</summary>
 
 <br>
 
-**Settings → Add-ons → Add-on Store → ⋮ → Repositories**, add:
+**Settings → Apps → Install app → ⋮ → Repositories**, add:
 
 ```
 https://github.com/alex-so-3/petkit-local
 ```
 
+> Recent Home Assistant releases renamed **Add-ons** to **Apps** in the interface. If your menu still
+> says *Settings → Add-ons → Add-on Store*, you are on an older version — the same ⋮ → Repositories
+> step is there. Everything under the hood is still called an add-on, so `ha addons`, the Supervisor
+> API and this repository's own layout keep that word.
+
 Install **PetKit Local**, then open its **Configuration** tab before starting it:
 
-- **If you run the Mosquitto add-on**, there is nothing to fill in — the Supervisor hands over the
+- **If you run the Mosquitto app**, there is nothing to fill in — the Supervisor hands over the
   broker and its credentials.
 - **If your broker is anywhere else**, set `ha_mqtt_host` (and `ha_mqtt_user` / `ha_mqtt_pass` if it
   wants them). Leave it empty and everything still works except the part you probably came for:
@@ -179,7 +184,7 @@ Install **PetKit Local**, then open its **Configuration** tab before starting it
 
 `api_url` can stay empty — it asks the Supervisor for your host's LAN IP. Now start it and open the
 panel from the sidebar. Every option, the ports and troubleshooting are in
-[the add-on documentation](addon/DOCS.md).
+[the documentation](addon/DOCS.md).
 
 </details>
 
@@ -188,7 +193,7 @@ panel from the sidebar. Every option, the ports and troubleshooting are in
 
 <br>
 
-Add-ons need the Supervisor, so the add-on store only exists on Home Assistant OS and Supervised.
+Apps need the Supervisor, so the app store only exists on Home Assistant OS and Supervised.
 Everywhere else this runs as an ordinary container — same image, same features, configured on the
 command line instead of from an options screen.
 
@@ -199,7 +204,7 @@ address your devices will call, and your MQTT broker — and start it:
 docker compose up -d --build
 ```
 
-The panel is then on port 8099. Note that it has **no authentication** of its own: under the add-on
+The panel is then on port 8099. Note that it has **no authentication** of its own: as an app
 it sits behind Home Assistant Ingress, and there is no Ingress here. The compose file explains how
 to bind it to localhost instead if the machine is not somewhere you trust.
 
@@ -246,7 +251,7 @@ PetKit's regional servers the app gave it. Your DNS server's query log will name
 every PetKit domain and be done. Note that DNS only changes where a *name* resolves, not the port:
 the device keeps dialling whatever its provisioned `apiServers` URL says, which on a factory device
 is port 80 — so **this has to be reachable on port 80**, or you have to change the port by
-provisioning over BLE instead. The add-on maps its API to host port 8080 by default; a DNS-redirected
+provisioning over BLE instead. The app maps its API to host port 8080 by default; a DNS-redirected
 device needs that changed to 80.
 
 **Ingenic/Linux models** — Purobot, YumShare, EverSweet Ultra AI — enforce HTTPS, so a DNS override

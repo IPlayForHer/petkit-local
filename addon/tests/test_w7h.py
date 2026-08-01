@@ -322,3 +322,76 @@ def test_the_fountain_events_a_real_w7h_sends_are_classified():
         assert code is not None, name
         assert code.kind == kind, name
         assert "w7h" in code.families, name
+
+
+# --- settings writes --------------------------------------------------------
+
+def test_every_settable_w7h_field_is_one_the_firmware_dispatches():
+    """A `property.set` naming a field `ctrl` has no handler for is delivered
+    and silently dropped — no error, no reply, no change. From this side that is
+    indistinguishable from a device that is not listening, so the only defence
+    is to check the name against the firmware's own handler list before
+    publishing an entity that writes it.
+
+    This is what retired the pause/resume buttons on this model: they wrote
+    `power`, which is absent from that list.
+    """
+    from petkit_local.ha.commands import PROPERTY_SET_SUFFIX, handle_ha_command
+
+    device = Device(device_type="w7h", petkit_id=1, serial_number="SN")
+    device.settings = device.default_settings()
+
+    checked = 0
+    for entity in get_entities_for_device(device):
+        if entity.component not in ("switch", "number", "select"):
+            continue
+        if entity.value_path.startswith("capabilities."):
+            continue          # local-only; the STS reply is the control point
+        result = handle_ha_command(
+            device, entity, "ON" if entity.component == "switch" else "1")
+        assert result is not None, f"{entity.key} sends nothing at all"
+        suffix, envelope = result
+        assert suffix == PROPERTY_SET_SUFFIX, f"{entity.key} -> {suffix}"
+        field = next(iter(envelope["params"]))
+        assert field in codes.FOUNTAIN_W7H_SET_FIELDS, (
+            f"{entity.key} writes {field!r}, which this firmware's ctrl "
+            f"registers no set handler for — the device would ignore it")
+        checked += 1
+    assert checked >= 19, f"only {checked} settable entities checked"
+
+
+def test_the_settings_envelope_matches_what_the_device_was_seen_to_accept():
+    """Shape pinned against a real `thing/service/property/set` captured on the
+    wire to this device (2026-07-31)."""
+    from petkit_local.ha.commands import make_mqtt_property_set
+
+    envelope = make_mqtt_property_set({"petDetection": 1})
+    assert envelope["method"] == "thing.service.property.set"
+    assert envelope["version"] == "1.0.0"
+    assert envelope["params"] == {"petDetection": 1}
+    assert str(int(envelope["id"]))          # an epoch-second string
+
+
+def test_the_settings_topic_is_covered_by_what_the_broker_subscribes_it_to():
+    """The W7H, like the T5, sends no SUBSCRIBE of its own — the broker
+    subscribes it on connect. A settings publish landing outside those filters
+    would be accepted by the broker and dropped without a trace."""
+    from petkit_local.mqtt import topics
+
+    pk, dn = "a1c6dbcb01", "d_w7h_20260205W90005"
+    topic = topics.service_topic(pk, dn, "property/set")
+    assert topic == f"/sys/{pk}/{dn}/thing/service/property/set"
+    filters = topics.downstream_filters(pk, dn)
+    # `#` matches every remaining level, which is what makes one filter enough.
+    assert f"/sys/{pk}/{dn}/thing/service/#" in filters
+
+
+def test_the_fountain_events_seen_in_a_live_log_are_not_filed_as_other():
+    """From a running W7H (2026-08-01). `add_water_over` had no row at all and
+    rendered as `add_water_over (other)`; `work_start` was marked litter-only
+    while this fountain plainly sends it."""
+    for name in ("work_start", "drink_start", "add_water_over"):
+        code = codes.lookup(name, "w7h")
+        assert code is not None, f"{name} has no row"
+        assert code.kind != codes.KIND_OTHER, name
+        assert "w7h" in code.families, f"{name} does not list the fountain"

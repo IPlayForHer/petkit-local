@@ -269,7 +269,7 @@ async function loadDevices() {
   if (!ds.length) {
     box.innerHTML =
       '<div class="empty"><div class="big">🐾</div><b>No devices connected yet</b>' +
-      '<p class="mut">Provision a PetKit device over Bluetooth, or point its <code>apiServers</code> URL at this add-on.<br>Open the <a data-action="goto-tab" data-tab="provision">Provision</a> tab to start.</p></div>';
+      '<p class="mut">Provision a PetKit device over Bluetooth, or point its <code>apiServers</code> URL at this app.<br>Open the <a data-action="goto-tab" data-tab="provision">Provision</a> tab to start.</p></div>';
     return;
   }
 
@@ -497,7 +497,12 @@ function renderPanelBody(d) {
   // Capability toggles get their own card below, and the AI detections live on
   // the AI / Pets tab next to the pets they are about — same underlying
   // entities/API, friendlier grouping. Both excluded here or they appear twice.
-  const relocated = e => e.value_path.startsWith('capabilities.') || AI_ENTITY_KEYS.includes(e.key);
+  //
+  // The AI half is conditional on this device HAVING that card: a feeder shares
+  // `pet_detection` with the fountain but has no on-device AI, so relocating it
+  // there would delete the control rather than move it.
+  const relocated = e =>
+    e.value_path.startsWith('capabilities.') || (d.supports_ai && AI_ENTITY_KEYS.includes(e.key));
   // `config`/`diagnostic` sort last within their card, the way HA groups them.
   // Grouping only — filtering any of it out would re-create the divergence in
   // the other direction.
@@ -618,7 +623,7 @@ function renderPanelBody(d) {
       <details class="adv" style="margin-top:10px"><summary>Advanced</summary>
         <div class="row" style="margin-top:8px">
           <div class="col"><label class="mut">Identifier${help(
-            "A number this add-on uses to refer to the accessory; it becomes its Home Assistant device id. The relay only ever reports back by Bluetooth address, so this one is ours to pick. Leave it blank unless you want to reuse the id PetKit's app gave it.",
+            "A number this app uses to refer to the accessory; it becomes its Home Assistant device id. The relay only ever reports back by Bluetooth address, so this one is ours to pick. Leave it blank unless you want to reuse the id PetKit's app gave it.",
           )}</label><input class="ble-id" placeholder="chosen for you"></div>
           <div class="col"><label class="mut">Poll interval (s)${help(
             'How often the relay opens a Bluetooth session to read the accessory.',
@@ -647,7 +652,7 @@ function renderPanelBody(d) {
   ${
     media.length
       ? `<div class="card"><h3>Camera &amp; media${help(
-          'Live view comes from the add-on’s own go2rtc, which reads the device and republishes it as RTSP. It only pulls from the device while somebody is watching. Recordings arrive whether or not any of this is set up.',
+          'Live view comes from this app’s own go2rtc, which reads the device and republishes it as RTSP. It only pulls from the device while somebody is watching. Recordings arrive whether or not any of this is set up.',
         )}</h3>
     <p class="sub">Recorded clips and snapshots are in the <a data-action="goto-tab" data-tab="timeline">Timeline</a> and in Home Assistant's media browser.</p>
     ${
@@ -868,7 +873,26 @@ function entityTable(d, sensors) {
 // Settings the AI card owns. They are ordinary entities — the card just gives
 // them a home next to the recognition toggle they belong with, the way
 // capability switches get their own card.
-const AI_ENTITY_KEYS = ['yowling_detection', 'ph_detection'];
+//
+// The three detections are what the NPU is asked to look for, not settings of
+// the machine around it: each one decides whether a class of event is raised at
+// all. `pet_detection` gates `pet_detect` and the `pet_time` stamp,
+// `drink_detection` gates `drink_start` and `drink_time`, and
+// `vomit_detection` fills the `vomit_info` array a `pet_discern` result
+// carries. Sitting in Controls they read like Auto Flush and Heater, which are
+// plumbing.
+//
+// `relocate` GUARDS ON supports_ai, and must. `pet_detection` also belongs to
+// the feeders (D4H/D4SH), which have a camera but no on-device AI and so get no
+// AI card — moving it unconditionally took the switch out of Controls and gave
+// it nowhere to go, removing it from the panel entirely.
+const AI_ENTITY_KEYS = [
+  'yowling_detection',
+  'ph_detection',
+  'pet_detection',
+  'drink_detection',
+  'vomit_detection',
+];
 
 // Both are Beta in PetKit's own app, and pH has a hardware prerequisite that is
 // invisible from here — without the right litter the toggle is on and nothing
@@ -886,6 +910,8 @@ const ENTITY_HELP = {
     "Listens for meowing while a cat is in the box and records when it heard some. PetKit frames repeated yowling as a possible sign of discomfort — it is a health signal, not a novelty. Beta in PetKit's app.",
   ph_detection:
     "Reads the colour of PetKit's own pH-indicator litter from the camera. With ordinary litter it measures nothing at all. Beta in PetKit's app.",
+  vomit_detection:
+    'Watches for vomiting. A detection result carries a `vomit_info` list, which stays empty while this is off.',
 };
 
 //: Values typed into a number control but not yet sent, keyed "<id>:<key>".
@@ -1222,7 +1248,7 @@ let _devlogT = null;
 
 const DEVLOG_REASONS = {
   no_log_root: 'no log directory is configured',
-  no_bucket_endpoint: 'this add-on has no bucket address, so there is nowhere to send the device',
+  no_bucket_endpoint: 'this app has no bucket address, so there is nowhere to send the device',
   authority_not_splittable:
     'the bucket address cannot be split into a host the device can build — it needs a dotted name or IP',
 };
@@ -1412,7 +1438,7 @@ async function loadCapture() {
       what +
       '<p class="sub">Turn <b>Traffic capture</b> on in <a data-action="goto-tab" data-tab="setup">Setup → Settings</a> to start recording to <code>' +
       esc(c.dir || '/data/capture') +
-      '</code>. It applies immediately — there is no add-on option and no restart.</p>';
+      '</code>. It applies immediately — there is no configuration option and no restart.</p>';
     return;
   }
   if (!c.files.length) {
@@ -1421,7 +1447,7 @@ async function loadCapture() {
       what +
       '<p class="mut">No files yet at <code>' +
       esc(c.dir) +
-      '</code> — traffic will appear once a device talks to the add-on.</p>';
+      '</code> — traffic will appear once a device talks to this app.</p>';
     return;
   }
   v.innerHTML =
@@ -1548,8 +1574,8 @@ async function loadSetup() {
 
   v.innerHTML = `
   <div class="card"><h3>Settings${help(
-    'Proxy mode and capture live here and nowhere else — they are not add-on options. Both apply immediately and survive a restart.',
-  )}${w ? '' : ' <span class="badge warn">read-only — running outside the add-on</span>'}</h3>
+    'Proxy mode and capture live here and nowhere else — they are not configuration options. Both apply immediately and survive a restart.',
+  )}${w ? '' : ' <span class="badge warn">read-only — running outside Home Assistant</span>'}</h3>
     <div class="ctrls">
       <label class="ctrl"><span>Proxy mode<br><span class="mut" style="font-size:11px">forward every device request to the real PetKit cloud and answer with its reply</span></span>${sw('proxy_mode', s.proxy_mode)}</label>
       <label class="ctrl"><span>Traffic capture<br><span class="mut" style="font-size:11px">record HTTP + MQTT to JSONL (see Capture tab)</span></span>${sw('capture', s.capture)}</label>
@@ -1571,7 +1597,7 @@ async function loadSetup() {
           : ''
       }
       <label class="mut" style="display:block;margin-top:10px">DNS for upstream lookups${help(
-        'Only used to find the server above. Leave empty unless your router or Pi-hole points PetKit’s names at this add-on — then it would point them here for us too, and proxy mode would reach itself instead of the cloud.',
+        'Only used to find the server above. Leave empty unless your router or Pi-hole points PetKit’s names at this app — then it would point them here for us too, and proxy mode would reach itself instead of the cloud.',
       )}</label>
       <span class="cn" style="display:flex;gap:6px;margin-top:4px">
         <input id="proxyDns" value="${esc(s.proxy_dns || '')}" ${w ? '' : 'disabled'} placeholder="empty = system resolver">
@@ -1591,8 +1617,9 @@ async function loadSetup() {
     ${on ? `<div id="blockedView" style="margin-top:14px"></div>` : ''}
   </div>
   <div class="card"><h3>Connection <span class="badge">restart to change</span></h3>
-    <p class="sub">Bound at startup — set these in the add-on <b>Configuration</b> tab, then restart.</p>
+    <p class="sub">Bound at startup — set these in the <b>Configuration</b> tab, then restart.</p>
     <table><tbody>
+      <tr><td>Version</td><td><code>${esc(i.version || '?')}</code></td><td class="mut">The code actually running. If an update did not take effect this still shows the old number, which is the quickest way to tell a stale build from a real bug.</td></tr>
       <tr><td>API URL (apiServers)</td><td><code>${esc(i.api_url)}</code></td><td class="mut">The URL a device calls. Ingenic devices get it via BLE provisioning; ESP32 via DNS redirect.</td></tr>
       <tr><td>MQTT host</td><td><span class="badge ok">automatic</span></td><td class="mut">No global setting — every device is handed our own broker (derived from the API URL host). A patched <code>ctrl</code> connects over MQTT; an unpatched one simply heartbeats over HTTP (it does not crash). Commands fall back to the HTTP heartbeat when there\'s no live MQTT session.</td></tr>
       <tr><td>MQTT broker port</td><td><code>${esc(i.mqtt_port)}</code>${i.mqtt_tls ? ` · TLS <code>${esc(i.mqtt_tls_port)}</code>` : ''}</td><td class="mut">TLS cert ${i.cert_exists ? '<span class="badge ok">present</span>' : '<span class="badge bad">missing</span>'}${help('The self-signed certificate the broker presents. "missing" means the file named by cert_path is not there, and a device that expects TLS will not connect.')}</td></tr>
@@ -1680,7 +1707,7 @@ function upstreamStatus(counts) {
     '</p>';
   if (refused.length && !ok)
     html +=
-      '<p class="sub mut">The cloud is refusing every session-bearing call — expected once this add-on ' +
+      '<p class="sub mut">The cloud is refusing every session-bearing call — expected once this app ' +
       'has taken the device over, since the session it presents is one we issued. The device is served our own answers throughout.</p>';
   return html;
 }
@@ -1725,7 +1752,7 @@ async function loadBlocked(counts) {
   }
   v.innerHTML =
     `<h3 style="margin-top:0">Blocked attempts <span class="badge bad">${esc(rows.length)}</span>${help(
-      'Instructions the real PetKit cloud sent that this add-on refused to pass on to your device. Kept in the database, so this list outlives a restart.',
+      'Instructions the real PetKit cloud sent that this app refused to pass on to your device. Kept in the database, so this list outlives a restart.',
     )}</h3>
     <table><thead><tr><th>When</th><th>What</th><th>Endpoint</th><th>Payload</th></tr></thead><tbody>` +
     rows

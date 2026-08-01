@@ -34,14 +34,7 @@ MIPS_ELF_BASE = 0x400000
 
 SYMBOL_NAME = "mbedtls_x509_crt_verify_with_profile"
 
-# Original prologue (MIPS32 LE):
-#   lui   $gp, 0x000b          = 0b 00 1c 3c
-#   addiu $gp, $gp, -0x6e48    = b8 91 9c 27
-#   addu  $gp, $gp, $t9        = 21 e0 99 03
-#   addiu $sp, $sp, -0x68      = 98 ff bd 27
-ORIGINAL_PROLOGUE = b'\x0b\x00\x1c\x3c\xb8\x91\x9c\x27\x21\xe0\x99\x03\x98\xff\xbd\x27'
-
-# Replacement (16 bytes, same size as the overwritten prologue):
+# Replacement (16 bytes, overwrites the function prologue):
 #
 # MIPS o32 ABI: args 1-4 in $a0-$a3, arg 5+ on stack.
 #   arg6 = uint32_t *flags  →  at sp+0x14 on entry
@@ -56,6 +49,10 @@ PATCH_BYTES = (
     b'\x08\x00\xe0\x03'   # jr   $ra
     b'\x21\x10\x00\x00'   # move $v0, $zero
 )
+
+#: The third instruction of any MIPS PIC function prologue — `addu $gp,$gp,$t9`.
+#: Constant across all builds (the first two words carry per-binary $gp offsets).
+_GP_SETUP_INSN = b'\x21\xe0\x99\x03'
 
 
 def _find_via_dynsym(data: bytes) -> int | None:
@@ -72,6 +69,11 @@ def _find_via_dynsym(data: bytes) -> int | None:
             if sym.name == SYMBOL_NAME and sym["st_info"]["type"] == "STT_FUNC":
                 vaddr = sym["st_value"]
                 offset = vaddr - MIPS_ELF_BASE
+                if offset < 0 or offset >= len(data):
+                    log.warning("%s symbol at vaddr 0x%x maps to offset 0x%x, "
+                                "outside file (%d bytes)", SYMBOL_NAME, vaddr,
+                                offset, len(data))
+                    return None
                 log.info("Found %s via .dynsym at vaddr 0x%x (file offset 0x%x)",
                          SYMBOL_NAME, vaddr, offset)
                 return offset
@@ -80,25 +82,64 @@ def _find_via_dynsym(data: bytes) -> int | None:
     return None
 
 
+def _is_mips_pic_prologue(data: bytes, offset: int) -> bool:
+    """Whether the 16 bytes at `offset` match the shape of a MIPS PIC prologue.
+
+    Every PIC function starts with:
+      lui   $gp, ANY       → ?? ?? 1c 3c
+      addiu $gp, $gp, ANY  → ?? ?? 9c 27
+      addu  $gp, $gp, $t9  → 21 e0 99 03  (constant)
+      addiu $sp, $sp, ANY  → ?? ?? bd 27
+    """
+    if offset + 16 > len(data):
+        return False
+    w = data[offset:offset + 16]
+    return (w[2:4] == b'\x1c\x3c'       # lui $gp
+            and w[6:8] == b'\x9c\x27'   # addiu $gp,$gp
+            and w[8:12] == _GP_SETUP_INSN
+            and w[14:16] == b'\xbd\x27')  # addiu $sp,$sp
+
+
 def _find_via_pattern(data: bytes) -> int | None:
-    offset = data.find(ORIGINAL_PROLOGUE)
-    if offset == -1:
+    """Search for the function by its unique prologue shape near the symbol name."""
+    name_bytes = SYMBOL_NAME.encode()
+    name_pos = data.find(name_bytes)
+    if name_pos == -1:
         return None
-    if data.count(ORIGINAL_PROLOGUE) > 1:
-        log.warning("Multiple matches for %s prologue — ambiguous", SYMBOL_NAME)
+
+    start = 0
+    candidates: list[int] = []
+    while True:
+        idx = data.find(_GP_SETUP_INSN, start)
+        if idx == -1:
+            break
+        prologue_start = idx - 8
+        if prologue_start >= 0 and _is_mips_pic_prologue(data, prologue_start):
+            candidates.append(prologue_start)
+        start = idx + 4
+
+    if not candidates:
         return None
-    log.info("Found %s via byte pattern at file offset 0x%x", SYMBOL_NAME, offset)
-    return offset
+    if len(candidates) == 1:
+        log.info("Found %s via byte pattern at file offset 0x%x", SYMBOL_NAME,
+                 candidates[0])
+        return candidates[0]
+
+    # Many PIC prologues exist; narrow by proximity to the symbol string.
+    nearby = [c for c in candidates if abs(c - name_pos) < 0x4000]
+    if len(nearby) == 1:
+        log.info("Found %s via byte pattern (proximity) at file offset 0x%x",
+                 SYMBOL_NAME, nearby[0])
+        return nearby[0]
+
+    log.warning("Found %d prologue candidates for %s, %d near the string — "
+                "ambiguous", len(candidates), SYMBOL_NAME, len(nearby))
+    return None
 
 
 def find_offset(data: bytes) -> int:
     """Find mbedtls_x509_crt_verify_with_profile in the ctrl binary."""
     offset = _find_via_dynsym(data)
-    if offset is not None:
-        if data[offset:offset + len(ORIGINAL_PROLOGUE)] != ORIGINAL_PROLOGUE:
-            log.warning("Symbol offset 0x%x doesn't match expected prologue, "
-                        "trying byte pattern", offset)
-            offset = None
     if offset is None:
         offset = _find_via_pattern(data)
     if offset is None:

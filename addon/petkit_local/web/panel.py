@@ -90,7 +90,9 @@ from petkit_local.patchers.ssh import (
 )
 from petkit_local.patchers.verify import assert_download_plausible, assert_mips_elf
 from petkit_local.utils.coerce import to_int
-from petkit_local.utils.const import DEVICE_NAMES, DEVICE_TYPES_AI, device_display_name
+from petkit_local.utils.const import (
+    DEVICE_NAMES, DEVICE_TYPES_AI, VERSION, device_display_name,
+)
 from petkit_local.utils.dicts import dig_path
 from petkit_local.utils.jsonio import atomic_write_json, read_json
 from petkit_local.devices.ble import BLE_TYPES, normalize_mac
@@ -642,6 +644,9 @@ async def api_info(request: web.Request) -> web.Response:
     cert = cfg.get("cert_path", "")
     ha_pub = request.app.get("ha_publisher")
     return web.json_response({
+        # The running version. First thing to check when a device reports the
+        # entities of a release you thought you had replaced.
+        "version": VERSION,
         "api_url": cfg.get("api_url"),
         "mqtt_tls": cfg.get("mqtt_tls"),
         "mqtt_tls_port": cfg.get("mqtt_tls_port"),

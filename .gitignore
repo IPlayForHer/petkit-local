@@ -38,3 +38,7 @@ dist/
 
 # Machine-specific Claude Code permissions (contains LAN addresses/paths)
 .claude/settings.local.json
+
+# Real device firmware images for patcher integration tests (multi-MB ELF blobs).
+# Run `pytest --firmware` after populating addon/tests/firmware/ — see the test file.
+addon/tests/firmware/

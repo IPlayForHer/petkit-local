@@ -266,6 +266,31 @@ FOUNTAIN_W7H_SENSORS = [
 
 FOUNTAIN_W7H_BINARY_SENSORS = [
     # Consumable-equivalent: the one thing on this device that needs a human.
+    #
+    # DISPUTED, and deliberately not changed. A W7H owner reports this is the
+    # drinking tray being full, not the waste tank. Kept as the waste tank
+    # because the device's own `ctrl` (ARM binary, firmware 456, read directly)
+    # says the two are separate things and gives the tray its own everything:
+    #
+    #   * separate voice prompts — `waste_tank_full.aac` AND `water_tray_full.aac`
+    #   * a dedicated getter, `pk_hmi_get_water_tary_full_sta`, with its own log
+    #     line ("water tary full sta now=%d,read=%d") and internal flag
+    #     `tary_over_f`
+    #   * its own error bit, `taryF`, which reaches the Error sensor as
+    #     "Tray full" — so a full tray is already reported, elsewhere
+    #   * `stgFullState`'s own log lines sit among the water-cycle handlers,
+    #     directly after "drain water over" — the point at which drained water
+    #     has just arrived somewhere
+    #
+    # and because `stgInstall`, its prefix-mate, tracks the SEWAGE_INSTALL halls
+    # (`hall_DKL`/`hall_DKR`), not the tray hall (`hall_TY` -> `wtInstall`).
+    #
+    # The likeliest explanation of the report is in the field map itself, which
+    # warns that `hall_DH` "often stays 1 even when the user thinks the tank is
+    # empty" — an always-on sensor invites exactly this reinterpretation.
+    #
+    # What would settle it: when this reads on, look at the Error sensor. If the
+    # tray is what is full, `taryF` sets and Error says "Tray full".
     EntityDef(component="binary_sensor", key="waste_tank_full", name="Waste Tank Full",
               value_path="state.stgFullState", device_class="problem",
               icon="mdi:delete-alert"),

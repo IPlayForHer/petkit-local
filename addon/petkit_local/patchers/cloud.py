@@ -38,7 +38,8 @@ ISCC_PATCHED = b'\x21\x80\x00\x00'   # move s0, zero
 def _find_isCClassIP(data: bytes) -> int:
     """Find isCClassIP patch point via symbol table or byte pattern."""
     for needle in (ISCC_ORIGINAL, ISCC_PATCHED):
-        offset = _find_symbol_last_insn(data, "isCClassIP", needle)
+        offset = _find_insn_in_function(data, "isCClassIP", needle,
+                                        label="isCClassIP xori/patched")
         if offset is not None:
             return offset
     offset = _find_by_pattern(data, ISCC_ORIGINAL,
@@ -82,9 +83,13 @@ def _find_upload_connect_to(data: bytes) -> int:
         opcode = (word >> 26) & 0x3F
         rs = (word >> 21) & 0x1F
         rt = (word >> 16) & 0x1F
-        if opcode == 4 and rt == 0 and rs != 0:
+        if opcode == 4 and rt == 0:
             abs_offset = start + insn_offset
-            log.info("Found CONNECT_TO guard beqz $%d at 0x%x", rs, abs_offset)
+            if rs == 0:
+                log.info("Found CONNECT_TO guard (already patched to b) at 0x%x",
+                         abs_offset)
+            else:
+                log.info("Found CONNECT_TO guard beqz $%d at 0x%x", rs, abs_offset)
             return abs_offset
     raise ValueError("Cannot find beqz before CURLOPT_CONNECT_TO")
 
@@ -110,17 +115,23 @@ def _get_function_range(data: bytes, func_name: str) -> tuple[int, int] | None:
     return None
 
 
-def _find_symbol_last_insn(data: bytes, func_name: str, expected: bytes) -> int | None:
-    """Find a function's last instruction via symbol size."""
+def _find_insn_in_function(data: bytes, func_name: str, needle: bytes,
+                           label: str = "") -> int | None:
+    """Find a unique instruction within a named function's range."""
     func_range = _get_function_range(data, func_name)
     if not func_range:
         return None
     start, end = func_range
-    offset = end - len(expected)
-    if data[offset:offset + len(expected)] == expected:
-        log.info("Found %s last instruction via symbol at 0x%x", func_name, offset)
-        return offset
-    return None
+    region = data[start:end]
+    idx = region.find(needle)
+    if idx == -1:
+        return None
+    if region.count(needle) > 1:
+        log.warning("Multiple %s matches in %s — ambiguous", label, func_name)
+        return None
+    offset = start + idx
+    log.info("Found %s in %s via symbol range at 0x%x", label, func_name, offset)
+    return offset
 
 
 def _find_by_pattern(data: bytes, pattern: bytes, context_before: bytes = b"",

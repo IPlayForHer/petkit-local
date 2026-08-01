@@ -21,6 +21,20 @@ from petkit_local.ai.pets import PetRegistry
 from petkit_local.events.store import EventStore
 
 
+def pytest_addoption(parser):
+    parser.addoption("--firmware", action="store_true", default=False,
+                     help="run tests that need real firmware in tests/firmware/")
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--firmware"):
+        return
+    skip = pytest.mark.skip(reason="needs --firmware (and tests/firmware/)")
+    for item in items:
+        if "firmware" in item.keywords:
+            item.add_marker(skip)
+
+
 @pytest.fixture
 async def event_store(tmp_path: Path) -> AsyncIterator[EventStore]:
     """An empty EventStore under a per-test directory.

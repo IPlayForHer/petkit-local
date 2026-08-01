@@ -33,6 +33,7 @@ ELFDATA2LSB = 1
 ET_EXEC = 2
 ET_DYN = 3
 EM_MIPS = 8
+EM_ARM = 40
 
 #: Enough bytes to read `e_machine`, which is the last field we look at.
 _MIN_ELF_HEADER = 20

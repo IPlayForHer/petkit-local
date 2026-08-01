@@ -101,7 +101,10 @@ PASSTHROUGH_ATTESTED = {
     # meaning in the reverse-engineered `ctrl` field map supplied alongside it.
     # Two independent sources agreeing on the same 42-key payload is the
     # strongest evidence any row in this file has.
-    "stgFullState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
+    # MEANING disputed by an owner ("this is the water tray"); kept as the
+    # waste tank on the firmware's own evidence. See the long note beside
+    # the `waste_tank_full` EntityDef in ha/entities/sensors.py.
+    "stgFullState": "W7H property/post 2026-07-31; ctrl map; W7H ctrl 456 log strings",
     "cwtState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
     "wtState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
     "heatInstall": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",

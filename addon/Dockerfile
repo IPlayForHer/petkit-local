@@ -120,6 +120,7 @@ RUN set -eux; \
     echo "${sha}  /usr/local/bin/go2rtc" | sha256sum -c -; \
     chmod +x /usr/local/bin/go2rtc
 
+COPY pyproject.toml .
 COPY petkit_local ./petkit_local
 
 ENV PYTHONPATH=/opt/petkit-local \

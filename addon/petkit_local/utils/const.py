@@ -10,6 +10,21 @@ The sets are the raw data; `devices/base.py` exposes them as the `Device.is_*`
 predicates the rest of the code actually reads.
 """
 
+#: The running version, shown in the panel's Setup tab and served by /api/info.
+#:
+#: A literal, not `importlib.metadata`: the Dockerfile copies the package in
+#: rather than pip-installing it, so there is no distribution to ask, and the
+#: add-on has no reliable way to read its own `config.yaml` at runtime.
+#:
+#: `tests/test_version.py` asserts it equals `config.yaml` and `pyproject.toml`,
+#: which is what stops a bump from landing in two places out of three.
+#:
+#: Why the panel needs this at all: a W7H owner updated the add-on, still saw
+#: the old entities, and there was no way — for them or for us — to tell whether
+#: the new code was running. The entity COUNT eventually gave it away. A version
+#: on the screen answers in one glance what took a screenshot and an inference.
+VERSION = "1.2.0"
+
 DEVICE_TYPES_LITTER = {"t3", "t4", "t5", "t6", "t7"}
 DEVICE_TYPES_FEEDER = {"feeder", "feedermini", "d3", "d4", "d4s", "d4h", "d4sh"}
 DEVICE_TYPES_WATER_FOUNTAIN = {"w4", "w5", "ctw2", "ctw3", "w7h"}
