@@ -87,8 +87,10 @@ The device must resolve `api_url` to this app.
 **BLE provisioning works on every model** and is the most reliable route — see
 below.
 
-**ESP32 models** (T3/T4/D3/D4/W4/W5/CTW2/CTW3) can also be redirected by DNS,
-because they talk plain HTTP. There is no one name to point here: like the Linux
+**ESP32 models** (T3/T4/D3/D4/D4S, Feeder, Feeder Mini) can also be redirected
+by DNS, because they talk plain HTTP. The EverSweet fountains are not on that
+list and never will be: they have no network of their own, so there is no name
+to redirect (see the README's supported-devices table). There is no one name to point here: like the Linux
 models, they are given their API server during Bluetooth setup, so it is
 whichever of PetKit's regional servers the app handed that device. Find it in
 your DNS server's query log, or redirect every PetKit domain. The device dials

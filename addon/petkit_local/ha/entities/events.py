@@ -34,3 +34,24 @@ FEEDER_EVENTS = [
               options=["feed_start", "feed_stop", "feed_over",
                        "eat_start", "eat_over"]),
 ]
+
+#: The W7H's events. No other fountain publishes any: the Bluetooth EverSweets
+#: run no jobs, report no drinking, and cannot reach us at all.
+#:
+#: The keys are fixed by `events/ingest.py::KIND_TO_ENTITY`, which dispatches on
+#: the event's KIND — so this is `cleaning_event` even though what it fires is a
+#: water-treatment job. `options` is not: HA silently rejects an event_type not
+#: listed, and the litter list (`work_continue`, `dump_over`, ...) names cycles
+#: this device does not have. Before this existed a fountain's `work_start`
+#: published to a discovery topic the fountain had never announced.
+FOUNTAIN_W7H_EVENTS = [
+    EntityDef(component="event", key="cleaning_event", name="Work Event",
+              icon="mdi:water-sync",
+              options=["work_start", "add_water_over"]),
+    EntityDef(component="event", key="drinking_event", name="Drinking Event",
+              icon="mdi:cup-water",
+              options=["drink_start", "drink_over"]),
+    EntityDef(component="event", key="error_event", name="Error Event",
+              icon="mdi:alert",
+              options=["error_start", "error_over"]),
+]

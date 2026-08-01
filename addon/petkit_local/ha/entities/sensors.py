@@ -228,7 +228,7 @@ FOUNTAIN_BINARY_SENSORS = [
 ]
 
 # --- W7H (EverSweet Ultra AI) ----------------------------------------------
-# The W7H shares almost nothing with the ESP32 fountains above: no filter, no
+# The W7H shares almost nothing with the fountains above: no filter, no
 # battery, no `lackWarning`, and a mechanism the others do not have (a clean
 # tank, a sewage tank, a lift valve, a heater and a disinfect cycle). Its state
 # fields are the ones a real `property/post` carries, documented in the
@@ -254,8 +254,9 @@ FOUNTAIN_W7H_SENSORS = [
     # rather than behind `options`, because a label per code would be invented.
     EntityDef(component="sensor", key="clean_tank_state", name="Clean Water Tank State",
               value_path="state.cwtState", icon="mdi:water", entity_category="diagnostic"),
-    EntityDef(component="sensor", key="tray_state", name="Drinking Tray State",
-              value_path="state.wtState", icon="mdi:bowl", entity_category="diagnostic"),
+    EntityDef(component="sensor", key="waste_tank_state", name="Waste Tank State",
+              value_path="state.wtState", icon="mdi:delete-variant",
+              entity_category="diagnostic"),
     # Why the device last restarted. A W7H that connects and then does nothing
     # is a real failure mode — one cost a support round-trip before a reboot
     # fixed it — and this is the field that says a restart happened at all.
@@ -267,33 +268,21 @@ FOUNTAIN_W7H_SENSORS = [
 FOUNTAIN_W7H_BINARY_SENSORS = [
     # Consumable-equivalent: the one thing on this device that needs a human.
     #
-    # DISPUTED, and deliberately not changed. A W7H owner reports this is the
-    # drinking tray being full, not the waste tank. Kept as the waste tank
-    # because the device's own `ctrl` (ARM binary, firmware 456, read directly)
-    # says the two are separate things and gives the tray its own everything:
+    # `stgFullState` is the DRINKING TRAY, not the waste tank. A W7H owner said
+    # so; the firmware settles it. In W7H 456 `ctrl` the field is written by
+    # `set_prop(0x0d)`, whose value comes from the reader at 0x62774 — and that
+    # reader's own name literal, used by its logger, is
+    # `pk_hmi_get_water_tary_full_sta`. The log line printed one instruction
+    # before the write reads "water tary full sta now=%d,read=%d".
     #
-    #   * separate voice prompts — `waste_tank_full.aac` AND `water_tray_full.aac`
-    #   * a dedicated getter, `pk_hmi_get_water_tary_full_sta`, with its own log
-    #     line ("water tary full sta now=%d,read=%d") and internal flag
-    #     `tary_over_f`
-    #   * its own error bit, `taryF`, which reaches the Error sensor as
-    #     "Tray full" — so a full tray is already reported, elsewhere
-    #   * `stgFullState`'s own log lines sit among the water-cycle handlers,
-    #     directly after "drain water over" — the point at which drained water
-    #     has just arrived somewhere
-    #
-    # and because `stgInstall`, its prefix-mate, tracks the SEWAGE_INSTALL halls
-    # (`hall_DKL`/`hall_DKR`), not the tray hall (`hall_TY` -> `wtInstall`).
-    #
-    # The likeliest explanation of the report is in the field map itself, which
-    # warns that `hall_DH` "often stays 1 even when the user thinks the tank is
-    # empty" — an always-on sensor invites exactly this reinterpretation.
-    #
-    # What would settle it: when this reads on, look at the Error sensor. If the
-    # tray is what is full, `taryF` sets and Error says "Tray full".
-    EntityDef(component="binary_sensor", key="waste_tank_full", name="Waste Tank Full",
+    # This shipped as "Waste Tank Full" from 1.1.0 on the opposite reading: that
+    # a dedicated tray getter and a separate `taryF` error bit meant the tray
+    # was already covered elsewhere, so `stg*` had to be the tank. The dedicated
+    # getter is what FILLS this field. The whole `stg*` / `wt*` pair is the
+    # other way round from what we assumed — see `waste_tank_installed` below.
+    EntityDef(component="binary_sensor", key="tray_full", name="Tray Full",
               value_path="state.stgFullState", device_class="problem",
-              icon="mdi:delete-alert"),
+              icon="mdi:cup-water"),
     # Running states.
     EntityDef(component="binary_sensor", key="heating", name="Heating",
               value_path="state.heatState", device_class="running",
@@ -301,7 +290,11 @@ FOUNTAIN_W7H_BINARY_SENSORS = [
     EntityDef(component="binary_sensor", key="pump_running", name="Circulation Pump",
               value_path="state.pumpState", device_class="running",
               icon="mdi:pump"),
-    EntityDef(component="binary_sensor", key="transfer_pump_running", name="Transfer Pump",
+    # Two pumps, and the firmware names them: `pumpState` is read by the setter
+    # logging "loop pump curr num", `waterPumpState` by the one logging "add
+    # pump curr num". So this is the pump that DRAWS from the clean tank, not a
+    # generic "transfer".
+    EntityDef(component="binary_sensor", key="refill_pump_running", name="Refill Pump",
               value_path="state.waterPumpState", device_class="running",
               icon="mdi:pump"),
     EntityDef(component="binary_sensor", key="refilling", name="Refilling",
@@ -314,14 +307,21 @@ FOUNTAIN_W7H_BINARY_SENSORS = [
               value_path="state.disinfectState", device_class="running",
               icon="mdi:shimmer"),
     # Assembly, seated or not. All diagnostic: they answer "why won't it run".
-    EntityDef(component="binary_sensor", key="waste_tank_installed", name="Waste Tank Installed",
-              value_path="state.stgInstall", icon="mdi:delete-empty",
+    #
+    # `stg*` is the TRAY and `wt*` is the WASTE tank — the opposite of what the
+    # prefixes suggest and of what this file claimed until 1.4.0. Both writers
+    # were read out of W7H 456 `ctrl`: `stgInstall` is given the return of the
+    # predicate at 0x62766, the same one that guards the "Not work water tary
+    # unstall" refusal, and `wtInstall` the return of 0x9d334, the predicate
+    # behind "Not work dirty tank unstall".
+    EntityDef(component="binary_sensor", key="tray_installed", name="Tray Installed",
+              value_path="state.stgInstall", icon="mdi:cup-outline",
               entity_category="diagnostic"),
     EntityDef(component="binary_sensor", key="clean_tank_installed", name="Clean Water Tank Installed",
               value_path="state.cwtInstall", icon="mdi:water-check",
               entity_category="diagnostic"),
-    EntityDef(component="binary_sensor", key="tray_installed", name="Drinking Tray Installed",
-              value_path="state.wtInstall", icon="mdi:bowl",
+    EntityDef(component="binary_sensor", key="waste_tank_installed", name="Waste Tank Installed",
+              value_path="state.wtInstall", icon="mdi:delete-empty",
               entity_category="diagnostic"),
     # NOT device_class "lock": HA reads that class as on = UNLOCKED, and this
     # field is 1 when the lock is CLOSED. The class would invert it silently.
@@ -335,6 +335,11 @@ FOUNTAIN_W7H_BINARY_SENSORS = [
     EntityDef(component="binary_sensor", key="lift_valve", name="Lift Valve",
               value_path="state.liftValveState", device_class="running",
               icon="mdi:valve", entity_category="diagnostic"),
+    # The firmware calls this one the valve LOCATION, not motion: the reader
+    # feeding `liftLiveState` logs "valve loacation sta now=%d,read=%d" (sic)
+    # and names itself `pk_hmi_get_valve_location_sta`. Left as "Lift Moving"
+    # because nobody has watched it change against the mechanism yet, and a
+    # rename orphans the entity for the sake of a guess replacing a guess.
     EntityDef(component="binary_sensor", key="lift_moving", name="Lift Moving",
               value_path="state.liftLiveState", device_class="running",
               icon="mdi:arrow-up-down", entity_category="diagnostic"),
@@ -352,10 +357,11 @@ FOUNTAIN_W7H_BINARY_SENSORS = [
 #: The raw hall switches behind the derived flags above, as diagnostics.
 #:
 #: Worth publishing separately because the derived flag can disagree with them
-#: and the disagreement is the diagnosis: the map records `stgInstall` reading 1
-#: while `hall_DKR` reads 0, i.e. the sewage tank is seated on one side only.
-#: A user chasing "it says the tank is in but it won't flush" has no other way
-#: to see that.
+#: and the disagreement is the diagnosis: the real capture has `wtInstall`
+#: reading 1 while `hall_DKR` reads 0, i.e. the waste tank is seated on one side
+#: only. A user chasing "it says the tank is in but it won't flush" has no other
+#: way to see that. (The pairing is `wtInstall` <- `hall_DKL`/`hall_DKR` and
+#: `stgInstall` <- `hall_TY`, not the reverse — see the install block above.)
 #:
 #: Polarity is 1 = closed / magnet present / installed, as the firmware reports
 #: it. The map warns that the exact NO/NC wiring may differ per pin, so these

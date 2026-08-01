@@ -101,12 +101,15 @@ PASSTHROUGH_ATTESTED = {
     # meaning in the reverse-engineered `ctrl` field map supplied alongside it.
     # Two independent sources agreeing on the same 42-key payload is the
     # strongest evidence any row in this file has.
-    # MEANING disputed by an owner ("this is the water tray"); kept as the
-    # waste tank on the firmware's own evidence. See the long note beside
-    # the `waste_tank_full` EntityDef in ha/entities/sensors.py.
-    "stgFullState": "W7H property/post 2026-07-31; ctrl map; W7H ctrl 456 log strings",
+    # These three had their MEANING corrected in 1.4.0. The owner was right and
+    # the field map was read the wrong way round: `stg*` is the tray, `wt*` the
+    # waste tank. Evidence is the write itself in W7H 456 `ctrl` — the reader
+    # feeding `stgFullState` names itself `pk_hmi_get_water_tary_full_sta`, and
+    # the one feeding `wtInstall` is the predicate behind "Not work dirty tank
+    # unstall". Shape unchanged; only the label was wrong.
+    "stgFullState": "W7H ctrl 456: set_prop(0x0d) <- pk_hmi_get_water_tary_full_sta",
     "cwtState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
-    "wtState": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
+    "wtState": "W7H ctrl 456: set_prop(0x04), logged 'waste tank num now'",
     "heatInstall": "W7H property/post 2026-07-31; ctrl map params_install_and_levels",
     "pumpState": "W7H property/post 2026-07-31; ctrl map params_work_states",
     "waterPumpState": "W7H property/post 2026-07-31; ctrl map params_work_states",
@@ -128,7 +131,7 @@ PASSTHROUGH_UNVERIFIED = {
     # `drinkTime` is back after a day out of this list. A real W7H does report
     # `device.drink_time`, but the map says it is the unix TIME OF THE LAST
     # DRINK, not a count — so it feeds the `last_drink` timestamp sensor, and
-    # this key stays what it always was: the ESP32 fountains' cloud-model name
+    # this key stays what it always was: the other fountains' cloud-model name
     # for a counter nobody here has seen on the wire.
     "filterLeftDays", "lackWarning", "heatRealTemp", "drinkTime",
     "desiccantLeftDays", "batteryPower",

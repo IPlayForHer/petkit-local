@@ -78,7 +78,8 @@ def get_mqtt_state_topics(device: Device) -> list[str]:
     spec = spec_for_device(device)
     if spec is None:
         return []
-    return spec.state_topics_for(has_camera=device.is_camera)
+    return spec.state_topics_for(has_camera=device.is_camera,
+                                 device_type=device.device_type)
 
 
 class PersistedRegistry:
@@ -342,6 +343,23 @@ class DeviceRegistry(PersistedRegistry):
         _merge_default_settings(device)
         self._devices[petkit_id] = device
         log.info("New device registered: type=%s id=%d sn=%s", device_type, petkit_id, device.serial_number)
+        if device.is_ble_only:
+            # Registered anyway, never refused: a device is never told no (see
+            # `handle_catchall`), and refusing here would leave whatever really
+            # made this request with no answer at all.
+            #
+            # But it should not have been possible. These models have no radio
+            # that can reach us; they pair over BLE to a WiFi device that relays
+            # for them. So either the codename in the URL is not the model, or
+            # `DEVICE_TYPES_BLE_ONLY` is wrong about this one — and if it is,
+            # this line is how we find out instead of the entity list quietly
+            # being the wrong one.
+            log.warning(
+                "%s (id=%d) registered over the network, but %s is a BLE-only "
+                "model with no WiFi of its own — it should reach us relayed "
+                "through a litter box or feeder, not directly. Please report "
+                "this, with the device's product name.",
+                device_type, petkit_id, device_type)
         # Not debounced: this is where MQTT credentials are minted, and losing
         # them means the device reconnects with credentials we no longer know.
         self.save()

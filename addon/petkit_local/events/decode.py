@@ -284,16 +284,17 @@ def decode_err(value: Any) -> tuple[str | None, str]:
     return None, UNKNOWN
 
 
-def work_mode_name(value: Any) -> str | None:
+def work_mode_name(value: Any, device_type: str | None = None) -> str | None:
     """NS5 work-mode name for a raw `action`/`workMode` value, or None.
 
     Shared with the HA "Device Status" sensor so `state.workingState` stops
-    publishing a bare integer.
+    publishing a bare integer. Per device category, because a fountain's
+    `action` is a different enum in the same field.
     """
     number = to_int(value, None)
     if number is None:
         return None
-    return codes.WORK_MODES.get(number)
+    return codes.work_modes_for(device_type).get(number)
 
 
 def _err_field(value: Any) -> tuple[str, str]:
@@ -334,7 +335,8 @@ _FIELDS: dict[str, _FieldSpec] = {
     # -- operation identity
     "action": _FieldSpec(
         "Work mode", lambda v: _enum(codes.WORK_MODES, v, "mode {n}"),
-        "NS5 work mode. Only 0, 2 and 9 have been observed in this field."),
+        "NS5 work mode, per device family. On a litter box only 0, 2 and 9 "
+        "have been observed here; a fountain uses a different enum entirely."),
     "reason": _FieldSpec(
         "Trigger", lambda v: _enum(TRIGGER, v, "reason {n}"),
         "Per-STEP trigger, not per-cycle: one maintenance episode carried "
@@ -453,13 +455,29 @@ _FIELD_ORDER: tuple[str, ...] = (
 )
 
 
+#: Renderers whose vocabulary depends on the device model, keyed by field name.
+#:
+#: Separate from `_FIELDS` because a `_FieldSpec.render` sees only the value —
+#: and the one field that needs more than the value is exactly the one that was
+#: being read in the wrong language. Kept to a table rather than an `if` in the
+#: loop so adding the next such field is one line, in the obvious place.
+_DEVICE_AWARE: dict[str, Any] = {
+    "action": lambda v, dt: _enum(codes.work_modes_for(dt), v, "mode {n}"),
+}
+
+
 def decode_content(event_type: str | None,
-                   content: dict[str, Any] | None) -> list[DecodedField]:
+                   content: dict[str, Any] | None,
+                   device_type: str | None = None) -> list[DecodedField]:
     """Every field of `content`, decoded and ordered for display.
 
     Total by contract: a key with no `_FieldSpec` still produces a row, graded
     `unknown`. `event_type` is accepted for future per-code disambiguation and
-    to keep the signature stable; the field table is currently shared.
+    to keep the signature stable; the field table is otherwise shared.
+
+    `device_type` is not decoration: `action` is a work-mode enum whose
+    vocabulary is per model, so without it the Debug view named a fountain's
+    jobs out of the litter table — the same field, a different language.
     """
     if not isinstance(content, dict) or not content:
         return []
@@ -476,8 +494,12 @@ def decode_content(event_type: str | None,
             fields.append(DecodedField(key=key, label=key, raw=value,
                                        text=text, grade=grade))
             continue
+        renderer = _DEVICE_AWARE.get(key)
         try:
-            text, grade = spec.render(value)
+            if renderer is not None:
+                text, grade = renderer(value, device_type)
+            else:
+                text, grade = spec.render(value)
         except Exception:  # noqa: BLE001 - a renderer must never break a request
             text, grade = _raw_text(value), UNKNOWN
         fields.append(DecodedField(key=key, label=spec.label, raw=value,
@@ -583,7 +605,8 @@ def event_label(event_type: str | None,
             # An unmapped mode renders as "mode 99" rather than being dropped:
             # a firmware that adds one should show up in the timeline, not
             # quietly collapse every step to the same generic label.
-            mode, _ = _enum(codes.WORK_MODES, raw_mode, "mode {n}")
+            mode, _ = _enum(codes.work_modes_for(device_type), raw_mode,
+                            "mode {n}")
             label = f"{mode} - {code.label.lower()}"
 
     return _with_cause(_capitalise(label), content)

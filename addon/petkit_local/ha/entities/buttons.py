@@ -36,3 +36,26 @@ FOUNTAIN_BUTTONS = [
     EntityDef(component="button", key="pause_fountain", name="Pause", icon="mdi:pause"),
     EntityDef(component="button", key="resume_fountain", name="Resume", icon="mdi:play"),
 ]
+
+#: The W7H's water-treatment jobs, as `thing.service.start` actions.
+#:
+#: These are the only three of the twenty values its firmware accepts
+#: (`codes.FOUNTAIN_W7H_START_ACTIONS`) that anything names. 1 and 5 name
+#: themselves — `work_start_event_detect` gives each its own branch, log line
+#: and still (`fPro_flushStart.jpeg`, `fPro_changeStart.jpeg`). 2 is on the
+#: accept list but reaches that function's default branch, so "Refill" is the
+#: app's word for a value the firmware only lets through; if it turns out to
+#: mean something else, this is the button that is wrong.
+#:
+#: Deep clean is deliberately absent. The cycle exists (`ster_mode_*.aac`, the
+#: `disinfectState` field, "Boil ster over result" in the log) but no accepted
+#: action value can be tied to it, and it is the one job that needs a person
+#: standing there with a kettle.
+FOUNTAIN_W7H_BUTTONS = [
+    EntityDef(component="button", key="fountain_flush", name="Flush",
+              icon="mdi:water-sync"),
+    EntityDef(component="button", key="fountain_refill", name="Refill",
+              icon="mdi:water-plus"),
+    EntityDef(component="button", key="fountain_water_change", name="Water Change",
+              icon="mdi:water-boiler-alert"),
+]

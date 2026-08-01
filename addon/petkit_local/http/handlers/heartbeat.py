@@ -23,6 +23,17 @@ a lost session from swallowing commands forever.
 other side: in proxy mode every other endpoint's local answer is discarded in
 favour of the cloud's, but this one has already spent the queue to build itself,
 so a reply that is delivering something is sent as-is and never forwarded.
+
+What the device does with the answer, read out of `net_http_heartbeat` (D4SH
+867) and its ARM twin (W7H 456), because every rule here is invisible from our
+end -- a rejected entry produces no reply, no error and no retry:
+
+  * `result[]` entries carry `time` (ms), `timestamp` (s) and `content`.
+  * An entry whose `timestamp` is not greater than the last consumed one is
+    discarded as already seen.
+  * An entry with `time/1000 - timestamp >= 61` is discarded as expired, on an
+    unsigned compare -- so a `timestamp` ahead of `time` expires immediately.
+  * `content.msgType` may be 0, 1 or 2. Nothing else is dispatched.
 """
 from __future__ import annotations
 
@@ -41,14 +52,47 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# MQTT service suffix → heartbeat msgType + type field
-_SERVICE_MAP = {
-    "start": (2, "start"),
-    "end": (3, "end"),
-    "property/set": (5, "property_set"),
-    "feed_realtime": (6, "feed_realtime"),
-    "connect": (7, "connect"),
-}
+#: The device knows three `content.msgType` values and no more.
+#:
+#: `do_http_web_msg` (W7H 456 ARM `ctrl`) and `net_http_heartbeat` (D4SH 867
+#: MIPS) are the same three-way branch, so this is not one model's quirk:
+#:
+#:   0 -> on_web_recv_from_topic     — `type` is a topic name (ota, state_report,
+#:                                     link, unlink, loglevel, user_cmd)
+#:   1 -> on_web_recv_property_set   — `payload` IS the settings object
+#:   2 -> on_web_recv_service_invoke — `type` is a service name, `payload` its
+#:                                     params
+#:
+#: anything else logs `//***** error msgType (%d) *****//` and is dropped.
+#:
+#: This map used to read 2/3/5/6/7 — invented, sequential, and wrong for four
+#: of its five entries. `start` worked by coincidence; every settings write and
+#: every feed sent over HTTP was silently discarded by the device. Nothing on
+#: our side can see that: the heartbeat is answered, the queue drains, and
+#: `wait_for_heartbeat` reports the command delivered.
+MSG_TYPE_TOPIC = 0
+MSG_TYPE_PROPERTY_SET = 1
+MSG_TYPE_SERVICE_INVOKE = 2
+
+#: The one service that is not a service invoke.
+_PROPERTY_SET_SERVICE = "property/set"
+
+
+def _service_of(cmd: dict[str, Any]) -> str:
+    """The service an MQTT envelope invokes, spelled as its topic suffix.
+
+    From the `_service_suffix` marker the producer attached, or from `method`
+    when there is none: `thing.service.property.set` -> `property/set`,
+    `thing.service.feed_realtime` -> `feed_realtime`. Parsed rather than
+    substring-matched against a list, because the list of services is the
+    device's, not ours — a new one should travel, not fall through to a
+    default.
+    """
+    service = cmd.pop("_service_suffix", "")
+    if service:
+        return str(service)
+    _, marker, tail = str(cmd.get("method", "")).partition("thing.service.")
+    return tail.replace(".", "/") if marker else ""
 
 
 def _to_heartbeat_content(cmd: Any) -> str:
@@ -57,16 +101,20 @@ def _to_heartbeat_content(cmd: Any) -> str:
     Accepts the several shapes producers queue, in this order: an already
     serialized string (passed through untouched — see `patchers/common.py`);
     a dict already in heartbeat form, i.e. carrying `msgType`, which only gets a
-    `timestamp` if it lacks one; and otherwise an MQTT envelope, whose service
-    is read from the `_service_suffix` marker the producer attached or, failing
-    that, inferred from a substring match on its `method`.
+    `timestamp` if it lacks one; and otherwise an MQTT envelope.
+
+    The envelope's own shape is already what the device wants — the firmware
+    reads the service name from `type` and the params from `payload` whenever
+    `service_id` is absent, which is exactly the HTTP case (over MQTT the
+    LinkSDK supplies `service_id` from the topic and the params sit at the
+    root). So the only translation is the service name and its `msgType`.
 
     Returns:
         A JSON string ``{"msgType": int, "payload": ..., "type": str,
-        "timestamp": int}``. An envelope for an unrecognised service falls back
-        to the `start` service (msgType 2) rather than being dropped, since a
-        command that arrives mislabelled is easier to diagnose from the device's
-        reaction than one that silently disappears.
+        "timestamp": int}``. An envelope whose service cannot be named at all
+        is sent as a `start` rather than dropped — a command that arrives
+        mislabelled is diagnosable from the device's reaction, one that
+        disappears is not — and says so in the log.
     """
     if isinstance(cmd, str):
         return cmd
@@ -80,26 +128,26 @@ def _to_heartbeat_content(cmd: Any) -> str:
             cmd["timestamp"] = int(time.time())
         return json.dumps(cmd)
 
-    # Queued as (service_suffix, mqtt_envelope) tuple stored as dict with
-    # _service_suffix key, or as raw MQTT envelope with method field.
-    service = cmd.pop("_service_suffix", "")
+    service = _service_of(cmd)
     params = cmd.get("params", cmd)
 
-    if not service:
-        method = cmd.get("method", "")
-        for suffix in _SERVICE_MAP:
-            if suffix in method:
-                service = suffix
-                break
-
-    msg_type, type_str = _SERVICE_MAP.get(service, (2, "start"))
-    ts = int(time.time())
+    if service == _PROPERTY_SET_SERVICE:
+        # `web_property_set_recv_parse` reads `payload` and nothing else, so
+        # `type` is inert here. Filled in anyway, because a heartbeat body with
+        # a blank `type` reads like a bug in a capture.
+        msg_type, type_str = MSG_TYPE_PROPERTY_SET, "property_set"
+    else:
+        if not service:
+            log.warning("Heartbeat command names no service (%s); "
+                        "sending it as `start`", sorted(cmd))
+            service = "start"
+        msg_type, type_str = MSG_TYPE_SERVICE_INVOKE, service
 
     return json.dumps({
         "msgType": msg_type,
         "payload": params,
         "type": type_str,
-        "timestamp": ts,
+        "timestamp": int(time.time()),
     })
 
 
@@ -187,10 +235,19 @@ async def handle_heartbeat(request: web.Request) -> web.Response:
         if cmds:
             ts = int(time.time())
             result = []
-            for cmd in cmds:
+            # A second apart, entry by entry, and `time` moved with it.
+            #
+            # The device drops an entry whose `timestamp` is not GREATER than
+            # the last one it consumed ("This http_heartbeat_msg has been
+            # consumed"), so identical stamps would deliver only the first of a
+            # batch. It also drops one where `time/1000 - timestamp >= 61`
+            # ("expire more then 60s") — an UNSIGNED compare, so a stamp in the
+            # future expires instantly. Advancing both together is the only
+            # spacing that satisfies both rules.
+            for offset, cmd in enumerate(cmds):
                 result.append({
-                    "time": ts_ms,
-                    "timestamp": ts,
+                    "time": ts_ms + offset * 1000,
+                    "timestamp": ts + offset,
                     "content": _to_heartbeat_content(cmd),
                 })
             log.info("Heartbeat %s (id=%d): delivering %d commands",

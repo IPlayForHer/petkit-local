@@ -376,6 +376,8 @@ KIND_TO_ENTITY = {
     codes.KIND_CLEANING: "cleaning_event",
     codes.KIND_ERROR: "error_event",
     codes.KIND_FEEDING: "feeding_event",
+    # Only the W7H produces this kind, and only it publishes the entity.
+    codes.KIND_DRINKING: "drinking_event",
 }
 
 

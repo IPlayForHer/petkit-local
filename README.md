@@ -96,33 +96,39 @@ to sit at "unknown".
 | Pura X | T3 | — | — |
 | Pura Max | T4 | — | — |
 | YumShare Solo | D4H | ✅ | — |
+| YumShare Solo 2 | D4H | ✅ | ✅ |
 | YumShare Dual-Hopper | D4SH | ✅ | — |
+| YumShare Dual-Hopper 2 | D4SH | ✅ | ✅ |
 | Feeder D3 / D4 / D4s | D3, D4, D4S | — | — |
 | Feeder / Feeder Mini | feeder, feedermini | — | — |
 | EverSweet Ultra AI | W7H | ✅ | ✅ |
-| EverSweet 3 Pro | W5 | — | — |
-| EverSweet | W4 | — | — |
-| EverSweet Solo 2 | CTW2 | — | — |
-| EverSweet Max Cordless | CTW3 | — | — |
-| Pura Air smart spray | K2, K3 | — | — |
+| EverSweet 3 Pro | W5 † | — | — |
+| EverSweet | W4 † | — | — |
+| EverSweet Solo 2 | CTW2 † | — | — |
+| EverSweet Max Cordless | CTW3 † | — | — |
+| Pura Air smart spray | K2, K3 † | — | — |
 
-**The W7H is the exception in that table.** Its state fields are not borrowed from the cloud API:
-they are pinned to a real `property/post` from a running EverSweet Ultra AI, cross-checked against a
-reverse-engineered map of the same firmware's `ctrl`. So it reports its tanks, pumps, lift valve,
-heater and ten hall switches, and it deliberately does **not** publish a filter, a battery or the
-pause/resume buttons — that hardware and those commands do not exist on this model, and an entity
-that can never hold a value is worse than a missing one. Its *settings* are still unverified: this
-firmware's state reports carry no settings at all, so whether a write took effect is only observable
-on the device itself.
+**† No Wi-Fi — Bluetooth only.** These never talk to this add-on directly, because they have no
+radio that can. They pair over Bluetooth to a mains-powered PetKit device — a litter box or a feeder
+— which relays for them, so what reaches us is their parent's traffic with their readings inside it.
+No parent nearby means no data at all, whatever this add-on is doing. They still appear as their own
+Home Assistant devices.
+
+Both YumShare generations answer to the same codename, so nothing can tell them apart before they
+speak. A gen 2 earns its recognition entities by asking for the face endpoints; a gen 1 never does.
 
 **Not listed at all?** It should still work with **proxy mode** on — every request is forwarded to
 PetKit and the device gets the real cloud's answer, so it keeps behaving normally while everything
 it says is recorded. That recording is exactly what is needed to add it properly; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-K3 and W5 are Bluetooth-only accessories with no network of their own: the Pura Air is a spray that
-mounts inside a litter box and deodorises after a visit, and the W5 is a fountain. Both appear as
-separate Home Assistant devices, but their data arrives through the Wi-Fi device they are paired to.
+Pairing one of the † models is done here rather than in PetKit's app, because the parent device does
+not discover accessories — it asks the cloud which ones to scan for, and the cloud is now this
+add-on. Enter it under **Setup → BLE accessories** with its MAC and the WiFi device it should be
+relayed by. One caveat for the fountains other than the W5: the relay is handed a number saying what
+to scan for, and only the W5's has ever been read off a real pairing. The rest reuse it because they
+are the same Bluetooth family — a good guess, not a fact. If one of them never reports anything,
+change **Scan type** under Advanced and tell us which value worked.
 
 ## 🤖 Is this project another vibecoded AI slop?
 
@@ -244,7 +250,7 @@ Bluetooth and hand the device an `apiServers` value pointing here instead of at 
 **Provision** tab does it from your browser (Chrome or Edge, on a page served over HTTPS). It is also
 the only way a device ever gets a timezone — one provisioned without it stamps UTC onto its video.
 
-**ESP32 models** — Pura X, Pura Max, the non-camera feeders and fountains — can also be redirected by
+**ESP32 models** — Pura X, Pura Max and the non-camera feeders — can also be redirected by
 DNS, because they talk plain HTTP. Which name to redirect is a property of your device rather than of
 its model: these are handed their API server during Bluetooth setup too, so it is whichever of
 PetKit's regional servers the app gave it. Your DNS server's query log will name it — or redirect

@@ -23,7 +23,7 @@ predicates the rest of the code actually reads.
 #: the old entities, and there was no way — for them or for us — to tell whether
 #: the new code was running. The entity COUNT eventually gave it away. A version
 #: on the screen answers in one glance what took a screenshot and an inference.
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 DEVICE_TYPES_LITTER = {"t3", "t4", "t5", "t6", "t7"}
 DEVICE_TYPES_FEEDER = {"feeder", "feedermini", "d3", "d4", "d4s", "d4h", "d4sh"}
@@ -31,11 +31,39 @@ DEVICE_TYPES_WATER_FOUNTAIN = {"w4", "w5", "ctw2", "ctw3", "w7h"}
 DEVICE_TYPES_PURIFIER = {"k2", "k3"}
 DEVICE_TYPES_ALL = DEVICE_TYPES_LITTER | DEVICE_TYPES_FEEDER | DEVICE_TYPES_WATER_FOUNTAIN | DEVICE_TYPES_PURIFIER
 
+# Models with no network of their own. They pair over BLE to a WiFi device --
+# a litter box or a feeder -- which relays for them, so they never sign up, never
+# hold MQTT credentials and never poll a heartbeat. Their readings arrive inside
+# their parent's traffic (`devices/ble.py`), and a `Device` for one of these
+# codenames means something went wrong upstream, not that a new model appeared.
+#
+# The fountains were listed as network devices because PetKit's cloud API models
+# them that way -- the account-side view is identical whether the fountain has
+# WiFi or is being relayed, which is exactly why the distinction was missed.
+#
+# Evidence per model:
+#   * w4, w5, ctw2 -- one BLE protocol, one pair of GATT UUIDs and one parser
+#     serve all three in `phldgmn/ha-petkit-ble`, whose advertised names are
+#     `Petkit_W5`/`W5C`/`W5N`, `Petkit_W4X`/`W4XUVC` and `Petkit_CTW2`. It is a
+#     relay-less, cloud-less integration; a device with WiFi would not need it.
+#   * ctw3 -- the CT-W3 manual: monitoring over Bluetooth, and remote access
+#     only by pairing with a PetKit feeder or litter box within ~8 m acting as
+#     the WiFi master. That master is the relay, not the fountain.
+#   * k2, k3 -- the Pura Air spray, BLE-only since the first model.
+#
+# Only the W7H has WiFi of its own among the fountains.
+DEVICE_TYPES_BLE_ONLY = {"w4", "w5", "ctw2", "ctw3", "k2", "k3"}
+
 DEVICE_TYPES_CAMERA = {"t5", "t6", "t7", "d4h", "d4sh", "w7h"}
-# Embedded-Linux models, as opposed to the ESP32 ones. Same membership as
-# DEVICE_TYPES_CAMERA today, but a different question: "camera" decides media/STS
-# behaviour, "next gen" decides how the device talks to us (HTTPS, MQTT-capable
-# ctrl binary, BLE provisioning).
+# Embedded-Linux models. Same membership as DEVICE_TYPES_CAMERA today, but a
+# different question: "camera" decides media/STS behaviour, "next gen" decides
+# how the device talks to us (HTTPS, MQTT-capable ctrl binary, BLE provisioning).
+#
+# The complement is not one thing. It holds the plain-HTTP WiFi models (T3/T4,
+# the non-camera feeders — ESP32, going by the D4, Feeder Mini and T4 images)
+# AND the models with no network at all (DEVICE_TYPES_BLE_ONLY). Reading it as
+# "the ESP32 ones" is what put four Bluetooth fountains in the DNS-redirect
+# instructions, where they can never belong.
 DEVICE_TYPES_NEXT_GEN = {"t5", "t6", "t7", "d4h", "d4sh", "w7h"}
 
 # Devices whose NPU runs on-device facial recognition (dev_discern_pic /

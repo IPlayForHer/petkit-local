@@ -1,5 +1,98 @@
 # Changelog
 
+## 1.4.0 — 2026-08-02
+
+### Commands sent over HTTP never arrived
+
+A device that is not on MQTT gets its commands in the answer to its heartbeat
+poll. Each one is tagged with a `msgType` telling the firmware what kind of
+message it is — and four of the five numbers we used were not numbers the
+firmware knows. It logs `error msgType` and discards the message: no reply, no
+error, nothing this end can see. The queue drains, the add-on reports the
+command delivered, and the device does nothing.
+
+Only "start" was right, by coincidence. **Every settings change, every manual
+feed and every connect sent to a device without an MQTT session was thrown
+away.** They are the three real values now (0, 1 and 2), read out of two
+different models' firmware to be sure it is not one device's quirk.
+
+Two commands answered in the same poll also collided: the device drops a
+message whose timestamp is not newer than the last one it ran, so only the
+first of a batch was executed. They are spaced now.
+
+This affects every model, not just the fountain.
+
+### The EverSweet Ultra AI had its tanks the wrong way round
+
+The tray and the waste tank were swapped. "Waste Tank Full" was the drinking
+tray being full; "Drinking Tray Installed" was the waste tank being seated. An
+owner reported this and was told the firmware said otherwise — it does not. The
+field is filled by a function the firmware itself calls "get water tray full
+state", which is as direct as evidence gets.
+
+Four entities are renamed as a result. **The old ones will stop updating and can
+be deleted from Home Assistant:** Waste Tank Full, Waste Tank Installed,
+Drinking Tray Installed and Drinking Tray State. What replaces them is Tray
+Full, Tray Installed, Waste Tank Installed and Waste Tank State. Transfer Pump
+is now Refill Pump, which is what the firmware calls it.
+
+### Flush, Refill and Water Change
+
+The W7H can be told to run its water cycles. It had no buttons at all, because
+the values its `start` service takes were unknown; they are now read out of the
+firmware, which accepts exactly twenty of them and silently ignores everything
+else. Flush and Water Change name themselves in the firmware. Refill is on the
+accepted list but not named there, so if one of the three turns out to do
+something else, it is that one.
+
+Deep clean is deliberately absent: the cycle exists, but nothing ties it to an
+accepted value, and it is the one that needs somebody standing there with a
+kettle of boiling water.
+
+### The fountain stops borrowing a litter box's vocabulary
+
+A refill showed up in the timeline as "Odor removal", a flush as "Dumping". The
+work-mode names are per device family and the fountain was being read out of
+the litter table. It has its own now.
+
+Five more faults are spelled out — clean and waste tank missing, clean tank low,
+waste tank full, heater missing — and a fault that arrives as an event reads the
+same as the same fault arriving in a status report, instead of showing the
+device's abbreviation.
+
+The W7H also gets its Work, Drinking and Error event entities, which are what
+automations trigger on. Until now its events were published to entities it had
+never announced, so nothing fired.
+
+### Which fountains can actually connect
+
+Only the EverSweet Ultra AI. The EverSweet, EverSweet 3 Pro, Solo 2 and Max
+Cordless have no Wi-Fi at all — they pair over Bluetooth to a litter box or a
+feeder, which relays for them. They were listed here as network devices because
+PetKit's cloud describes them that way, and from the account side a relayed
+fountain looks exactly like a connected one.
+
+The add-on knows which ones those are now: a model with no radio that somehow
+registers over the network is logged as the anomaly it is, rather than quietly
+getting an entity list nothing can fill. The Pura Air spray is marked the same
+way. Nothing changes for a fountain you already have paired through a box.
+
+All four can now be paired, not just the W5 — they share one Bluetooth protocol,
+so the same entities and the same frame decoding cover them. One number in that
+pairing is a guess: what the relay is told to scan for. Only the W5's was read
+off a real exchange, and the rest reuse it. If one of them stays silent, there
+is a **Scan type** field under Advanced to try another value in; it is the kind
+of thing only somebody holding the hardware can settle.
+
+### Under the hood
+
+The W7H is separated from the Bluetooth EverSweets throughout. It shares a
+category with them because it is a fountain, but almost none of its protocol:
+two tanks, a lift valve, ten hall switches, a camera and an NPU against a pump
+and a filter. Every table read out of its firmware is now keyed on that model
+alone, so a W4 or W5 can never be answered in a vocabulary describing hardware
+it does not have.
+
 ## 1.3.0 — 2026-08-01
 
 ### The EverSweet Ultra AI can be patched

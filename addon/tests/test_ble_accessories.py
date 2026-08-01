@@ -401,3 +401,96 @@ async def test_allocated_ids_do_not_collide_with_each_other_or_a_device():
         assert 900001 not in ids and first >= 900002
     finally:
         await c.close()
+
+
+# --- which models have no network at all ------------------------------------
+
+def test_the_fountains_without_wifi_are_marked_as_such():
+    """Only the W7H has a radio that can reach us.
+
+    W4, W5 and CTW2 are one BLE accessory family — `phldgmn/ha-petkit-ble`
+    serves all three from one GATT profile and one parser, and it is a
+    cloud-less integration. The CT-W3 manual is explicit that remote access
+    needs a PetKit feeder or litter box within ~8 m acting as the WiFi master.
+    They were listed as network devices only because PetKit's cloud API models
+    them that way, and the account-side view is the same either way.
+    """
+    from petkit_local.devices.base import Device
+
+    for codename in ("w4", "w5", "ctw2", "ctw3", "k2", "k3"):
+        assert Device(device_type=codename, petkit_id=1).is_ble_only, codename
+    for codename in ("w7h", "t5", "d4sh", "t3"):
+        assert not Device(device_type=codename, petkit_id=1).is_ble_only, codename
+
+
+def test_a_ble_only_model_registering_over_the_network_says_so(caplog):
+    """It cannot happen, and if it does the table above is wrong about that
+    model — so the log has to name it rather than let a wrong entity set be the
+    first symptom. Registered anyway: a device is never told no."""
+    import logging
+
+    reg = DeviceRegistry()
+    with caplog.at_level(logging.WARNING):
+        device = reg.get_or_create(petkit_id=42, device_type="ctw2")
+    assert device.device_type == "ctw2"          # never refused
+    assert "BLE-only" in caplog.text
+    assert "ctw2" in caplog.text
+
+
+def test_a_normal_model_registers_quietly(caplog):
+    import logging
+
+    reg = DeviceRegistry()
+    with caplog.at_level(logging.WARNING):
+        reg.get_or_create(petkit_id=43, device_type="t5")
+    assert "BLE-only" not in caplog.text
+
+
+def test_the_w5_frame_decoder_covers_its_whole_family():
+    """One protocol, one entity set. The `w5` string was hardcoded in three
+    places, so a paired W4 or CTW2 would have decoded to nothing."""
+    from petkit_local.devices.ble import W5_PROTOCOL, get_ble_entities
+
+    assert W5_PROTOCOL == {"w4", "w5", "ctw2"}
+    for codename in W5_PROTOCOL:
+        assert get_ble_entities(codename), codename
+    # CTW3 is BLE-only too, but nothing says it speaks this protocol.
+    assert get_ble_entities("ctw3") == []
+
+
+def test_only_the_w5_scan_type_is_a_captured_value():
+    """`dev_ble_device` hands the parent a `type` int to scan for. 14 was read
+    off a real W5 pairing; the other fountains reuse it on the strength of
+    being the same BLE family, which is an assumption and is marked as one."""
+    from petkit_local.devices.ble import BLE_TYPE_CONFIRMED, BLE_TYPE_MAP, BLE_TYPES
+
+    assert set(BLE_TYPES) == {"w5", "k3", "w4", "ctw2", "ctw3"}
+    assert BLE_TYPE_MAP["w5"] == 14
+    assert BLE_TYPE_CONFIRMED == {"w5"}
+
+
+def test_a_guessed_scan_type_says_it_is_guessed():
+    """A wrong `type` fails silently at both ends, so the panel has to be able
+    to show which accessories are running on an invented number."""
+    from petkit_local.devices.ble import BLEDevice
+
+    assert BLEDevice(ble_type="ctw2", petkit_id=1).scan_type_is_guessed
+    assert not BLEDevice(ble_type="w5", petkit_id=1).scan_type_is_guessed
+    # K3 is never in the scan list at all; its 0 is a placeholder, not a guess.
+    assert not BLEDevice(ble_type="k3", petkit_id=1).scan_type_is_guessed
+
+
+def test_the_owner_of_the_hardware_can_correct_the_guess():
+    """The one person who can find out which value works is the one holding the
+    fountain. An override beats waiting for a capture that may never come."""
+    from petkit_local.devices.ble import BLEDevice
+
+    default = BLEDevice(ble_type="ctw3", petkit_id=1, mac="AABBCCDDEEFF")
+    assert default.to_ble_list_entry()["type"] == 14
+
+    corrected = BLEDevice(ble_type="ctw3", petkit_id=1, mac="AABBCCDDEEFF",
+                          scan_type=17)
+    assert corrected.to_ble_list_entry()["type"] == 17
+    assert not corrected.scan_type_is_guessed
+    # And it survives a restart, or the correction is lost on every reload.
+    assert BLEDevice.from_dict(corrected.to_dict()).scan_type == 17

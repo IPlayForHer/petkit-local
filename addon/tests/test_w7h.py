@@ -1,8 +1,8 @@
 """The W7H (EverSweet Ultra AI) fountain, pinned to a real report.
 
-This model shares a category with the ESP32 fountains and almost no fields with
-them, so it is the case where "the fountain parser" and "what this device sends"
-are two different things. Everything here is checked against one real
+This model shares a category with the Bluetooth EverSweets and almost no fields
+with them, so it is the case where "the fountain parser" and "what this device
+sends" are two different things. Everything here is checked against one real
 `property/post` captured from a W7H on 2026-07-31, cross-checked field for field
 against a reverse-engineered map of the same firmware's `ctrl`.
 
@@ -86,10 +86,12 @@ def test_the_mechanism_fields_reach_the_entities():
     the lift were visible only as raw JSON in the panel.
     """
     flat = _flat()
-    assert flat["stgFullState"] == 1      # waste tank full
-    assert flat["stgInstall"] == 1
+    # `stg*` is the tray and `wt*` is the waste tank — see
+    # `test_the_prefixes_mean_what_the_firmware_says` for the evidence.
+    assert flat["stgFullState"] == 1      # tray full
+    assert flat["stgInstall"] == 1        # tray seated
     assert flat["cwtInstall"] == 1
-    assert flat["wtInstall"] == 1
+    assert flat["wtInstall"] == 1         # waste tank seated
     assert flat["wtLock"] == 1
     assert flat["wtState"] == 1
     assert flat["pumpState"] == 0
@@ -104,10 +106,10 @@ def test_the_hall_switches_are_flattened_out_of_the_sensor_block():
     assert flat["hall_CH"] == 1
     assert flat["hall_TY"] == 1
     # The one that is not seated. This is the whole reason the halls are
-    # published next to the derived flag: `stgInstall` reads 1 at the same
-    # moment, because the left side alone satisfies it.
+    # published next to the derived flag: `wtInstall`, the waste tank's, reads
+    # 1 at the same moment, because the left side alone satisfies it.
     assert flat["hall_DKR"] == 0
-    assert flat["stgInstall"] == 1
+    assert flat["wtInstall"] == 1
 
 
 def test_a_property_post_and_an_event_snapshot_agree():
@@ -198,6 +200,44 @@ def test_a_family_with_no_flag_table_reads_raw():
     assert codes.error_flag_label("taryF", "w7h") == "Tray full"
 
 
+def test_the_fault_vocabulary_belongs_to_the_w7h_not_to_fountains():
+    """A Bluetooth EverSweet has no tray, no lift valve and no second tank.
+
+    Keying the table on the CATEGORY meant a W5 sending anything shaped like
+    `taryF` would have been answered in the vocabulary of hardware it does not
+    have — the same failure as HTTP `event_type` being read as global, one
+    level further down.
+    """
+    for esp32 in ("w4", "w5", "ctw2", "ctw3"):
+        assert codes.error_flag_label("taryF", esp32) == "taryF"
+
+
+def test_the_faults_that_only_ever_arrive_as_an_event_are_named_too():
+    """`tankCU`/`tankDU`/`tankCL`/`tankDF`/`ptcU` are not `err{}` bits.
+
+    The payload builder's key list is closed at eighteen names and none of
+    these is among them; they live in a second run of literals and reach us as
+    the content of an `error_start`. Same sensor, so the same table.
+    """
+    assert codes.error_flag_label("tankDF", "w7h") == "Waste tank full"
+    assert codes.error_flag_label("tankCL", "w7h") == "Clean water tank low"
+    assert codes.error_flag_label("tankCU", "w7h") == "Clean water tank not installed"
+    assert codes.error_flag_label("tankDU", "w7h") == "Waste tank not installed"
+    assert codes.error_flag_label("ptcU", "w7h") == "Heater not installed"
+
+
+def test_an_error_event_reads_the_same_as_the_matching_bit():
+    """The bug: the same fault said "Tray full" arriving on a property post and
+    `taryF` arriving as an event, because one path went through the table and
+    the other wrote the device's abbreviation straight into the sensor."""
+    from petkit_local.mqtt.bridge import _error_text
+
+    assert _error_text("taryF", "w7h") == "Tray full"
+    assert _error_text("taryF,cycL", "w7h") == "Tray full, Circulation pump stalled"
+    assert _error_text({"taryF": 1, "cycL": 0}, "w7h") == "Tray full"
+    assert _error_text("brandNew", "w7h") == "brandNew"
+
+
 # --- the fountain branch must not touch other models ------------------------
 
 def test_a_litter_box_is_not_parsed_as_a_fountain():
@@ -242,9 +282,31 @@ def _keys(device_type):
 
 def test_the_w7h_publishes_its_own_mechanism():
     keys = _keys("w7h")
-    assert {"waste_tank_full", "clean_tank_installed", "waste_lock_closed",
+    assert {"tray_full", "clean_tank_installed", "waste_lock_closed",
             "flushing", "disinfecting", "last_drink", "reboot_reason",
             "hall_waste_right", "drink_detection"} <= keys
+
+
+def test_the_prefixes_mean_what_the_firmware_says():
+    """`stg*` is the TRAY and `wt*` is the WASTE tank, not the reverse.
+
+    Published the other way round from 1.1.0 to 1.3.0, so four entities named
+    the wrong part. Settled in W7H 456 `ctrl` by following the writes rather
+    than the prefixes: `set_prop(0x0d)` -> `stgFullState` takes the return of
+    the reader that names itself `pk_hmi_get_water_tary_full_sta`, and
+    `set_prop(0x0a)` -> `wtInstall` takes the predicate behind the "Not work
+    dirty tank unstall" refusal.
+    """
+    bound = {e.key: e.value_path for e in get_entities_for_device(
+        Device(device_type="w7h", petkit_id=1, serial_number="SN"))}
+    assert bound["tray_full"] == "state.stgFullState"
+    assert bound["tray_installed"] == "state.stgInstall"
+    assert bound["waste_tank_installed"] == "state.wtInstall"
+    assert bound["waste_tank_state"] == "state.wtState"
+    # The one `wt*` entity that was right all along, and the reason the mix-up
+    # survived review: a "waste lock" next to a "drinking tray installed"
+    # sharing one prefix should have read as a contradiction.
+    assert bound["waste_lock_closed"] == "state.wtLock"
 
 
 def test_the_w7h_does_not_publish_hardware_it_does_not_have():
@@ -258,7 +320,9 @@ def test_the_w7h_does_not_publish_hardware_it_does_not_have():
 
 def test_the_w7h_does_not_publish_buttons_its_firmware_ignores():
     """`power` is not among the set handlers in this firmware's `ctrl`, so both
-    buttons wrote a field nothing reads and reported success."""
+    buttons wrote a field nothing reads and reported success. It IS a service
+    (`type: "power"`, `power_action` 0/1) — a different envelope, and device
+    on/off rather than a running job paused, so neither button comes back."""
     assert not _keys("w7h") & {"pause_fountain", "resume_fountain"}
 
 
@@ -267,7 +331,8 @@ def test_the_esp32_fountains_are_untouched():
     for device_type in ("w4", "w5", "ctw2", "ctw3"):
         keys = _keys(device_type)
         assert {"filter_percent", "battery", "drink_times", "pause_fountain"} <= keys
-        assert not keys & {"waste_tank_full", "hall_tray", "last_drink"}
+        assert not keys & {"tray_full", "hall_tray", "last_drink",
+                           "fountain_flush", "drinking_event"}
 
 
 # --- events -----------------------------------------------------------------
@@ -322,6 +387,72 @@ def test_the_fountain_events_a_real_w7h_sends_are_classified():
         assert code is not None, name
         assert code.kind == kind, name
         assert "w7h" in code.families, name
+
+
+def test_a_fountain_job_is_not_named_out_of_the_litter_enum():
+    """`work_start` carries `action`, and `action` is a different enum here.
+
+    A refill rendered as "Odor removal - work started" — litter-box vocabulary
+    on a device with no litter — because one global `WORK_MODES` was applied to
+    whatever sent the field.
+    """
+    from petkit_local.events import decode
+
+    assert decode.event_label("work_start", {"action": 1}, "w7h") \
+        == "Flush - work started"
+    assert decode.event_label("work_start", {"action": 5}, "w7h") \
+        == "Water change - work started"
+    # The litter box keeps its own, unchanged.
+    assert decode.event_label("work_start", {"action": 2}, "t5") \
+        == "Odor removal - work started"
+    # And the Debug view reads the same language as the card.
+    action = next(f for f in decode.decode_content("work_start", {"action": 1}, "w7h")
+                  if f.key == "action")
+    assert action.text == "flush"
+
+
+def test_the_esp32_fountains_keep_the_default_work_enum():
+    """Narrowed to the W7H, not to the category: nothing says a W5 shares an
+    enum read out of one model's firmware."""
+    assert codes.work_modes_for("w5") is codes.WORK_MODES
+    assert codes.work_modes_for("w7h") is codes.FOUNTAIN_W7H_WORK_MODES
+    assert codes.work_modes_for(None) is codes.WORK_MODES
+
+
+# --- work actions -----------------------------------------------------------
+
+def test_the_job_buttons_send_actions_the_firmware_accepts():
+    """A `start_action` outside the whitelist is discarded by the device with
+    no reply, no error and no log — indistinguishable from a lost command."""
+    from petkit_local.ha.commands import ALL_ACTIONS
+
+    for key, expected in [("fountain_flush", 1),
+                          ("fountain_refill", 2),
+                          ("fountain_water_change", 5)]:
+        suffix, envelope = ALL_ACTIONS[key]()
+        assert suffix == "start"
+        assert envelope["method"] == "thing.service.start"
+        assert envelope["params"] == {"start_action": expected}
+        assert expected in codes.FOUNTAIN_W7H_START_ACTIONS
+
+
+def test_no_button_sends_an_action_that_is_not_a_job():
+    """Two of the twenty accepted values are not work at all: 32 is the camera
+    in/out handler, and 7 leaves the dispatcher onto a different queue."""
+    from petkit_local.ha.commands import ALL_ACTIONS
+
+    for key in ("fountain_flush", "fountain_refill", "fountain_water_change"):
+        _, envelope = ALL_ACTIONS[key]()
+        assert envelope["params"]["start_action"] \
+            not in codes.FOUNTAIN_W7H_START_ACTIONS_NOT_WORK
+
+
+def test_an_action_the_firmware_rejects_cannot_be_built():
+    from petkit_local.ha.commands import _fountain_start
+
+    for rejected in (0, 6, 8, 13, 14, 33, 99, 107):
+        with pytest.raises(ValueError):
+            _fountain_start(rejected)
 
 
 # --- settings writes --------------------------------------------------------

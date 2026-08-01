@@ -20,9 +20,13 @@ from dataclasses import dataclass
 
 from petkit_local.devices.base import Device
 from petkit_local.ha.discovery import EntityDef
-from petkit_local.ha.entities.buttons import FEEDER_BUTTONS, FOUNTAIN_BUTTONS, LITTER_BUTTONS
+from petkit_local.ha.entities.buttons import (
+    FEEDER_BUTTONS, FOUNTAIN_BUTTONS, FOUNTAIN_W7H_BUTTONS, LITTER_BUTTONS,
+)
 from petkit_local.ha.entities.camera import CAMERA_ENTITIES
-from petkit_local.ha.entities.events import FEEDER_EVENTS, LITTER_EVENTS
+from petkit_local.ha.entities.events import (
+    FEEDER_EVENTS, FOUNTAIN_W7H_EVENTS, LITTER_EVENTS,
+)
 from petkit_local.ha.entities.numbers import (
     FEEDER_CAMERA_NUMBERS, FEEDER_NUMBERS, FOUNTAIN_NUMBERS,
     LITTER_CAMERA_NUMBERS, LITTER_NUMBERS,
@@ -83,9 +87,14 @@ class CategorySpec:
     #: A category is a BEHAVIOUR family, not a hardware one. The W7H drinks,
     #: detects pets and pours water like every other fountain, so it belongs
     #: here — but it reports a sewage tank, a lift valve and ten hall switches
-    #: that no ESP32 fountain has. Pairs of tuples rather than a dict so the
+    #: that no other fountain has. Pairs of tuples rather than a dict so the
     #: dataclass stays frozen and hashable, and so the order is written down.
     model_entities: tuple[tuple[str, tuple[EntityDef, ...]], ...] = ()
+    #: `(codename, topic suffixes)` a model emits that its category does not.
+    #: The topic-side twin of `model_entities`, and needed for the same reason:
+    #: the W7H runs water-treatment jobs no other fountain has, so it reports
+    #: events they never send.
+    model_state_topics: tuple[tuple[str, tuple[str, ...]], ...] = ()
     #: `(codename, entity keys)` a model must NOT publish, for a field its
     #: hardware or firmware never reports.
     #:
@@ -118,11 +127,19 @@ class CategorySpec:
                 entities.extend(extra)
         return entities
 
-    def state_topics_for(self, has_camera: bool) -> list[str]:
-        """MQTT event topic suffixes this device reports state on."""
+    def state_topics_for(self, has_camera: bool, device_type: str = "") -> list[str]:
+        """MQTT event topic suffixes this device reports state on.
+
+        `device_type` is optional for the same reason it is on `entities_for`:
+        a caller asking what a CATEGORY reports still gets the shared answer.
+        """
+        codename = device_type.lower()
         topics = list(self.state_topics)
         if has_camera:
             topics.extend(self.camera_state_topics)
+        for model, extra in self.model_state_topics:
+            if model == codename:
+                topics.extend(extra)
         return topics
 
 
@@ -182,6 +199,13 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
             "move_detect", "pet_detect",
         ),
     ),
+    # Of the five fountain codenames, only `w7h` can ever reach this table: the
+    # other four have no WiFi (`utils/const.py::DEVICE_TYPES_BLE_ONLY`) and
+    # therefore never become a `Device` at all. Their shared entity lists are
+    # kept rather than deleted — they are what a fountain with WiFi would
+    # publish, and PetKit could ship one — but nothing has filled them and
+    # nothing will until such a fountain turns up. Treat their field names as
+    # cloud-API guesses, not as anything a device has been seen to send.
     "fountain": CategorySpec(
         device_types=frozenset(DEVICE_TYPES_WATER_FOUNTAIN),
         entities=(
@@ -203,7 +227,14 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         camera_state_topics=("pet_detect", "pet_discern"),
         model_entities=(
             ("w7h", (*FOUNTAIN_W7H_SENSORS, *FOUNTAIN_W7H_BINARY_SENSORS,
-                     *FOUNTAIN_W7H_HALL_SENSORS, *FOUNTAIN_W7H_SWITCHES)),
+                     *FOUNTAIN_W7H_HALL_SENSORS, *FOUNTAIN_W7H_SWITCHES,
+                     *FOUNTAIN_W7H_BUTTONS, *FOUNTAIN_W7H_EVENTS)),
+        ),
+        # The water-treatment jobs. A live W7H sent `work_start` (2026-08-01)
+        # and `add_water_over` a second after a `drink_start`; neither is a
+        # thing any other EverSweet does, so neither belongs on the shared list.
+        model_state_topics=(
+            ("w7h", ("work_start", "add_water_over")),
         ),
         # Everything the W7H cannot fill. The list above is what it reports
         # instead; between the two, the fountain family covers both hardware
@@ -213,7 +244,7 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         # plus the reverse-engineered field map for the same firmware: the
         # payload carries 42 keys and not one of these is among them. Their
         # names come from the reference integration's CLOUD model, which is
-        # PetKit's account-side view of the ESP32 fountains — a different
+        # PetKit's account-side view of the Bluetooth fountains — a different
         # device generation, not a different spelling.
         model_excludes=(
             ("w7h", frozenset({
@@ -233,11 +264,15 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
                 # `drinkTime` here is a TIMESTAMP under `device{}`, not the
                 # count this sensor renders. Replaced by `last_drink`.
                 "drink_times",
-                # `power` is not among the set handlers in this firmware's
-                # `ctrl`, so both buttons were writing a field nothing reads.
-                # The map notes fountain actions go through
-                # `thing/service/start` with a `start_action`, whose values are
-                # not known — so there is nothing to correct them TO yet.
+                # Both wrote `power` through `property.set`, and `power` is not
+                # among that firmware's set handlers — so they were writing a
+                # field nothing reads.
+                #
+                # It is a SERVICE, though: `parse_service_invoke_msg` accepts
+                # `type: "power"` with a `power_action` of 0 or 1. That is the
+                # device off and on, not a running job paused, so these two
+                # stay excluded; what replaced them are the three job buttons
+                # in `FOUNTAIN_W7H_BUTTONS`, which use the `start` service.
                 "pause_fountain", "resume_fountain",
             })),
         ),

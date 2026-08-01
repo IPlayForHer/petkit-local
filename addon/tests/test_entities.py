@@ -33,10 +33,14 @@ EXPECTED_ENTITY_COUNTS = {
     # live off a running T5. The W7H went 31 -> 61 the same day: its own field
     # map replaced nine entities it can never fill (filter, battery, `power`
     # buttons) with the 39 its `property/post` actually carries.
+    #
+    # 61 -> 67 on 2026-08-02: the three water-treatment buttons its `ctrl`
+    # accepts as `start_action`, plus the three `event` entities its kinds fire
+    # — which until then published to discovery topics it had never announced.
     "t3": 45, "t4": 45, "t5": 73, "t6": 73, "t7": 73,
     "feeder": 25, "feedermini": 25, "d3": 25, "d4": 25, "d4s": 25,
     "d4h": 42, "d4sh": 42,
-    "w4": 24, "w5": 24, "ctw2": 24, "ctw3": 24, "w7h": 61,
+    "w4": 24, "w5": 24, "ctw2": 24, "ctw3": 24, "w7h": 67,
     "k2": 12, "k3": 12,
 }
 

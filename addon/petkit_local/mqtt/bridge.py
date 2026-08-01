@@ -26,7 +26,9 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterable
 
+from petkit_local.devices.ble import W5_PROTOCOL
 from petkit_local.devices.registry import DeviceRegistry, get_setting_fields
+from petkit_local.events import codes
 from petkit_local.events.ingest import (apply_derived_state, apply_state_snapshot,
                                         entity_for_event, telemetry_only)
 from petkit_local.mqtt.topics import (
@@ -48,6 +50,25 @@ log = logging.getLogger(__name__)
 # The embedded broker needs a moment to bind before the first connect attempt;
 # without it every startup wastes a full reconnect delay.
 STARTUP_DELAY_SECONDS = 2.0
+
+
+def _error_text(err: object, device_type: str) -> str:
+    """An `error_start` payload rendered the way an `err{}` block is.
+
+    The field arrives in more than one shape -- one flag name, several of them,
+    or a bit object like the one a property post carries -- and all three end in
+    the same Error sensor, so all three get the same vocabulary. An unknown name
+    survives as itself, exactly as `error_flag_label` promises.
+    """
+    if isinstance(err, dict):
+        names = [str(k) for k, v in err.items() if v]
+    elif isinstance(err, (list, tuple)):
+        names = [str(v) for v in err if v]
+    else:
+        names = [part.strip() for part in str(err).split(",") if part.strip()]
+    return ", ".join(codes.error_flag_label(n, device_type) for n in names)
+
+
 RECONNECT_DELAY_SECONDS = 5.0
 
 # Video/photo notifications and captured frames can be large, and a broken
@@ -417,7 +438,13 @@ class MQTTBridge:
         if event_type in ("error_start", "error_over"):
             err = content.get("err", content.get("errorMsg"))
             if err is not None:
-                device.state["errorMsg"] = "" if event_type == "error_over" else err
+                # Through the same table `err{}` bits go through. An
+                # `error_start` carries the fault as ONE of those names rather
+                # than as a set of bits, so writing it raw meant the Error
+                # sensor read "Tray full" when the fault arrived on a property
+                # post and `taryF` when the same fault arrived as an event.
+                device.state["errorMsg"] = "" if event_type == "error_over" \
+                    else _error_text(err, device.device_type)
 
         elif event_type == "data_get":
             await self._reply_user_get(device, params)
@@ -644,19 +671,20 @@ class MQTTBridge:
             log.debug("BLE response with no matching accessory (mac=%s)", ble_mac)
             return
 
-        if ble_dev.ble_type == "w5":
+        if ble_dev.ble_type in W5_PROTOCOL:
             from petkit_local.devices.ble import parse_w5_ble_response
             fragment = parse_w5_ble_response(content)
             if fragment:
                 for section, vals in fragment.items():
                     ble_dev.state.setdefault(section, {}).update(vals)
                 self._ble_registry.mark_dirty()
-                log.info("Decoded W5 (id=%d) from parent %d: %s",
-                         ble_dev.petkit_id, device.petkit_id, json.dumps(fragment)[:120])
+                log.info("Decoded %s (id=%d) from parent %d: %s",
+                         ble_dev.ble_type.upper(), ble_dev.petkit_id,
+                         device.petkit_id, json.dumps(fragment)[:120])
             else:
-                log.info("W5 ble_response not decodable yet (id=%d) - turn capture on in the panel "
-                         "(Setup -> Live settings) to collect frames",
-                         ble_dev.petkit_id)
+                log.info("%s ble_response not decodable yet (id=%d) - turn capture on in the "
+                         "panel (Setup -> Live settings) to collect frames",
+                         ble_dev.ble_type.upper(), ble_dev.petkit_id)
 
         if self._ha_publisher:
             await self._ha_publisher.publish_ble_discovery(ble_dev)

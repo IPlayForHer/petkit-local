@@ -82,6 +82,20 @@ PURIFIER = frozenset(DEVICE_TYPES_PURIFIER)
 #: completion codes the cloud API also exposes; everything mechanism-level is
 #: new with the T5 generation.
 LITTER_NEXT_GEN = frozenset({"t5", "t6", "t7"})
+
+#: Embedded-Linux fountains — today just the W7H (EverSweet Ultra AI).
+#:
+#: Sharing the `fountain` category with the Bluetooth EverSweets says almost
+#: nothing about shared protocol. The W7H has two tanks, a tray, a lift valve,
+#: two pumps, a heater, ten hall switches, a camera and an NPU; a W5 has a pump
+#: and a filter. Every table below that came out of the W7H's own `ctrl` is
+#: therefore keyed on THIS set and not on the category, because a W4 or W5 that
+#: ever sent a colliding name would otherwise be answered in a vocabulary
+#: describing hardware it does not have — which is the same failure as the
+#: HTTP `event_type` codes being per-category rather than global, one level
+#: further down.
+FOUNTAIN_NEXT_GEN = frozenset({"w7h"})
+
 #: Models carrying the N60 liquid deodorizer. PetKit sells the N60 for the
 #: Purobot Max Pro and Max Pro 2, the Purobot Ultra and the Purobot Crystal Duo
 #: — `t5`, `t6` and `t7` here, plus the plain "Max Pro" which maps to no
@@ -480,13 +494,17 @@ MQTT_EVENT_TOPICS: dict[str, EventCode] = {
     # A real W7H sends this too (live log, 2026-08-01), so the fountain is in
     # `families` — the set says who EMITS a code, and leaving it litter-only
     # while a fountain sends it is the sort of gap that makes a table look
-    # complete when it is not. The `mode_from="action"` qualifier is a litter
-    # work mode (NS5) and simply does not resolve on a fountain, which is the
-    # correct outcome: the label stays the plain one rather than borrowing a
-    # litter box's vocabulary.
+    # complete when it is not.
+    #
+    # `mode_from="action"` was annotated here as not resolving on a fountain.
+    # It resolves: the W7H's `work_start` content is
+    # `{"pos","reason","item_id","action"}`, so every fountain job was being
+    # named out of the litter enum. The fix is `work_modes_for`, not dropping
+    # the qualifier — the action IS the job and is the most useful thing on the
+    # card.
     "work_start": EventCode(
         kind=KIND_CLEANING, label="Work started", role=ROLE_START,
-        mode_from="action", families=LITTER | FOUNTAIN),
+        mode_from="action", families=LITTER | FOUNTAIN_NEXT_GEN),
     "work_suspend": EventCode(
         kind=KIND_CLEANING, label="Work paused", detail=True, role=ROLE_STOP,
         families=LITTER),
@@ -564,7 +582,7 @@ MQTT_EVENT_TOPICS: dict[str, EventCode] = {
     # would have classified as "other" on the model that actually sends them.
     "pet_discern": EventCode(
         kind=KIND_PET, label="Detection result", detail=True,
-        role=ROLE_DETECTION, families=LITTER_NEXT_GEN | FOUNTAIN),
+        role=ROLE_DETECTION, families=LITTER_NEXT_GEN | FOUNTAIN_NEXT_GEN),
     "pet_wander": EventCode(
         kind=KIND_PET, label="Pet nearby", grade=UNVERIFIED, anchor=True,
         families=LITTER_T6_PLUS),
@@ -604,7 +622,7 @@ MQTT_EVENT_TOPICS: dict[str, EventCode] = {
     # the pair is not evidence for itself.
     "drink_start": EventCode(
         kind=KIND_DRINKING, label="Drinking started", detail=True,
-        role=ROLE_START, families=FOUNTAIN),
+        role=ROLE_START, families=FOUNTAIN_NEXT_GEN),
     # CONFIRMED on a real W7H (live log, 2026-08-01), where it arrived one
     # second after a `drink_start`. The meaning is the device's own vocabulary
     # rather than a guess: the reverse-engineered field map names
@@ -617,17 +635,18 @@ MQTT_EVENT_TOPICS: dict[str, EventCode] = {
     # payload itself, only of the topic.
     "add_water_over": EventCode(
         kind=KIND_CLEANING, label="Refill done", grade=INFERRED, anchor=True,
-        role=ROLE_DONE, done_word="refilling", families=FOUNTAIN),
+        role=ROLE_DONE, done_word="refilling", families=FOUNTAIN_NEXT_GEN),
     "drink_over": EventCode(
         kind=KIND_DRINKING, label="Drinking done", grade=UNVERIFIED,
-        anchor=True, role=ROLE_DONE, done_word="drinking", families=FOUNTAIN),
+        anchor=True, role=ROLE_DONE, done_word="drinking",
+        families=FOUNTAIN_NEXT_GEN),
     # -- shared detection
     "move_detect": EventCode(
         kind=KIND_MOTION, label="Motion detected", anchor=True,
         families=FEEDER_CAMERA | LITTER_NEXT_GEN),
     "pet_detect": EventCode(
         kind=KIND_PET, label="Pet detected", anchor=True,
-        families=FEEDER_CAMERA | LITTER_NEXT_GEN | FOUNTAIN),
+        families=FEEDER_CAMERA | LITTER_NEXT_GEN | FOUNTAIN_NEXT_GEN),
     "cvr_event": EventCode(
         kind=KIND_MOTION, label="Recording event", grade=UNVERIFIED,
         anchor=True, families=LITTER_NEXT_GEN | FEEDER_CAMERA),
@@ -708,6 +727,71 @@ WORK_MODES: dict[int, str] = {
 #: but graded lower by `events/decode.py`.
 WORK_MODES_OBSERVED = frozenset({0, 2, 9})
 
+#: A FOUNTAIN's `action` is a different enum in the same field.
+#:
+#: This table exists because the one above was being applied to it. A W7H
+#: `work_start` carries `action` (its content is
+#: `{"pos","reason","item_id","action"}`), so `mode_from="action"` resolved,
+#: and a refill rendered as "Odor removal - work started" — litter-box
+#: vocabulary on a device that has no litter.
+#:
+#: Read out of W7H 456 `ctrl`. `work_start_event_detect` branches on the action
+#: byte and each branch names itself, both in its log line and in the still it
+#: grabs: `cmp #1` -> "get start event ---> flush water", `/tmp/fPro_flushStart.jpeg`;
+#: `cmp #5` -> `/tmp/fPro_changeStart.jpeg`; everything else falls through to
+#: "get start event ---> add water", `/tmp/fPro_addStart.jpeg`.
+#:
+#: So 1 and 5 are named by the firmware. 2 is not: it is accepted by the
+#: command whitelist below but reaches the event detector's default branch, so
+#: "refill" is the app's meaning attached to a value the firmware only lets
+#: through. Graded accordingly — it is the one entry here that could be wrong.
+FOUNTAIN_W7H_WORK_MODES: dict[int, str] = {
+    1: "flush",
+    2: "refill",
+    5: "water change",
+}
+
+#: Every `start_action` a W7H accepts, and nothing else.
+#:
+#: `_pki_deal_app_ctrl_start_evt` (W7H 456 `ctrl`) opens with an explicit
+#: whitelist — a `cmp`/`beq`/`bgt` chain over exactly these twenty values. A
+#: value outside it returns without touching the work queue: no reply, no
+#: error, no log. That is worth writing down precisely because it is
+#: unobservable from here; a command with a wrong action looks identical to a
+#: device that never got it.
+#:
+#: Only `start` is filtered this way. `stop_action`, `end_action` and
+#: `continue_action` are forwarded whatever they carry (the one exception being
+#: `continue_action == 103`, which the firmware rewrites into an end), and
+#: `power_action` takes only 0 and 1 down a path of its own.
+FOUNTAIN_W7H_START_ACTIONS = frozenset({
+    1, 2, 3, 4, 5, 7, 9, 10, 11, 12, 15, 16, 32, 100, 101, 102, 103, 104, 105, 106,
+})
+
+#: The two of those twenty that are not work at all.
+#:
+#: 32 is the camera: its branch calls the camera in/out handler and logs
+#: "camera in/out runing". 7 leaves `pk_hmi_set_ctrl_evt_2_app` by a different
+#: exit than every other value (`cmp r4,#7`), onto a different message queue.
+#: Neither belongs behind a button labelled with a cleaning cycle.
+FOUNTAIN_W7H_START_ACTIONS_NOT_WORK = frozenset({7, 32})
+
+
+def work_modes_for(device_type: str | None = None) -> dict[int, str]:
+    """The `action`/`workMode` enum for this device model.
+
+    Per family for the same reason NS1's numeric codes are per category: the
+    field name is shared, the vocabulary is not. Keyed on `FOUNTAIN_NEXT_GEN`
+    rather than the whole fountain category, because these values came out of
+    one model's firmware and a Bluetooth EverSweet has none of those jobs.
+
+    Defaults to the litter table, which is what every caller assumed back when
+    there was only one.
+    """
+    if (device_type or "").lower() in FOUNTAIN_NEXT_GEN:
+        return FOUNTAIN_W7H_WORK_MODES
+    return WORK_MODES
+
 #: workProcess is two digits: the tens digit is the phase, the units digit a
 #: detail (22 means paused with a safeWarn reason).
 WORK_PROCESS_PHASE: dict[int, str] = {
@@ -748,15 +832,28 @@ FEED_RESULT: dict[int, str] = {
 # Only what a source names is listed. A bit with no entry falls back to its raw
 # name rather than being dropped, so an unknown fault is still visible.
 
-#: W7H (EverSweet Ultra AI). From the reverse-engineered `ctrl` map supplied
-#: 2026-07-31, cross-checked against the `err` block of a real property/post
-#: from the same device, which carries these 18 keys and no others. The map
-#: also lists the matching on-device `error_start` content strings (`taryD`,
-#: `taryF`, `tankDU`, `cameraL`), which is how the two namespaces line up.
+#: W7H (EverSweet Ultra AI). Two groups, one table, because both reach the same
+#: Error sensor.
+#:
+#: The first eighteen are the `err{}` bits of a `property/post`. That set is
+#: closed: the key list the payload builder walks is a single literal run in
+#: W7H 456 `ctrl`, and it holds exactly these eighteen names — matching, name
+#: for name, the `err` block of a real capture from the same device.
+#:
+#: The last seven never appear in `err{}` at all. They live in a separate run
+#: (`cameraN|tankCU|tankDU|tankCL|tankDF|ptcU|tankL`) and are the content
+#: strings an `error_start` EVENT carries. All twenty-five are referenced from
+#: one code-to-name mapper, which is what says they are one vocabulary.
+#:
+#: The suffixes are regular, which is how the tank ones are readable at all:
+#: L = missing/not detected, M = malfunction, U = not installed, F = full,
+#: O = removed, D = detection. C is the clean tank and D the dirty one — the
+#: same C/D split as the hall switches.
 #:
 #: Note the firmware's own spelling: "tary", not "tray". Kept verbatim, because
 #: the key has to match what the device sends.
-FOUNTAIN_ERROR_FLAGS: dict[str, str] = {
+FOUNTAIN_W7H_ERROR_FLAGS: dict[str, str] = {
+    # `err{}` bits — the closed set a property/post can carry
     "DC": "DC power fault",
     "mcu": "MCU communication fault",
     "rtc": "Clock fault",
@@ -775,6 +872,16 @@ FOUNTAIN_ERROR_FLAGS: dict[str, str] = {
     "cycM": "Circulation pump fault",
     "repL": "Refill pump stalled",
     "repM": "Refill pump fault",
+    # `error_start` content strings — never bits, only events
+    "tankCU": "Clean water tank not installed",
+    "tankDU": "Waste tank not installed",
+    "tankCL": "Clean water tank low",
+    "tankDF": "Waste tank full",
+    "ptcU": "Heater not installed",
+    # Same table, no suffix that the others explain. Rendered rather than
+    # dropped, but named as little as the evidence allows.
+    "cameraN": "Camera fault (cameraN)",
+    "tankL": "Tank level low (tankL)",
 }
 
 #: Wire names the W7H's `ctrl` registers a settings handler for, from the
@@ -808,24 +915,31 @@ FOUNTAIN_W7H_SET_FIELDS = frozenset({
     "waterChangeTime", "wifiLightAssist", "wlDisturbMode",
 })
 
-#: Family -> that family's flag names. Litter boxes and feeders send an `err`
-#: object too, but no source names their bits, so they are absent here and
-#: their flags render raw — the honest state, and the reason the lookup below
-#: falls back rather than raising.
-ERROR_FLAGS: dict[str, dict[str, str]] = {
-    "fountain": FOUNTAIN_ERROR_FLAGS,
-}
+#: Family -> that family's flag names, most specific first.
+#:
+#: Keyed on a codename set, not a category. The one table we have describes the
+#: W7H's mechanism — tray, lift valve, two tanks, two pumps — so answering a
+#: W5's `err{}` out of it would name parts that fountain does not have. Litter
+#: boxes and feeders send an `err` object too, but no source names their bits,
+#: so they are absent here and their flags render raw: the honest state, and
+#: the reason the lookup below falls back rather than raising.
+ERROR_FLAGS: tuple[tuple[frozenset[str], dict[str, str]], ...] = (
+    (FOUNTAIN_NEXT_GEN, FOUNTAIN_W7H_ERROR_FLAGS),
+)
 
 
 def error_flag_label(flag: str, device_type: str | None = None) -> str:
     """Human label for one `err{}` bit, or the raw flag name if none is known.
 
-    Per device category, for the same reason NS1 is: nothing guarantees two
-    families spell the same fault the same way, and a wrong label is worse than
-    an untranslated one.
+    Per device family, for the same reason NS1 is per category: nothing
+    guarantees two models spell the same fault the same way, and a wrong label
+    is worse than an untranslated one.
     """
-    table = ERROR_FLAGS.get(category_of(device_type) or "", {})
-    return table.get(flag, flag)
+    codename = (device_type or "").lower()
+    for members, table in ERROR_FLAGS:
+        if codename in members:
+            return table.get(flag, flag)
+    return flag
 
 
 # --- derived views ---------------------------------------------------------

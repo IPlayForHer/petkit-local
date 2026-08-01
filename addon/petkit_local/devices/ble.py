@@ -1,8 +1,14 @@
-"""BLE accessory devices (K3 purifier, W5 water fountain).
+"""BLE accessory devices: the Pura Air spray and the EverSweet fountains.
 
-These connect via BLE to a WiFi device (T4/D4H/etc) which acts as proxy.
-K3 data flows through the parent device's property/post events.
-W5 data flows through ble_response/post events with binary protocol parsing.
+None of these has a network of its own (`utils/const.py::DEVICE_TYPES_BLE_ONLY`).
+Each pairs over BLE to a mains-powered WiFi device — a litter box or a feeder —
+which relays for it, so everything here arrives inside that parent's traffic:
+K3 readings ride along in its `property/post`, and the fountains' arrive as
+`ble_response/post` frames carrying a binary protocol this module decodes.
+
+Pairing is ours to hold because the parent does not discover anything: it asks
+the cloud for a list of MACs and scans for exactly those, and no firmware can
+report a new one upward.
 """
 from __future__ import annotations
 
@@ -22,12 +28,43 @@ log = logging.getLogger(__name__)
 # The `type` int the firmware expects in a `dev_ble_device` list entry. K3 is 0
 # because it is never listed there at all (it travels inside the parent's
 # device_info instead), so its value is only ever a placeholder.
-BLE_TYPE_MAP = {"w5": 14, "k3": 0}
+#
+# 14 is the only value here anybody has evidence for: it was read off a real W5
+# pairing. The other three fountains are MADE UP — they are the same BLE family
+# as the W5 (see W5_PROTOCOL), so the same handler is the likeliest answer, but
+# "likeliest" is the whole of it. Nothing in the parent's firmware maps a type
+# to a model: `pk_schmg_parse_ble_dev_list` (D4SH `ctrl`, `ble_relay_network.c`)
+# reads `type` straight out of the JSON, logs `dev[%d],type:%d` and stores it,
+# and the parent then scans by MAC. So the value only chooses which protocol it
+# speaks once it has connected.
+#
+# A wrong guess fails silently at both ends, which is why `BLEDevice.scan_type`
+# exists: the owner of the hardware can override it without a code change, the
+# panel shows the exact entry that will be sent, and whatever value turns out to
+# work can be brought back here as a real one.
+BLE_TYPE_MAP = {"w5": 14, "k3": 0, "w4": 14, "ctw2": 14, "ctw3": 14}
+
+#: Which of those values is evidence and which is a working assumption.
+#: Read by the panel so the guess is visible where somebody can act on it.
+BLE_TYPE_CONFIRMED = frozenset({"w5"})
 
 #: The accessory kinds that produce HA entities. Anything else registers fine
 #: and then appears nowhere, so callers validate against this rather than
 #: letting a typo create an invisible device.
 BLE_TYPES = tuple(BLE_TYPE_MAP)
+
+#: The EverSweets that speak the W5 BLE protocol.
+#:
+#: One pair of GATT UUIDs and one frame parser serve all of them in
+#: `phldgmn/ha-petkit-ble`, which advertises for `Petkit_W5`, `Petkit_W5C`,
+#: `Petkit_W5N`, `Petkit_W4X`, `Petkit_W4XUVC` and `Petkit_CTW2` — so a frame
+#: from any of them decodes with `parse_w5_ble_response` and reads through
+#: `W5_ENTITIES`.
+#:
+#: CTW3 is BLE-only too but is absent from that integration, so nothing says it
+#: speaks this protocol; it can be registered, and if its frames turn out to
+#: decode here, adding it is one line.
+W5_PROTOCOL = frozenset({"w5", "w4", "ctw2"})
 
 
 def normalize_mac(mac: str) -> str:
@@ -66,13 +103,27 @@ class BLEDevice:
     secret: str = ""
     link_with: int = 0
     interval: int = 240
+    #: Overrides `BLE_TYPE_MAP` for this one accessory. 0 means "use the table".
+    #:
+    #: Exactly one of the table's values is evidence; the rest are a working
+    #: assumption (see `BLE_TYPE_MAP`). A wrong one produces a pairing
+    #: that fails with no symptom at either end, and the person who can find out
+    #: which value is right is the one holding the fountain — not us. So it is
+    #: settable per accessory, and persisted with the rest.
+    scan_type: int = 0
     state: dict[str, Any] = field(default_factory=dict)
     config: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ble_type_int(self) -> int:
         """This accessory's `type` code for the `dev_ble_device` list."""
-        return BLE_TYPE_MAP.get(self.ble_type, 0)
+        return self.scan_type or BLE_TYPE_MAP.get(self.ble_type, 0)
+
+    @property
+    def scan_type_is_guessed(self) -> bool:
+        """Whether this accessory is being scanned for on an invented number."""
+        return not self.scan_type and self.ble_type not in BLE_TYPE_CONFIRMED \
+            and self.ble_type != "k3"
 
     def to_ble_list_entry(self) -> dict[str, Any]:
         """One entry of the `dev_ble_device` response: what the parent must scan for."""
@@ -99,6 +150,7 @@ class BLEDevice:
             "secret": self.secret,
             "link_with": self.link_with,
             "interval": self.interval,
+            "scan_type": self.scan_type,
             "state": self.state,
             "config": self.config,
         }
@@ -138,7 +190,7 @@ def get_ble_entities(ble_type: str) -> list[EntityDef]:
     """HA entity definitions for a BLE accessory type; empty for an unknown one."""
     if ble_type == "k3":
         return list(K3_ENTITIES)
-    if ble_type == "w5":
+    if ble_type in W5_PROTOCOL:
         return list(W5_ENTITIES)
     return []
 

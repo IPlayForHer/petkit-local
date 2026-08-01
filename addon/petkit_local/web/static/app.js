@@ -426,6 +426,7 @@ onAction('ble-pair', async el => {
       secret: val('ble-secret'),
       interval: Number(val('ble-interval')) || 240,
       serial_number: val('ble-sn'),
+      scan_type: Number(val('ble-scan-type')) || 0,
       link_with: Number(el.dataset.id),
     }),
   });
@@ -613,7 +614,7 @@ function renderPanelBody(d) {
       <p class="sub">You need two things off the accessory: its <b>Bluetooth address</b> and its <b>pairing secret</b>. Both come from the accessory itself or from PetKit's app — there is no way to work them out here, and the accessory will refuse the connection without the right secret.</p>
       <div class="row">
         <div class="col"><label class="mut">Accessory</label>
-          <select class="ble-type"><option value="w5">W5 fountain</option><option value="k3">K3 Pura Air spray</option></select></div>
+          <select class="ble-type"><option value="w5">EverSweet 3 Pro / Solo (W5)</option><option value="w4">EverSweet (W4)</option><option value="ctw2">EverSweet Solo 2 (CTW2)</option><option value="ctw3">EverSweet Max Cordless (CTW3)</option><option value="k3">Pura Air spray (K3)</option></select></div>
         <div class="col"><label class="mut">Bluetooth address (MAC)</label><input class="ble-mac" placeholder="AA:BB:CC:DD:EE:FF"></div>
       </div>
       <div class="row" style="margin-top:8px">
@@ -628,6 +629,9 @@ function renderPanelBody(d) {
           <div class="col"><label class="mut">Poll interval (s)${help(
             'How often the relay opens a Bluetooth session to read the accessory.',
           )}</label><input class="ble-interval" value="240"></div>
+          <div class="col"><label class="mut">Scan type${help(
+            'The number the relay is told to scan for. 14 is the only value anybody has read off a real pairing, and that was a W5 — the other fountains reuse it because they are the same Bluetooth family, which is a guess. If one of them never reports, this is the field to try another number in. Leave blank to use the default, and please say which value worked.',
+          )}</label><input class="ble-scan-type" placeholder="default"></div>
         </div>
       </details>
       <div style="margin-top:10px"><button class="act" data-action="ble-pair" data-id="${esc(d.id)}">Pair accessory</button></div>
@@ -2243,6 +2247,10 @@ const KIND_TAG = {
   cleaning: 'Cleaning',
   error: 'Alert',
   feeding: 'Feeding',
+  // A fountain's kinds. Without these the chip rendered the raw lowercase
+  // string, so every W7H row was the one card on the page not in title case.
+  drinking: 'Drinking',
+  system: 'System',
 };
 const KIND_CLASS = { toilet_visit: 'visit', pet: 'pet', motion: 'pet', error: 'error' };
 function hhmmss(ts) {

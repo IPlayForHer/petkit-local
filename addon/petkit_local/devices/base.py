@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from petkit_local.utils.const import (
     DEVICE_LOG_KEY_PREFIX,
     DEVICE_TYPES_AI,
+    DEVICE_TYPES_BLE_ONLY,
     DEVICE_TYPES_CAMERA,
     DEVICE_TYPES_FEEDER,
     DEVICE_TYPES_LITTER,
@@ -196,6 +197,19 @@ class Device:
     def is_purifier(self) -> bool:
         """Whether this is an air purifier (K2/K3, BLE-only in practice)."""
         return self.device_type in DEVICE_TYPES_PURIFIER
+
+    @property
+    def is_ble_only(self) -> bool:
+        """Whether this model has no network of its own.
+
+        True means this `Device` should not exist: the real thing pairs over
+        BLE to a WiFi device that relays for it (`devices/ble.py`), so it can
+        neither sign up nor hold credentials nor poll. Read by
+        `registry.get_or_create`, which warns rather than refuses -- a device
+        is never told no. Nothing else branches on it: one that cannot arrive
+        needs no special handling once it somehow has.
+        """
+        return self.device_type in DEVICE_TYPES_BLE_ONLY
 
     @property
     def supports_ai(self) -> bool:

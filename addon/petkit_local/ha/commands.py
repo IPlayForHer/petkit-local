@@ -26,6 +26,7 @@ from typing import Any
 
 from petkit_local.devices.base import Device
 from petkit_local.devices.state_parsers import record_consumable_reset
+from petkit_local.events import codes
 from petkit_local.ha.discovery import EntityDef
 from petkit_local.utils.coerce import to_bool, to_float
 
@@ -178,10 +179,27 @@ FEEDER_ACTIONS = {
     "food_replenished": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"food": 1})),
 }
 
+def _fountain_start(code: int) -> Command:
+    """Begin a water-treatment job on a W7H.
+
+    The same `thing.service.start` envelope a litter box uses -- one service,
+    one `start_action`, and the device tells them apart by which model it is.
+    The values are NOT the litter ones (`codes.FOUNTAIN_W7H_START_ACTIONS`);
+    2 is "refill" here and "deodorize" on a Purobot.
+    """
+    if code not in codes.FOUNTAIN_W7H_START_ACTIONS:
+        raise ValueError(f"start_action {code} is not one the W7H accepts")
+    return ("start", _envelope("thing.service.start", {"start_action": code}, ms_id=True))
+
+
 FOUNTAIN_ACTIONS = {
     "reset_filter": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"filterPercent": 100})),
     "pause_fountain": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"power": 0})),
     "resume_fountain": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"power": 1})),
+    # W7H only; no other fountain publishes these buttons.
+    "fountain_flush": lambda: _fountain_start(1),
+    "fountain_refill": lambda: _fountain_start(2),
+    "fountain_water_change": lambda: _fountain_start(5),
 }
 
 ALL_ACTIONS = {**LITTER_ACTIONS, **FEEDER_ACTIONS, **FOUNTAIN_ACTIONS}

@@ -109,6 +109,85 @@ async def test_heartbeat_delivers_queued_command():
         await client.close()
 
 
+# --- what the device does with the answer ----------------------------------
+#
+# Every rule below was read out of `net_http_heartbeat` (D4SH 867) and its ARM
+# twin (W7H 456), and every one of them fails silently: a rejected entry
+# produces no reply, no error and no retry, so from this side a command the
+# device threw away is indistinguishable from one it obeyed.
+
+
+def test_a_command_is_labelled_with_a_msg_type_the_device_dispatches():
+    """`do_http_web_msg` knows 0, 1 and 2. Anything else logs
+    `//***** error msgType (%d) *****//` and the command is gone.
+
+    This table read 2/3/5/6/7 until 1.4.0 — invented and sequential. `start`
+    worked by coincidence; every settings write and every feed sent over HTTP
+    was discarded by the device while the queue drained and
+    `wait_for_heartbeat` reported delivery.
+    """
+    from petkit_local.ha.commands import ALL_ACTIONS
+    from petkit_local.http.handlers.heartbeat import _to_heartbeat_content
+
+    for key, build in ALL_ACTIONS.items():
+        suffix, envelope = build()
+        content = json.loads(_to_heartbeat_content(
+            {**envelope, "_service_suffix": suffix}))
+        assert content["msgType"] in (0, 1, 2), f"{key} -> {content['msgType']}"
+
+
+def test_a_settings_write_goes_to_the_property_set_handler():
+    from petkit_local.ha.commands import make_mqtt_property_set
+    from petkit_local.http.handlers.heartbeat import _to_heartbeat_content
+
+    content = json.loads(_to_heartbeat_content(
+        make_mqtt_property_set({"petDetection": 1})))
+    assert content["msgType"] == 1
+    # `web_property_set_recv_parse` reads `payload` and nothing else.
+    assert content["payload"] == {"petDetection": 1}
+
+
+def test_a_service_keeps_the_name_the_firmware_dispatches_on():
+    """`parse_service_invoke_msg` takes the service from `type` verbatim when
+    `service_id` is absent, which is exactly the HTTP case."""
+    from petkit_local.http.handlers.heartbeat import _to_heartbeat_content
+
+    for method, expected in [("thing.service.start", "start"),
+                             ("thing.service.end", "end"),
+                             ("thing.service.feed_realtime", "feed_realtime"),
+                             ("thing.service.connect", "connect")]:
+        content = json.loads(_to_heartbeat_content(
+            {"method": method, "params": {"x": 1}}))
+        assert content["msgType"] == 2, method
+        assert content["type"] == expected, method
+
+
+async def test_two_commands_in_one_answer_both_survive_the_device_s_filters():
+    """The device drops an entry whose `timestamp` is not greater than the last
+    one it consumed, and one whose `time/1000 - timestamp` reaches 61 — on an
+    unsigned compare, so a stamp in the future expires instantly. Identical
+    stamps satisfied the second rule and failed the first, delivering only the
+    head of a batch."""
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        await client.post("/6/t5/dev_signup", headers=HDR)
+        dev = reg.get(100)
+        for _ in range(3):
+            dev.command_queue.append({"msgType": 2, "payload": {"start_action": 0}})
+
+        result = (await (await client.get("/6/poll/t5/heartbeat",
+                                          headers=HDR)).json())["result"]
+        assert len(result) == 3
+        stamps = [e["timestamp"] for e in result]
+        assert stamps == sorted(set(stamps)), "stamps must strictly increase"
+        for entry in result:
+            age = entry["time"] // 1000 - entry["timestamp"]
+            assert 0 <= age < 61, entry
+    finally:
+        await client.close()
+
+
 async def test_heartbeat_clears_mqtt_flag_when_device_reports_no_session():
     """`mqtt_connected` is set by a successful CONNECT and used to pick a
     transport; publishing to a topic nobody is subscribed to raises nothing, so

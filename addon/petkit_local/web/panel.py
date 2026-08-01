@@ -1681,6 +1681,11 @@ def _ble_view(dev: BLEDevice) -> dict[str, Any]:
         "interval": dev.interval,
         "link_with": dev.link_with,
         "serial_number": dev.serial_number,
+        "scan_type": dev.scan_type,
+        # True when the `type` in the wire entry below is a working assumption
+        # rather than a value anybody has captured. Surfaced because the person
+        # who can settle it is the one whose fountain either pairs or does not.
+        "scan_type_is_guessed": dev.scan_type_is_guessed,
         # Exactly what `dev_ble_device` will hand the parent, so a user can see
         # whether what they typed is what the device will be told to scan for.
         "wire_entry": dev.to_ble_list_entry(),
@@ -1783,6 +1788,10 @@ async def api_ble_accessories(request: web.Request) -> web.Response:
             interval=to_int(body.get("interval"), 240) or 240,
             link_with=link_with,
             serial_number=str(body.get("serial_number", "")),
+            # Optional: overrides the `type` the parent is told to scan for.
+            # Only the W5's is a captured value, so for the other fountains this
+            # is the field that turns a guess into something a user can correct.
+            scan_type=max(to_int(body.get("scan_type"), 0) or 0, 0),
         )
         # Publish immediately rather than waiting for the next HA reconnect:
         # an accessory that appears in the panel but not in HA reads as broken.
@@ -2277,7 +2286,7 @@ async def api_event_detail(request: web.Request) -> web.Response:
         "decoded": [
             {"key": f.key, "label": f.label, "raw": f.raw,
              "text": f.text, "grade": f.grade, "note": f.note}
-            for f in decode.decode_content(event_type, content)
+            for f in decode.decode_content(event_type, content, device_type)
         ],
         "content": content,
         "state": state,
