@@ -817,7 +817,7 @@ class MQTTBridge:
                          ", ".join(f"cmd {c} {d}" for c, d in replies))
             else:
                 log.info("%s ble_response not decodable yet (id=%d) - turn capture on in the "
-                         "panel (Setup -> Live settings) to collect frames",
+                         "panel (Setup -> Settings) to collect frames",
                          ble_dev.ble_type.upper(), ble_dev.petkit_id)
 
         # The reading is in; let the parent close its radio rather than holding

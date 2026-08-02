@@ -1,0 +1,84 @@
+name: Feature request
+description: Something this could do and does not
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things are worth knowing before you write, because they decide what
+        happens to the request rather than whether it is a good idea.
+
+        **What the device can do is not up to us.** This add-on stands in for
+        PetKit's servers; it can only ask a device for things its own firmware
+        already understands. If nobody has seen the device do a thing, adding it
+        means finding the command in the firmware first — which is possible, and
+        slow. Saying "the PetKit app can do this" is therefore the single most
+        useful sentence you can write, because it means the command exists and
+        can be captured.
+
+        **A request about a model nobody owns will sit.** One litter box is
+        confirmed working — the author's. Everything else is inference. That is
+        not a refusal; it is why a report from your own hardware moves faster
+        than a request about it.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like it to do
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: What are you trying to achieve
+      description: >
+        The problem behind the request, not the solution you have in mind. There
+        is often a shorter route to it, and sometimes one that already exists.
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Which model, if it is about one
+      placeholder: EverSweet Max Cordless (CTW3)
+
+  - type: dropdown
+    id: app
+    attributes:
+      label: Can PetKit's own app do this today?
+      description: >
+        The most important field here. If the app can, the device already
+        understands the command and proxy mode can record it being sent — which
+        turns a request into something implementable.
+      options:
+        - "Yes — the app does this"
+        - "No, or I do not think so"
+        - "I do not know"
+    validations:
+      required: true
+
+  - type: textarea
+    id: capture
+    attributes:
+      label: A capture of the app doing it (optional, and the fastest route)
+      description: >
+        Turn proxy mode and traffic capture on in Setup → Settings, do the thing in
+        PetKit's app, turn them off. `proxy_mqtt.jsonl` and `proxy_http.jsonl`
+        then hold the exact command the cloud sent.
+      render: json
+
+  - type: markdown
+    attributes:
+      value: |
+        > **⚠ If you attach a capture, read it first.** It is a verbatim
+        > recording of everything the device said and was told, and nothing in
+        > it is filtered, because it is only useful if it is exact.
+        >
+        > Any of them can hold your **Wi-Fi SSID**, your LAN addresses, the
+        > device serial and its signing secret. A proxy-mode capture also
+        > carries the **full exchanges with PetKit, including your account
+        > credentials**.
+        >
+        > Attach only the lines that show the command.

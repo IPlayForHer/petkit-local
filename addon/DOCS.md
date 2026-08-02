@@ -48,7 +48,7 @@ PetKit device ──HTTP───► petkit-local ──MQTT discovery──► 
 | `mqtt_strict_auth` | `false` | Enforce the Aliyun HMAC signature. Off by default so a signature nuance cannot lock a device out. |
 
 Payload capture and proxy mode are **not** options here. Both are things you turn on
-while watching a device, so they live in the panel's **Setup → Live settings**, take
+while watching a device, so they live in the panel's **Setup → Settings**, take
 effect immediately, and persist to `/data/settings_overrides.json`.
 
 ## Ports
@@ -180,7 +180,7 @@ Bluetooth at all.
   to attach to an issue.
 - The **Setup** tab has connection diagnostics and the exact values a device
   needs.
-- Turning on **Traffic capture** (Setup → Live settings) records raw payloads to
+- Turning on **Traffic capture** (Setup → Settings) records raw payloads to
   `/data/capture/*.jsonl`. That is the single most useful thing to attach when
   something is wrong for a device model this project has not verified — see the
   supported-device table in the repository README for which those are.
