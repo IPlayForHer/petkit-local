@@ -2335,7 +2335,7 @@ async function doProvision() {
       plog(
         name +
           ' is a Bluetooth-only accessory — there is no WiFi on it to configure. ' +
-          'Pair it instead under Setup → BLE accessories, against the litter box ' +
+          'Pair it instead from the Devices tab, on the panel of the litter box ' +
           'or feeder that will relay for it.',
       );
       return;

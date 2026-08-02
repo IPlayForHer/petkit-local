@@ -110,10 +110,10 @@ to sit at "unknown".
 
 **† No Wi-Fi — Bluetooth only.** They pair to a mains-powered litter box or feeder, which relays for
 them, so their readings arrive inside its traffic; no parent nearby means no data at all. They still
-appear as their own Home Assistant devices. Pair them under **Setup → BLE accessories** — a parent
-never discovers anything, it asks the cloud what to scan for, and the cloud is now this. For every
-fountain but the W5 that scan number is a guess: if one never reports, change **Scan type** under
-Advanced and tell us which value worked.
+appear as their own Home Assistant devices. Pair them from the **Devices** tab, on the panel of the
+device that will relay for them — a parent never discovers anything, it asks the cloud what to scan
+for, and the cloud is now this. For every fountain but the W5 that scan number is a guess: if one
+never reports, change **Scan type** under Advanced and tell us which value worked.
 
 **‡ No Bluetooth radio at all.** So the Provision tab cannot reach one — DNS redirect only. And its
 signup carries no id and no serial, which this add-on has no way to mint, so a factory-fresh feeder
