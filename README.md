@@ -85,10 +85,9 @@ nobody has run one.
 | Purobot Ultra | T6 | ✅ | ✅ |
 | Purobot Crystal Duo | T7 | ✅ | ✅ |
 
-**Supported, not tested.** Entity definitions exist and should be close, but most of them come from
-[pypetkitapi](https://github.com/Jezza34000/py-petkit-api), which is a client of PetKit's *cloud*
-API — and the cloud's field names are not always the device's. The two vocabularies overlap heavily,
-which is why it works, but not perfectly: expect the common things to work and the occasional entity
+**Supported, not tested.** Entity definitions exist and should be close, but most come from
+[pypetkitapi](https://github.com/Jezza34000/py-petkit-api), a client of PetKit's *cloud* API — whose
+field names are not always the device's. Expect the common things to work and the occasional entity
 to sit at "unknown".
 
 | Product | Codename | Camera | On-device AI |
@@ -99,8 +98,9 @@ to sit at "unknown".
 | YumShare Solo 2 | D4H | ✅ | ✅ |
 | YumShare Dual-Hopper | D4SH | ✅ | — |
 | YumShare Dual-Hopper 2 | D4SH | ✅ | ✅ |
-| Feeder D3 / D4 / D4s | D3, D4, D4S | — | — |
-| Feeder / Feeder Mini | feeder, feedermini | — | — |
+| Fresh Element Solo | D4 | — | — |
+| Feeder D3 / D4s | D3, D4S | — | — |
+| Feeder / Feeder Mini | feeder, feedermini ‡ | — | — |
 | EverSweet Ultra AI | W7H | ✅ | ✅ |
 | EverSweet 3 Pro | W5 † | — | — |
 | EverSweet | W4 † | — | — |
@@ -108,27 +108,21 @@ to sit at "unknown".
 | EverSweet Max Cordless | CTW3 † | — | — |
 | Pura Air smart spray | K2, K3 † | — | — |
 
-**† No Wi-Fi — Bluetooth only.** These never talk to this add-on directly, because they have no
-radio that can. They pair over Bluetooth to a mains-powered PetKit device — a litter box or a feeder
-— which relays for them, so what reaches us is their parent's traffic with their readings inside it.
-No parent nearby means no data at all, whatever this add-on is doing. They still appear as their own
-Home Assistant devices.
+**† No Wi-Fi — Bluetooth only.** They pair to a mains-powered litter box or feeder, which relays for
+them, so their readings arrive inside its traffic; no parent nearby means no data at all. They still
+appear as their own Home Assistant devices. Pair them under **Setup → BLE accessories** — a parent
+never discovers anything, it asks the cloud what to scan for, and the cloud is now this. For every
+fountain but the W5 that scan number is a guess: if one never reports, change **Scan type** under
+Advanced and tell us which value worked.
 
-Both YumShare generations answer to the same codename, so nothing can tell them apart before they
-speak. A gen 2 earns its recognition entities by asking for the face endpoints; a gen 1 never does.
+**‡ No Bluetooth radio at all.** So the Provision tab cannot reach one — DNS redirect only. And its
+signup carries no id and no serial, which this add-on has no way to mint, so a factory-fresh feeder
+might be refused before it gets anywhere. Nobody has run one.
 
 **Not listed at all?** It should still work with **proxy mode** on — every request is forwarded to
 PetKit and the device gets the real cloud's answer, so it keeps behaving normally while everything
 it says is recorded. That recording is exactly what is needed to add it properly; see
 [CONTRIBUTING.md](CONTRIBUTING.md).
-
-Pairing one of the † models is done here rather than in PetKit's app, because the parent device does
-not discover accessories — it asks the cloud which ones to scan for, and the cloud is now this
-add-on. Enter it under **Setup → BLE accessories** with its MAC and the WiFi device it should be
-relayed by. One caveat for the fountains other than the W5: the relay is handed a number saying what
-to scan for, and only the W5's has ever been read off a real pairing. The rest reuse it because they
-are the same Bluetooth family — a good guess, not a fact. If one of them never reports anything,
-change **Scan type** under Advanced and tell us which value worked.
 
 ## 🤖 Is this project another vibecoded AI slop?
 

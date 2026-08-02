@@ -35,6 +35,7 @@ function fmtBytes(n) {
   return n + ' B';
 }
 let DEVICES = [];
+let ACCESSORIES = [];
 //: The last detail payload per device, so a panel can repaint from memory
 //: instead of flashing empty while a refresh is in flight.
 const DEV_DETAIL = new Map();
@@ -261,8 +262,14 @@ document.querySelectorAll('nav button').forEach(b =>
 // WebSocket update on one device from throwing away another device's scroll
 // position, open sections and half-typed input.
 async function loadDevices() {
-  const ds = await api('devices');
+  const [ds, bleResp] = await Promise.all([api('devices'), api('ble')]);
   DEVICES = ds;
+  // An accessory is its own device here, not a row in its parent's card: in
+  // Home Assistant it already is one, and a CTW3 carries 21 entities and 8
+  // controls — more than a purifier. What it does NOT get is the parent's
+  // machinery (counters, queue, patchers, proxy): it has no network of its
+  // own, so every one of those would be a zero pretending to be a reading.
+  ACCESSORIES = (bleResp && bleResp.accessories) || [];
   const box = document.getElementById('devPanels');
   if (!box) return;
 
@@ -275,7 +282,10 @@ async function loadDevices() {
 
   // Forget open-state for devices that no longer exist, so the stored map does
   // not grow forever across re-registrations.
-  const live = new Set(ds.map(d => String(d.id)));
+  const live = new Set([
+    ...ds.map(d => String(d.id)),
+    ...ACCESSORIES.map(a => String(a.petkit_id)),
+  ]);
   let pruned = false;
   for (const k of [...DEV_OPEN.keys()]) {
     if (!live.has(k.split(':')[0])) {
@@ -289,10 +299,20 @@ async function loadDevices() {
     } catch (_) {}
   }
 
-  const rendered = [...box.querySelectorAll('.devpanel')].map(p => p.dataset.id);
-  const wanted = ds.map(d => String(d.id));
+  // Each accessory follows the device that relays for it, so the relationship
+  // reads out of the order rather than out of nesting.
+  const order = [];
+  for (const d of ds) {
+    order.push({ kind: 'dev', d });
+    for (const a of ACCESSORIES.filter(a => a.link_with === d.id)) order.push({ kind: 'ble', a });
+  }
+  for (const a of ACCESSORIES.filter(a => !ds.some(d => d.id === a.link_with)))
+    order.push({ kind: 'ble', a });
+
+  const rendered = [...box.querySelectorAll('[data-panel-key]')].map(p => p.dataset.panelKey);
+  const wanted = order.map(o => (o.kind === 'dev' ? 'd' + o.d.id : 'a' + o.a.petkit_id));
   if (rendered.join(',') !== wanted.join(',')) {
-    box.innerHTML = ds.map(panelShell).join('');
+    box.innerHTML = order.map(o => (o.kind === 'dev' ? panelShell(o.d) : accShell(o.a))).join('');
   }
   for (const d of ds) {
     const panel = devPanel(d.id);
@@ -302,6 +322,16 @@ async function loadDevices() {
       if (DEV_DETAIL.has(d.id)) paintPanelBody(d.id);
       else scheduleDetail(d.id);
     }
+  }
+  for (const a of ACCESSORIES) {
+    const panel = document.querySelector(
+      '.accpanel[data-id="' + CSS.escape(String(a.petkit_id)) + '"]',
+    );
+    if (!panel) continue;
+    // No lazy detail fetch: /api/ble already carries the whole accessory,
+    // entities and resolved values included.
+    panel.querySelector('summary').innerHTML = accSummary(a);
+    if (panel.open) panel.querySelector('.devbody').innerHTML = accBody(a);
   }
 }
 function gotoTab(t) {
@@ -313,9 +343,87 @@ const devPanel = id =>
   document.querySelector('.devpanel[data-id="' + CSS.escape(String(id)) + '"]');
 
 function panelShell(d) {
-  return `<details class="devpanel" data-toggle="dev-panel" data-id="${esc(d.id)}" data-sec="panel" ${
+  return `<details class="devpanel" data-panel-key="d${esc(d.id)}" data-toggle="dev-panel" data-id="${esc(d.id)}" data-sec="panel" ${
     secOpen(d.id, 'panel', true) ? 'open' : ''
   }><summary class="dh"></summary><div class="devbody"></div></details>`;
+}
+
+function accShell(a) {
+  return `<details class="devpanel accpanel" data-panel-key="a${esc(a.petkit_id)}" data-toggle="acc-panel" data-id="${esc(a.petkit_id)}" data-sec="panel" ${
+    secOpen(a.petkit_id, 'panel', true) ? 'open' : ''
+  }><summary class="dh"></summary><div class="devbody"></div></details>`;
+}
+onAction('ble-read-now', async el => {
+  const r = await api('ble/' + el.dataset.id + '/poll', { method: 'POST' });
+  toast(r && r.ok ? 'Asked the relay for a reading' : 'Error: ' + ((r && r.error) || '?'));
+  loadDevices();
+});
+onToggle('acc-panel', el => {
+  const id = Number(el.dataset.id);
+  setSecOpen(id, 'panel', el.open);
+  if (el.open) {
+    const a = ACCESSORIES.find(x => x.petkit_id === id);
+    if (a) el.querySelector('.devbody').innerHTML = accBody(a);
+  }
+});
+
+// `linkBadge`'s two answers — MQTT or HTTP heartbeat — are both untrue of an
+// accessory: it has no session of its own and no heartbeat queue to fall back
+// to. Everything reaches it over Bluetooth, through whoever relays for it.
+// Offline still wins, because without that parent on the network the accessory
+// is not merely idle, it is unaddressable.
+function accSummary(a) {
+  const seen = a.last_seen ? relTime(a.last_seen) : 'never reported';
+  return `<span class="dot ${a.parent_online ? 'on' : 'off'}"></span>
+    <b class="dp-name" title="${esc(a.name)}">${esc(a.name)}</b>
+    <span class="chip">${esc(a.ble_type.toUpperCase())} · #${esc(a.petkit_id)}</span>
+    ${a.parent_online ? '<span class="badge ble">BLE</span>' : '<span class="badge off">offline</span>'}
+    ${a.parent_name ? `<span class="badge">relayed by ${esc(a.parent_name)}</span>` : '<span class="badge bad">no parent</span>'}
+    <span class="grow"></span>
+    <span class="mut dp-meta">${esc((a.entities || []).length)} entities · ${esc(seen)}</span>`;
+}
+
+function accBody(a) {
+  const ents = a.entities || [];
+  const sensors = ents.filter(e => e.component === 'sensor' || e.component === 'binary_sensor');
+  const controls = ents.filter(e => ['switch', 'number', 'select'].includes(e.component));
+  return `<div class="dh"></div>
+  <div class="meta">
+    <div><div class="m-k">Bluetooth address</div><div class="m-v"><code>${esc(a.mac)}</code></div></div>
+    <div><div class="m-k">Relayed by</div><div class="m-v">${a.parent_name ? esc(a.parent_name) + ' #' + esc(a.link_with) : '—'}</div></div>
+    <div><div class="m-k">Serial</div><div class="m-v">${esc(a.serial_number || '—')}</div></div>
+    <div><div class="m-k">Last reading</div><div class="m-v">${a.last_seen ? esc(relTime(a.last_seen)) : 'never'}</div></div>
+    <div><div class="m-k">Poll interval</div><div class="m-v">${esc(a.interval)}s</div></div>
+    <div><div class="m-k">Scan type</div><div class="m-v">${esc(a.wire_entry ? a.wire_entry.type : '—')}</div></div>
+  </div>
+  ${
+    a.scan_type_is_guessed
+      ? `<div class="card notice"><b>The scan type for this model is a guess.</b>
+    <p class="sub" style="margin:6px 0 0">Nobody has captured what a real ${esc(a.ble_type.toUpperCase())} pairing carries, so
+    <code>${esc(a.wire_entry ? a.wire_entry.type : '?')}</code> is borrowed from its product line. If this accessory never reports,
+    that number is the first thing to change — unpair and pair again with a different <b>Scan type</b> under Advanced,
+    and please say which value worked.</p></div>`
+      : ''
+  }
+  <div class="card"><h3>Actions${help(
+    "Nothing in this accessory's protocol is shaped like an action — its writes are all settings, and they are in Controls. What is worth a button is the relay: the accessory speaks only when its parent is told to open a Bluetooth session, and otherwise that happens on a timer up to the poll interval away.",
+  )}</h3>
+    <div><button class="act" data-action="ble-read-now" data-id="${esc(a.petkit_id)}">Read now</button></div></div>
+  ${
+    sensors.length
+      ? `<div class="card"><h3>State</h3>
+    ${entityTable({ id: a.petkit_id, entities: ents }, sensors)}
+    <details class="adv"><summary>Raw parsed state JSON</summary><pre>${esc(JSON.stringify(a.state, null, 2))}</pre></details></div>`
+      : `<div class="card"><h3>State</h3><p class="mut" style="margin:0">Nothing reported yet. An accessory only speaks when its parent is asked to open a Bluetooth session to it.</p></div>`
+  }
+  ${
+    controls.length
+      ? `<div class="card"><h3>Controls</h3><div class="ctrls">${controls
+          .map(e => controlRow(a.petkit_id, e, 'ble'))
+          .join('')}</div>
+    <p class="sub" style="margin:8px 0 0">Settings travel as one block, so a change needs a reading first — before the accessory has reported, a write is refused rather than guessed at.</p></div>`
+      : ''
+  }`;
 }
 
 // The header stays readable when collapsed, so it carries everything the old
@@ -939,12 +1047,13 @@ onInput('entity-number', el => {
   el.classList.toggle('dirty', PENDING_EDITS.has(k));
 });
 
-function controlRow(id, e) {
+function controlRow(id, e, kind) {
+  const k = kind ? ` data-kind="${esc(kind)}"` : '';
   const nm = esc(e.name) + (ENTITY_HELP[e.key] ? help(ENTITY_HELP[e.key]) : '');
   if (e.component === 'switch') {
     const on = e.value === 1 || e.value === true || e.value === '1';
     return `<label class="ctrl"><span>${nm}</span>
-      <span class="sw"><input type="checkbox" ${on ? 'checked' : ''} data-change="set-entity-switch" data-id="${esc(id)}" data-key="${esc(e.key)}"><span class="sl"></span></span></label>`;
+      <span class="sw"><input type="checkbox" ${on ? 'checked' : ''} data-change="set-entity-switch" data-id="${esc(id)}" data-key="${esc(e.key)}"${k}><span class="sl"></span></span></label>`;
   }
   if (e.component === 'number') {
     // The Set button finds its input by walking the DOM rather than by an id
@@ -962,7 +1071,7 @@ function controlRow(id, e) {
     return `<label class="ctrl"><span>${nm}${range}</span>
       <span class="cn"><input type="number" class="${pending !== undefined ? 'dirty' : ''}" value="${esc(shown)}" min="${esc(e.min)}" max="${esc(e.max)}" step="${esc(e.step)}"
         data-input="entity-number" data-id="${esc(id)}" data-key="${esc(e.key)}" data-device-value="${esc(e.value ?? '')}">
-      <button class="mini" data-action="set-entity-number" data-id="${esc(id)}" data-key="${esc(e.key)}">Set</button></span></label>`;
+      <button class="mini" data-action="set-entity-number" data-id="${esc(id)}" data-key="${esc(e.key)}"${k}>Set</button></span></label>`;
   }
   // select — device value maps to an option via option_values (else by index/label)
   let sel = -1;
@@ -975,12 +1084,20 @@ function controlRow(id, e) {
     )
     .join('');
   return `<label class="ctrl"><span>${nm}</span>
-    <span class="cn"><select data-change="set-entity-select" data-id="${esc(id)}" data-key="${esc(e.key)}">${opts}</select></span></label>`;
+    <span class="cn"><select data-change="set-entity-select" data-id="${esc(id)}" data-key="${esc(e.key)}"${k}>${opts}</select></span></label>`;
 }
 onChange('set-entity-switch', el =>
-  setEntity(Number(el.dataset.id), el.dataset.key, el.checked ? 'ON' : 'OFF'),
+  setEntity(
+    Number(el.dataset.id),
+    el.dataset.key,
+    el.checked ? 'ON' : 'OFF',
+    null,
+    el.dataset.kind,
+  ),
 );
-onChange('set-entity-select', el => setEntity(Number(el.dataset.id), el.dataset.key, el.value));
+onChange('set-entity-select', el =>
+  setEntity(Number(el.dataset.id), el.dataset.key, el.value, null, el.dataset.kind),
+);
 onAction('set-entity-number', el => {
   const input = el.closest('.cn').querySelector('input');
   const v = Number(input.value);
@@ -993,10 +1110,16 @@ onAction('set-entity-number', el => {
   // the panel is not the only way in.
   if (input.value === '' || Number.isNaN(v)) return toast('Enter a number');
   if (v < min || v > max) return toast(`Must be between ${min} and ${max}`);
-  setEntity(Number(el.dataset.id), el.dataset.key, input.value, () => {
-    PENDING_EDITS.delete(editKey(el.dataset.id, el.dataset.key));
-    input.classList.remove('dirty');
-  });
+  setEntity(
+    Number(el.dataset.id),
+    el.dataset.key,
+    input.value,
+    () => {
+      PENDING_EDITS.delete(editKey(el.dataset.id, el.dataset.key));
+      input.classList.remove('dirty');
+    },
+    el.dataset.kind,
+  );
 });
 
 onAction('send-action', el =>
@@ -1025,19 +1148,26 @@ async function sendAction(el, id, action, destructive, name) {
     toast(msg);
   });
 }
-async function setEntity(id, key, value, onAccepted) {
-  post(id, { entity: key, value }, r => {
-    if (r.ok && onAccepted) onAccepted();
-    toast(
-      r.ok
-        ? r.delivered === 'mqtt'
-          ? 'Updated (MQTT)'
-          : r.delivered === 'local'
-            ? 'Saved'
-            : 'Queued for heartbeat'
-        : 'Error: ' + r.error,
-    );
-  });
+async function setEntity(id, key, value, onAccepted, kind) {
+  post(
+    id,
+    { entity: key, value },
+    r => {
+      if (r.ok && onAccepted) onAccepted();
+      toast(
+        r.ok
+          ? r.delivered === 'mqtt'
+            ? 'Updated (MQTT)'
+            : r.delivered === 'local'
+              ? 'Saved'
+              : r.delivered === 'ble'
+                ? 'Sent over Bluetooth'
+                : 'Queued for heartbeat'
+          : 'Error: ' + r.error,
+      );
+    },
+    kind,
+  );
 }
 onAction('send-raw', el => sendRaw(el, Number(el.dataset.id)));
 async function sendRaw(el, id) {
@@ -1051,13 +1181,22 @@ async function sendRaw(el, id) {
   }
   post(id, b, r => toast(r.ok ? 'Sent via ' + r.delivered : 'Error: ' + r.error));
 }
-async function post(id, body, cb) {
-  const r = await api('devices/' + id + '/command', {
+async function post(id, body, cb, kind) {
+  // A BLE accessory has its own route: it is reachable only while its parent
+  // is on MQTT, so there is no heartbeat queue to fall back to and the server
+  // answers 409 rather than pretending to have queued something.
+  const path = kind === 'ble' ? 'ble/' + id + '/command' : 'devices/' + id + '/command';
+  const r = await api(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (cb) cb(r);
+  if (kind === 'ble') {
+    if (r && r.error) toast('Error: ' + r.error);
+    loadDevices();
+    return;
+  }
   // reflect optimistic changes + queue count
   scheduleRefresh();
   scheduleDetail(id);
@@ -1624,7 +1763,7 @@ async function loadSetup() {
     <p class="sub">Bound at startup — set these in the <b>Configuration</b> tab, then restart.</p>
     <table><tbody>
       <tr><td>Version</td><td><code>${esc(i.version || '?')}</code></td><td class="mut">The code actually running. If an update did not take effect this still shows the old number, which is the quickest way to tell a stale build from a real bug.</td></tr>
-      <tr><td>API URL (apiServers)</td><td><code>${esc(i.api_url)}</code></td><td class="mut">The URL a device calls. Ingenic devices get it via BLE provisioning; ESP32 via DNS redirect.</td></tr>
+      <tr><td>API URL (apiServers)</td><td><code>${esc(i.api_url)}</code></td><td class="mut">The URL a device calls. Most models take it over Bluetooth from the Provision tab; the oldest, which have no Bluetooth setup, need a DNS redirect.</td></tr>
       <tr><td>MQTT host</td><td><span class="badge ok">automatic</span></td><td class="mut">No global setting — every device is handed our own broker (derived from the API URL host). A patched <code>ctrl</code> connects over MQTT; an unpatched one simply heartbeats over HTTP (it does not crash). Commands fall back to the HTTP heartbeat when there\'s no live MQTT session.</td></tr>
       <tr><td>MQTT broker port</td><td><code>${esc(i.mqtt_port)}</code>${i.mqtt_tls ? ` · TLS <code>${esc(i.mqtt_tls_port)}</code>` : ''}</td><td class="mut">TLS cert ${i.cert_exists ? '<span class="badge ok">present</span>' : '<span class="badge bad">missing</span>'}${help('The self-signed certificate the broker presents. "missing" means the file named by cert_path is not there, and a device that expects TLS will not connect.')}</td></tr>
       <tr><td>MQTT auth</td><td>${i.strict_auth ? '<span class="badge warn">strict HMAC</span>' : '<span class="badge">accept-all</span>'}</td><td class="mut">Accept-all is fine for a trusted LAN; strict enforces the Aliyun HMAC-SHA256 sign.</td></tr>
@@ -1876,10 +2015,65 @@ async function removePatch(id, patcher, name) {
   }
 }
 
-// ---------------- BLE provisioning (Web Bluetooth) — protocol per petkit-root's BLE tool ----------------
+// ---------------- BLE provisioning (Web Bluetooth) ----------------
+//
+// TWO protocols, because PetKit uses two chips. Which one a device speaks is
+// decided by asking it, not by a model table: connect, then look for whichever
+// GATT service it exposes. A table would need updating for every codename and
+// would be wrong the first time a model shipped a different board.
+//
+// 1. PetKit's own, on the Ingenic models (T5/T6/T7/D4H/D4SH/W7H): one JSON
+//    document written to 0xAAA2, answered on 0xAAA1. Protocol per petkit-root's
+//    BLE tool.
+// 2. BLUFI, on the ESP32 models (T4, D4, ...): Espressif's own provisioning
+//    profile, service 0xFFFF, write 0xFF01, notify 0xFF02. Confirmed in the
+//    firmware itself — D4 1.267 and T4 1.652 carry the whole BLUFI stack
+//    (`BLUFI VERSION`, `btc_blufi_protocol_handler`, `btc_blufi_send_custom_data`)
+//    and no 0xAAA0 service at all, which is exactly the `NotFoundError` a D4
+//    owner reported.
+//
+// The payload is the SAME either way — the D4's string pool holds `ssid`,
+// `pwd`, `timezone`, `locale`, `apiServers` just as the Ingenic models do. Only
+// how it is carried differs.
 const BLE_SERVICE = '0000aaa0-0000-1000-8000-00805f9b34fb';
 const BLE_TX = '0000aaa1-0000-1000-8000-00805f9b34fb';
 const BLE_RX = '0000aaa2-0000-1000-8000-00805f9b34fb';
+
+// BLUFI, all values taken from ESP-IDF's own headers
+// (`btc_blufi_prf.h`, `blufi_int.h`) rather than from documentation.
+const BLUFI_SERVICE = '0000ffff-0000-1000-8000-00805f9b34fb';
+const BLUFI_P2E = '0000ff01-0000-1000-8000-00805f9b34fb'; // phone -> ESP32, write
+const BLUFI_E2P = '0000ff02-0000-1000-8000-00805f9b34fb'; // ESP32 -> phone, notify
+const BLUFI_TYPE_CTRL = 0x0;
+const BLUFI_TYPE_DATA = 0x1;
+const BLUFI_CTRL_SET_SEC_MODE = 0x01;
+const BLUFI_CTRL_SET_WIFI_OPMODE = 0x02;
+const BLUFI_CTRL_CONN_TO_AP = 0x03;
+const BLUFI_DATA_STA_SSID = 0x02;
+const BLUFI_DATA_STA_PASSWD = 0x03;
+const BLUFI_DATA_WIFI_REP = 0x0f;
+const BLUFI_DATA_ERROR_INFO = 0x12;
+const BLUFI_DATA_CUSTOM = 0x13;
+const BLUFI_FC_FRAG = 0x10;
+// ESP-IDF's own `BLUFI_FRAG_DATA_DEFAULT_LEN`: what fits beside the header in
+// the DEFAULT 23-byte ATT MTU. Web Bluetooth negotiates its own MTU and will
+// not tell us what it got, so the only safe number is the one the device
+// assumes. The old code split blindly at 180 bytes, which on an unnegotiated
+// link becomes an ATT Long Write that an ESP-IDF GATT server drops in silence.
+const BLUFI_FRAG_LEN = 12;
+
+//: Advertised-name prefixes that can never be provisioned: BLE-only
+//: accessories, which have no WiFi to configure. They show up in the chooser
+//: because the filter is a name prefix, and selecting one used to end in a raw
+//: NotFoundError.
+const BLE_ACCESSORY_PREFIXES = [
+  'Petkit_W5',
+  'Petkit_W4X',
+  'Petkit_CTW2',
+  'Petkit_CTW3',
+  'Petkit_K2',
+  'Petkit_K3',
+];
 let PROV_INFO = null;
 
 // Offsets are what the device actually stores: `ctrl` parses
@@ -2003,6 +2197,120 @@ function plog(line) {
   el.scrollTop = el.scrollHeight;
 }
 onAction('provision', () => doProvision());
+// Build one BLUFI frame. `type` is the packed (subtype << 2) | pkt_type byte
+// the protocol calls `type`; the caller passes both halves and this packs them.
+function blufiFrame(pktType, subtype, seq, data, frag, totalLen) {
+  const head = [
+    (pktType & 0x03) | (subtype << 2),
+    frag ? BLUFI_FC_FRAG : 0x00, // no encryption, no checksum, phone -> ESP
+    seq & 0xff,
+    frag ? data.length + 2 : data.length,
+  ];
+  const body = frag ? [totalLen & 0xff, (totalLen >> 8) & 0xff, ...data] : [...data];
+  return new Uint8Array([...head, ...body]);
+}
+
+// Send one logical BLUFI message, fragmenting it if it does not fit.
+async function blufiSend(write, ctr, pktType, subtype, data) {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (bytes.length <= BLUFI_FRAG_LEN) {
+    await write(blufiFrame(pktType, subtype, ctr.seq++, bytes, false, 0));
+    return;
+  }
+  for (let off = 0; off < bytes.length; off += BLUFI_FRAG_LEN) {
+    const chunk = bytes.slice(off, off + BLUFI_FRAG_LEN);
+    // `total_len` is what REMAINS including this chunk, which is what the
+    // device reassembles against — not the length of the whole message.
+    const remaining = bytes.length - off;
+    const last = off + BLUFI_FRAG_LEN >= bytes.length;
+    await write(blufiFrame(pktType, subtype, ctr.seq++, chunk, !last, remaining));
+  }
+}
+
+// Turn one notification from 0xFF02 into something worth putting in the log.
+function blufiExplain(view) {
+  const b = new Uint8Array(view.buffer || view);
+  if (b.length < 4) return 'short frame (' + b.length + 'B)';
+  const pktType = b[0] & 0x03;
+  const subtype = b[0] >> 2;
+  const data = b.slice(4, 4 + b[3]);
+  if (pktType === BLUFI_TYPE_DATA && subtype === BLUFI_DATA_WIFI_REP) {
+    // opmode, sta_conn_state, softap_conn_num, then TLVs
+    return 'wifi status: ' + (data[1] === 0 ? 'CONNECTED' : 'not connected (' + data[1] + ')');
+  }
+  if (pktType === BLUFI_TYPE_DATA && subtype === BLUFI_DATA_ERROR_INFO) {
+    return 'error report, code ' + data[0];
+  }
+  if (pktType === BLUFI_TYPE_CTRL) return 'ack for seq ' + data[0];
+  return 'type ' + pktType + ' subtype 0x' + subtype.toString(16);
+}
+
+async function provisionBlufi(gatt, cfg) {
+  const service = await gatt.getPrimaryService(BLUFI_SERVICE);
+  const p2e = await service.getCharacteristic(BLUFI_P2E);
+  const e2p = await service.getCharacteristic(BLUFI_E2P);
+
+  let connected = false;
+  await e2p.startNotifications();
+  e2p.addEventListener('characteristicvaluechanged', ev => {
+    const text = blufiExplain(ev.target.value);
+    plog('device: ' + text);
+    if (text.startsWith('wifi status: CONNECTED')) connected = true;
+  });
+
+  const write = p2e.writeValueWithResponse
+    ? p2e.writeValueWithResponse.bind(p2e)
+    : p2e.writeValue.bind(p2e);
+  const ctr = { seq: 0 };
+  const enc = new TextEncoder();
+
+  plog('BLUFI: security off, station mode');
+  await blufiSend(write, ctr, BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_SEC_MODE, [0x00]);
+  await blufiSend(write, ctr, BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_WIFI_OPMODE, [0x01]);
+  plog('BLUFI: ssid + password');
+  await blufiSend(write, ctr, BLUFI_TYPE_DATA, BLUFI_DATA_STA_SSID, enc.encode(cfg.ssid));
+  await blufiSend(write, ctr, BLUFI_TYPE_DATA, BLUFI_DATA_STA_PASSWD, enc.encode(cfg.pwd));
+  // Everything PetKit adds on top of plain WiFi setup rides in BLUFI's custom
+  // channel — the same JSON the Ingenic models get, and the reason the D4
+  // firmware links `btc_blufi_send_custom_data` at all.
+  const custom = JSON.stringify(cfg.payload);
+  plog('BLUFI: custom data (' + enc.encode(custom).length + ' bytes)');
+  await blufiSend(write, ctr, BLUFI_TYPE_DATA, BLUFI_DATA_CUSTOM, enc.encode(custom));
+  plog('BLUFI: connect');
+  await blufiSend(write, ctr, BLUFI_TYPE_CTRL, BLUFI_CTRL_CONN_TO_AP, []);
+  // Hold the link open: the device answers with a WiFi status report once it
+  // has tried to join, and that reply is the only real confirmation there is.
+  await new Promise(r => setTimeout(r, 8000));
+  return connected;
+}
+
+async function provisionPetkit(gatt, cfg) {
+  const service = await gatt.getPrimaryService(BLE_SERVICE);
+  const tx = await service.getCharacteristic(BLE_TX);
+  const rx = await service.getCharacteristic(BLE_RX);
+  let answered = false;
+  await tx.startNotifications();
+  tx.addEventListener('characteristicvaluechanged', ev => {
+    answered = true;
+    plog('device: ' + new TextDecoder().decode(ev.target.value));
+  });
+  const payload = JSON.stringify({ key: 151, payload: cfg.payload });
+  const bytes = new TextEncoder().encode(payload);
+  plog('sending payload (' + bytes.length + ' bytes)');
+  const write = rx.writeValueWithResponse
+    ? rx.writeValueWithResponse.bind(rx)
+    : rx.writeValue.bind(rx);
+  for (let i = 0; i < bytes.length; i += 180) {
+    await write(bytes.slice(i, i + 180));
+  }
+  // The device answers on 0xAAA1 when it accepts the document. Waiting for it
+  // is the difference between "the write returned" and "the device heard us" —
+  // the link used to be torn down 1.5s after the last chunk, which dropped any
+  // reply that was not instant.
+  await new Promise(r => setTimeout(r, 5000));
+  return answered;
+}
+
 async function doProvision() {
   const ssid = document.getElementById('p-ssid').value.trim();
   const pwd = document.getElementById('p-pass').value;
@@ -2013,23 +2321,27 @@ async function doProvision() {
     return;
   }
   document.getElementById('p-log').textContent = '';
+  let gatt = null;
   try {
     st.textContent = ' requesting device…';
     const device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: 'Petkit' }],
-      optionalServices: [BLE_SERVICE],
+      optionalServices: [BLE_SERVICE, BLUFI_SERVICE],
     });
-    plog('selected: ' + (device.name || device.id));
+    const name = device.name || device.id || '';
+    plog('selected: ' + name);
+    if (BLE_ACCESSORY_PREFIXES.some(p => name.startsWith(p))) {
+      st.textContent = ' this model has no WiFi.';
+      plog(
+        name +
+          ' is a Bluetooth-only accessory — there is no WiFi on it to configure. ' +
+          'Pair it instead under Setup → BLE accessories, against the litter box ' +
+          'or feeder that will relay for it.',
+      );
+      return;
+    }
     st.textContent = ' connecting…';
-    const gatt = await device.gatt.connect();
-    const service = await gatt.getPrimaryService(BLE_SERVICE);
-    const tx = await service.getCharacteristic(BLE_TX);
-    const rx = await service.getCharacteristic(BLE_RX);
-    await tx.startNotifications();
-    tx.addEventListener('characteristicvaluechanged', ev => {
-      const v = new TextDecoder().decode(ev.target.value);
-      plog('device: ' + v);
-    });
+    gatt = await device.gatt.connect();
     // The device has no timezone of its own: `TZ` is unset and `date` reports
     // UTC, so it burns UTC into video watermarks. Its `ctrl` binary parses
     // "ssid:%s pwd:%s hide:%d locale:%s timezone:%f" at provisioning time and
@@ -2045,26 +2357,47 @@ async function doProvision() {
     const timezone =
       tzEl && tzEl.value !== '' ? Number(tzEl.value) : -new Date().getTimezoneOffset() / 60;
     const locale = navigator.language || '';
-    const payload = JSON.stringify({
-      key: 151,
-      payload: { ssid, pwd, locale, timezone, apiServers: [server] },
-    });
-    plog('sending payload (' + payload.length + ' bytes)');
+    const cfg = { ssid, pwd, payload: { ssid, pwd, locale, timezone, apiServers: [server] } };
+
+    // Ask the device which protocol it speaks rather than assuming. Both are
+    // in `optionalServices`, so either can be opened; whichever resolves is
+    // the answer.
+    const services = await gatt.getPrimaryServices();
+    const has = uuid => services.some(x => x.uuid === uuid);
     st.textContent = ' sending…';
-    const bytes = new TextEncoder().encode(payload);
-    const write = rx.writeValueWithResponse
-      ? rx.writeValueWithResponse.bind(rx)
-      : rx.writeValue.bind(rx);
-    for (let i = 0; i < bytes.length; i += 180) {
-      await write(bytes.slice(i, i + 180));
+    let heard;
+    if (has(BLE_SERVICE)) {
+      plog('protocol: PetKit (0xAAA0)');
+      heard = await provisionPetkit(gatt, cfg);
+    } else if (has(BLUFI_SERVICE)) {
+      plog('protocol: BLUFI (0xFFFF)');
+      heard = await provisionBlufi(gatt, cfg);
+    } else {
+      st.textContent = ' unknown device.';
+      plog(
+        "This device exposes neither PetKit's provisioning service (0xAAA0) nor " +
+          'BLUFI (0xFFFF), so there is nothing here that can configure it. Older ' +
+          'models such as the Feeder Mini have no Bluetooth setup at all — those ' +
+          'are pointed here with a DNS redirect instead. Services seen: ' +
+          services.map(x => x.uuid).join(', '),
+      );
+      return;
     }
-    st.textContent = ' provisioned — device will restart and join WiFi.';
-    plog('done. watching for the device to connect…');
-    setTimeout(() => {
-      try {
-        gatt.disconnect();
-      } catch (e) {}
-    }, 1500);
+
+    // "Provisioned" now means the device answered, not that a write returned.
+    // The old wording was printed either way, so a payload the firmware never
+    // understood read exactly like a success.
+    if (heard) {
+      st.textContent = ' provisioned — device will restart and join WiFi.';
+      plog('done. watching for the device to connect…');
+    } else {
+      st.textContent = ' sent, but the device never answered.';
+      plog(
+        'The payload was written and acknowledged at the Bluetooth level, but the ' +
+          'device said nothing back. It may still join — watching — but if it does ' +
+          'not, this log is what to report.',
+      );
+    }
     watchForDevice();
   } catch (err) {
     const map = {
@@ -2074,6 +2407,10 @@ async function doProvision() {
     };
     st.textContent = ' error: ' + (map[err.name] || err.name + ': ' + err.message);
     plog('ERROR ' + err.name + ': ' + err.message);
+  } finally {
+    try {
+      if (gatt) gatt.disconnect();
+    } catch (e) {}
   }
 }
 async function watchForDevice() {

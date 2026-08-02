@@ -15,7 +15,7 @@ import logging
 
 from aiohttp import web
 
-from petkit_local.http.handlers._common import device_id, device_serial
+from petkit_local.http.handlers._common import device_field, device_id, device_serial
 
 log = logging.getLogger(__name__)
 
@@ -23,9 +23,12 @@ log = logging.getLogger(__name__)
 async def handle_signup(request: web.Request) -> web.Response:
     """Register the calling device, then hand it its identity back.
 
-    `mac` and `firmware` are read from the query string only — they are not part
-    of the `X-Device` header — and are stored as reported, since nothing else in
-    the system can supply them.
+    `mac` and `firmware` are read from the query string or the POST body — they
+    are not part of the `X-Device` header — and are stored as reported, since
+    nothing else in the system can supply them. Reading them from the body is
+    not cosmetic: a device that sends everything there would otherwise register
+    with a blank serial, and `mqtt_device_name` is built from the serial once
+    and never repaired (`registry.get_or_create` only fills blanks).
 
     Returns:
         `Device.to_signup()` for the created or existing device. The one
@@ -41,8 +44,8 @@ async def handle_signup(request: web.Request) -> web.Response:
 
     petkit_id = device_id(request)
     sn = device_serial(request)
-    mac = request.query.get("mac", "")
-    firmware = request.query.get("firmware", "")
+    mac = device_field(request, "mac") or ""
+    firmware = device_field(request, "firmware") or ""
 
     if petkit_id is None:
         return web.json_response({"error": "missing device id"}, status=400)
@@ -54,6 +57,13 @@ async def handle_signup(request: web.Request) -> web.Response:
         mac=mac,
         firmware=firmware,
     )
+    # An ESP32 feeder is the only source of its own BLE address, and it offers
+    # it exactly once, here. `devices/base.py` already reads `bt_mac` out of
+    # `config` when answering `dev_device_info`; nothing had ever written it.
+    bt_mac = device_field(request, "bt_mac")
+    if bt_mac and not device.config.get("bt_mac"):
+        device.config["bt_mac"] = bt_mac
+        registry.mark_dirty()
     log.info("Signup: %s id=%d sn=%s fw=%s", device_type, petkit_id, sn, firmware)
 
     on_signup = request.app.get("on_signup")

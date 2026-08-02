@@ -23,7 +23,7 @@ predicates the rest of the code actually reads.
 #: the old entities, and there was no way — for them or for us — to tell whether
 #: the new code was running. The entity COUNT eventually gave it away. A version
 #: on the screen answers in one glance what took a screenshot and an inference.
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 DEVICE_TYPES_LITTER = {"t3", "t4", "t5", "t6", "t7"}
 DEVICE_TYPES_FEEDER = {"feeder", "feedermini", "d3", "d4", "d4s", "d4h", "d4sh"}
@@ -103,6 +103,11 @@ DEVICE_TYPES_AI = {"t5", "t6", "t7", "w7h"}
 #   * `k2` — the generation before the K3, named by analogy. PetKit's own listing
 #     for it could not be found.
 #
+# `d4` was "Feeder D4" — the codename dressed up as a product, which is what
+# this table exists to avoid. Its owner named it in issue #3: a **Fresh Element
+# Solo**. `d3` and `d4s` are still the codename echoed back, for want of anybody
+# to ask; if you own one, the name on the box is the whole contribution needed.
+#
 # `k2`/`k3` were "Air Purifier K2"/"Air Purifier K3" here, which is wrong and
 # actively misleading: PetKit also sells real air purifiers. These are the Pura
 # Air smart spray, a Bluetooth deodoriser that mounts inside a litter box (or on
@@ -112,7 +117,7 @@ DEVICE_NAMES = {
     "feeder": "Feeder",
     "feedermini": "Feeder Mini",
     "d3": "Feeder D3",
-    "d4": "Feeder D4",
+    "d4": "Fresh Element Solo",
     "d4s": "Feeder D4s",
     "d4h": "YumShare Solo",
     "d4sh": "YumShare Dual-Hopper",

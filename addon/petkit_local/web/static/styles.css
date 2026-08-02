@@ -138,6 +138,13 @@ nav button.on {
   background: rgba(245, 158, 11, 0.18);
   color: var(--warn);
 }
+/* A transport, not a health state — which is why it is the accent colour and
+   not one of the four above. A BLE accessory is neither "ok" (green means a
+   live MQTT session, which it can never have) nor "off". */
+.badge.ble {
+  background: rgba(10, 162, 230, 0.16);
+  color: var(--accent);
+}
 main {
   padding: 16px;
   max-width: 1140px;

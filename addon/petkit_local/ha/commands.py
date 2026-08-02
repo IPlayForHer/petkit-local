@@ -24,7 +24,7 @@ import random
 import time
 from typing import Any
 
-from petkit_local.devices.base import Device
+from petkit_local.devices.base import Device, Refused
 from petkit_local.devices.state_parsers import record_consumable_reset
 from petkit_local.events import codes
 from petkit_local.ha.discovery import EntityDef
@@ -36,15 +36,6 @@ log = logging.getLogger(__name__)
 # publish under, and the Aliyun envelope to publish there.
 Command = tuple[str, dict[str, Any]]
 
-
-class Refused(ValueError):
-    """The write was understood and rejected, and nothing was changed.
-
-    Distinct from a `None` return, which means "applied, but there is nothing to
-    send to the device" -- a capability toggle, a schedule write. Both used to be
-    `None`, so the panel answered `{"ok": true}` to a value it had just thrown
-    away, which is the silent failure that refusing was supposed to avoid.
-    """
 
 PROPERTY_SET_SUFFIX = "property/set"
 

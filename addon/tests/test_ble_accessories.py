@@ -185,8 +185,10 @@ async def test_the_device_is_told_to_scan_for_a_paired_accessory():
     try:
         body = await (await c.get("/6/t5/dev_ble_device", headers=HDR)).json()
         assert body["result"]["nextTick"] == 3600
+        # Lowercase on the wire: stored uppercase for comparison, sent in the
+        # shape every captured cloud `dev_ble_device` uses.
         assert body["result"]["list"] == [
-            {"id": 700, "mac": "AABBCCDDEEFF", "secret": "s3cret",
+            {"id": 700, "mac": "aabbccddeeff", "secret": "s3cret",
              "interval": 240, "type": 14}]
     finally:
         await c.close()
@@ -449,24 +451,40 @@ def test_a_normal_model_registers_quietly(caplog):
 def test_the_w5_frame_decoder_covers_its_whole_family():
     """One protocol, one entity set. The `w5` string was hardcoded in three
     places, so a paired W4 or CTW2 would have decoded to nothing."""
-    from petkit_local.devices.ble import W5_PROTOCOL, get_ble_entities
+    from petkit_local.devices.ble import W5_PROTOCOL, get_ble_entities, parser_for
 
     assert W5_PROTOCOL == {"w4", "w5", "ctw2"}
     for codename in W5_PROTOCOL:
         assert get_ble_entities(codename), codename
-    # CTW3 is BLE-only too, but nothing says it speaks this protocol.
-    assert get_ble_entities("ctw3") == []
+        assert parser_for(codename).__name__ == "parse_w5_ble_response", codename
 
 
-def test_only_the_w5_scan_type_is_a_captured_value():
+def test_the_ctw3_is_not_read_with_the_w5_offsets():
+    """Different block length, different layout, big-endian integers. Reading
+    one with the other's offsets does not fail — it produces confident
+    nonsense, which is worse."""
+    from petkit_local.devices.ble import W5_PROTOCOL, get_ble_entities, parser_for
+
+    assert "ctw3" not in W5_PROTOCOL
+    assert parser_for("ctw3").__name__ == "parse_ctw3_ble_response"
+    assert get_ble_entities("ctw3")
+
+
+def test_the_captured_scan_types_are_the_captured_ones():
     """`dev_ble_device` hands the parent a `type` int to scan for. 14 was read
-    off a real W5 pairing; the other fountains reuse it on the strength of
-    being the same BLE family, which is an assumption and is marked as one."""
+    off a real W5 pairing and 24 off a real CTW3 one (issue #4). The remaining
+    two reuse the number of their own product line, which is an assumption and
+    is marked as one."""
     from petkit_local.devices.ble import BLE_TYPE_CONFIRMED, BLE_TYPE_MAP, BLE_TYPES
 
     assert set(BLE_TYPES) == {"w5", "k3", "w4", "ctw2", "ctw3"}
     assert BLE_TYPE_MAP["w5"] == 14
-    assert BLE_TYPE_CONFIRMED == {"w5"}
+    assert BLE_TYPE_MAP["ctw3"] == 24
+    assert BLE_TYPE_CONFIRMED == {"w5", "ctw3"}
+    # The guesses follow the product line, not the other line: a CTW2 sits with
+    # the CTW3 rather than with the W5 it shares a BLE protocol with.
+    assert BLE_TYPE_MAP["ctw2"] == BLE_TYPE_MAP["ctw3"]
+    assert BLE_TYPE_MAP["w4"] == BLE_TYPE_MAP["w5"]
 
 
 def test_a_guessed_scan_type_says_it_is_guessed():
@@ -475,7 +493,9 @@ def test_a_guessed_scan_type_says_it_is_guessed():
     from petkit_local.devices.ble import BLEDevice
 
     assert BLEDevice(ble_type="ctw2", petkit_id=1).scan_type_is_guessed
+    assert BLEDevice(ble_type="w4", petkit_id=1).scan_type_is_guessed
     assert not BLEDevice(ble_type="w5", petkit_id=1).scan_type_is_guessed
+    assert not BLEDevice(ble_type="ctw3", petkit_id=1).scan_type_is_guessed
     # K3 is never in the scan list at all; its 0 is a placeholder, not a guess.
     assert not BLEDevice(ble_type="k3", petkit_id=1).scan_type_is_guessed
 
@@ -485,12 +505,362 @@ def test_the_owner_of_the_hardware_can_correct_the_guess():
     fountain. An override beats waiting for a capture that may never come."""
     from petkit_local.devices.ble import BLEDevice
 
-    default = BLEDevice(ble_type="ctw3", petkit_id=1, mac="AABBCCDDEEFF")
-    assert default.to_ble_list_entry()["type"] == 14
+    default = BLEDevice(ble_type="ctw2", petkit_id=1, mac="AABBCCDDEEFF")
+    assert default.to_ble_list_entry()["type"] == 24
 
-    corrected = BLEDevice(ble_type="ctw3", petkit_id=1, mac="AABBCCDDEEFF",
+    corrected = BLEDevice(ble_type="ctw2", petkit_id=1, mac="AABBCCDDEEFF",
                           scan_type=17)
     assert corrected.to_ble_list_entry()["type"] == 17
     assert not corrected.scan_type_is_guessed
     # And it survives a restart, or the correction is lost on every reload.
     assert BLEDevice.from_dict(corrected.to_dict()).scan_type == 17
+    # And this is how 24 arrived: a CTW3 owner reported the value their own
+    # parent was handed, and it came back into the table as evidence.
+
+
+# --- CTW3 (EverSweet Max Cordless) ------------------------------------------
+#
+# The protocol map and this frame both come from issue #4, captured off a real
+# CTW3 relayed by a D4SH. Everything below is checked against those bytes
+# rather than against the prose, so a mis-typed offset fails here.
+
+#: One `payload[].data` from a live `ble_response`, cmd 230.
+CTW3_CMD230 = "AQEBAgAAAAAAABAgdzsBAAFGBAAUwBBvZABgCU8JAwMBLASwAQMAAAAA"
+
+
+def _ctw3(data=CTW3_CMD230, cmd=230):
+    from petkit_local.devices.ble import parse_ctw3_ble_response
+    # `device.type` is deliberately the WRONG value here: the reporter had 14
+    # in their relay list and the parent echoed it back. Matching is by MAC.
+    return parse_ctw3_ble_response(
+        {"device": {"type": 14, "mac": "a4c138aabbcc"}, "payload": [{"cmd": cmd, "data": data}]})
+
+
+def test_a_real_ctw3_status_frame_decodes_field_for_field():
+    st = _ctw3()["states"]
+    assert st["powerStatus"] == 1
+    assert st["suspendStatus"] == 1        # 1 is WORKING, not paused
+    assert st["mode"] == 1                 # continuous
+    assert st["electricStatus"] == 2       # not a boolean; 2 is the AC path
+    assert st["runStatus"] == 1
+    assert st["detectStatus"] == 0
+    assert st["batteryPercent"] == 100
+    assert _ctw3()["consumables"]["filterPercent"] == 59
+
+
+def test_the_multi_byte_fields_are_big_endian():
+    """Read the other way round these are astronomically wrong rather than
+    slightly wrong, which is the one saving grace of getting it backwards."""
+    st = _ctw3()["states"]
+    assert st["waterPumpRunTime"] == 1056887
+    assert st["todayPumpRunTime"] == 83460
+    assert st["supplyVoltage"] == 5312     # mV, mains
+    assert st["batteryVoltage"] == 4207    # mV, matches the cloud's 4223 sample
+
+
+def test_the_config_tail_of_a_long_frame_is_decoded():
+    """cmd 230 carries 12 more bytes than cmd 210, in the same layout a cmd-221
+    write uses — which is what makes changing one setting possible without
+    inventing the others."""
+    st = _ctw3()["states"]
+    assert st["energyInterval"] == 300     # 0x012C, five minutes
+    assert st["sleepTime"] == 1200         # 0x04B0, twenty minutes
+    assert st["lightSwitch"] == 1
+    assert st["brightness"] == 3           # high
+    assert st["noDisturbingSwitch"] == 0
+
+
+def test_a_short_frame_is_dropped_rather_than_half_read():
+    """The W5 decoder emits whatever fits, which turns a one-byte frame into a
+    confident `powerStatus`. This block has a known length, so a short one is
+    a broken frame."""
+    import base64
+
+    short = base64.b64encode(bytes(range(10))).decode()
+    assert _ctw3(data=short) == {}
+
+
+def test_a_non_status_cmd_is_ignored():
+    """220/221 ACKs and 251/252 share the channel with the status frames."""
+    import base64
+
+    ack = base64.b64encode(bytes([1])).decode()
+    assert _ctw3(data=ack, cmd=220) == {}
+
+
+def test_the_ctw3_entities_read_what_the_decoder_writes():
+    """The failure this prevents is silent: an entity whose `value_path` names
+    a section the parser never fills reads unknown forever."""
+    from petkit_local.devices.ble import get_ble_entities
+
+    fragment = _ctw3()
+    for entity in get_ble_entities("ctw3"):
+        section, _, field = entity.value_path.partition(".")
+        assert section in fragment, entity.key
+        assert field in fragment[section], entity.key
+
+
+# --- getting the accessory to report at all ---------------------------------
+
+class _FakeClient:
+    """Records what the bridge publishes, in order."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def publish(self, topic, payload):
+        self.sent.append((topic, payload))
+
+
+def _bridge_with(parent_type, ble_type="ctw3", interval=0):
+    reg = DeviceRegistry()
+    reg.get_or_create(petkit_id=10, device_type=parent_type, serial_number="SN10")
+    ble = BLERegistry()
+    ble.register(ble_type=ble_type, petkit_id=700, mac="AABBCCDDEEFF",
+                 secret="s", interval=interval, link_with=10)
+    bridge = MQTTBridge(reg, None, ble)
+    bridge._client = _FakeClient()
+    return bridge, reg, ble
+
+
+async def test_an_accessory_paired_to_a_feeder_still_gets_polled():
+    """The whole of issue #4's silence, in one assertion.
+
+    An accessory reports only when we push `thing/service/connect` to its
+    parent, and the only thing that used to push one was the handler for the
+    parent's `property/post`. A feeder never sends that topic — so a fountain
+    relayed by a D4SH was polled zero times, for ever, while looking perfectly
+    paired in the panel.
+    """
+    bridge, reg, _ = _bridge_with("d4sh")
+    await bridge._poll_ble_accessories(reg.get(10))
+
+    sent = bridge._client.sent
+    assert len(sent) == 1, "the parent was never asked to open a session"
+    topic, payload = sent[0]
+    assert topic.endswith("/thing/service/connect")
+    assert json.loads(payload)["params"]["connect_action"] == 1
+
+
+async def test_the_poll_carries_the_scan_type_the_accessory_was_paired_with():
+    bridge, reg, _ = _bridge_with("d4sh")
+    await bridge._poll_ble_accessories(reg.get(10))
+    params = json.loads(bridge._client.sent[0][1])["params"]
+    assert params["device"] == {"type": 24, "mac": "aabbccddeeff"}
+
+
+async def test_a_k3_is_never_asked_to_open_a_relay_session():
+    """It is not in the relay list, so a `connect` for it named `type: 0` —
+    a scan for a device the parent has never been told about."""
+    bridge, reg, _ = _bridge_with("t5", ble_type="k3")
+    await bridge._poll_ble_accessories(reg.get(10))
+    assert bridge._client.sent == []
+
+
+async def test_the_interval_still_throttles():
+    bridge, reg, _ = _bridge_with("d4sh", interval=240)
+    await bridge._poll_ble_accessories(reg.get(10))
+    await bridge._poll_ble_accessories(reg.get(10))
+    assert len(bridge._client.sent) == 1
+
+
+async def test_the_session_is_closed_once_the_reading_is_in():
+    """Left open, the parent holds its radio on the accessory until something
+    else happens to end it."""
+    bridge, reg, ble = _bridge_with("d4sh")
+    await bridge._handle_ble_response(reg.get(10), {
+        "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
+                               "payload": [{"cmd": 230, "data": CTW3_CMD230}]}),
+    })
+    assert ble.get(700).state["states"]["runStatus"] == 1
+    assert json.loads(bridge._client.sent[-1][1])["params"]["connect_action"] == 0
+
+
+# --- writing to a CTW3 ------------------------------------------------------
+#
+# The other direction of the same relay, and the first write path any accessory
+# has had. Frame layout from issue #4; every byte below is asserted rather than
+# described, because a frame the accessory does not understand is answered with
+# silence and looks exactly like one that never arrived.
+
+def _paired_ctw3(**state):
+    from petkit_local.devices.ble import BLEDevice
+    dev = BLEDevice(ble_type="ctw3", petkit_id=700, mac="AABBCCDDEEFF", link_with=10)
+    dev.state = {"states": state}
+    return dev
+
+
+def _decode_frame(encoded):
+    import base64
+    import urllib.parse
+    return base64.b64decode(urllib.parse.unquote(encoded))
+
+
+def test_an_outbound_frame_has_the_shape_the_accessory_answers_with():
+    from petkit_local.devices.ble import build_ble_frame
+
+    raw = _decode_frame(build_ble_frame(0xDC, 7, bytes([0x00, 1, 1, 2])))
+    assert raw[:3] == bytes([0xFA, 0xFC, 0xFD])
+    assert raw[3] == 0xDC          # opcode, not the MQTT cmd
+    assert raw[4] == 0x01          # constant
+    assert raw[5] == 7             # sequence
+    assert raw[6] == 4             # payload length
+    assert raw[7:11] == bytes([0x00, 1, 1, 2])
+    assert raw[-1] == 0xFB
+
+
+def test_setting_the_mode_restates_power_and_suspend():
+    """cmd 220 carries all three. Sending it with only the field that changed
+    would switch the fountain off as a side effect of changing its mode."""
+    from petkit_local.devices.ble import CTW3_CMD_SET_POWER, ctw3_command_for
+
+    dev = _paired_ctw3(powerStatus=1, suspendStatus=1, mode=1)
+    cmd, payload = ctw3_command_for(dev, "ctw3_mode", 2)
+    assert cmd == CTW3_CMD_SET_POWER
+    assert payload == bytes([0x00, 1, 1, 2])
+
+
+def test_setting_the_brightness_restates_the_whole_config_blob():
+    from petkit_local.devices.ble import CTW3_CMD_SET_CONFIG, ctw3_command_for
+
+    dev = _paired_ctw3(energyInterval=300, sleepTime=1200, lightSwitch=1,
+                       brightness=3, noDisturbingSwitch=0)
+    cmd, payload = ctw3_command_for(dev, "ctw3_brightness", 1)
+    assert cmd == CTW3_CMD_SET_CONFIG
+    assert len(payload) == 12
+    assert payload[0:2] == bytes([0x03, 0x03])
+    assert payload[2:4] == (300).to_bytes(2, "big")     # 012C, unchanged
+    assert payload[4:6] == (1200).to_bytes(2, "big")    # 04B0, unchanged
+    assert payload[6] == 1                              # light still on
+    assert payload[7] == 1                              # the one field asked for
+
+
+def test_a_config_write_is_refused_before_the_first_full_status():
+    """The blob goes whole. Filling the unknown half with zeros would turn the
+    light off and reset both intervals as a side effect of one change."""
+    from petkit_local.devices.ble import Refused, ctw3_command_for
+
+    with pytest.raises(Refused):
+        ctw3_command_for(_paired_ctw3(), "ctw3_brightness", 2)
+    with pytest.raises(Refused):
+        ctw3_command_for(_paired_ctw3(powerStatus=1), "ctw3_mode", 2)
+
+
+def test_a_key_that_is_not_writable_is_refused_not_guessed():
+    from petkit_local.devices.ble import Refused, ctw3_command_for
+
+    with pytest.raises(Refused):
+        ctw3_command_for(_paired_ctw3(), "ctw3_battery", 50)
+
+
+def test_every_writable_entity_has_a_frame_behind_it():
+    """A switch HA can toggle but nothing can send is worse than no switch."""
+    from petkit_local.devices.ble import CTW3_WRITABLE, get_ble_entities
+
+    settable = {e.key for e in get_ble_entities("ctw3") if e.is_settable}
+    assert settable == CTW3_WRITABLE
+
+
+async def test_a_command_reaches_the_parent_as_a_ble_service_call():
+    bridge, reg, ble = _bridge_with("d4sh")
+    dev = ble.get(700)
+    dev.state = {"states": {"powerStatus": 1, "suspendStatus": 1, "mode": 1}}
+
+    from petkit_local.devices.ble import ctw3_command_for
+    cmd, payload = ctw3_command_for(dev, "ctw3_power", 0)
+    assert await bridge.publish_ble_command(reg.get(10), dev, cmd, payload)
+
+    topic, body = bridge._client.sent[-1]
+    assert topic.endswith("/thing/service/ble")
+    params = json.loads(body)["params"]
+    assert params["device"] == {"type": 24, "mac": "aabbccddeeff"}
+    assert params["payload"]["cmd"] == 220
+    assert _decode_frame(params["payload"]["data"])[7:11] == bytes([0x00, 0, 1, 1])
+
+
+async def test_the_sequence_number_advances_per_accessory():
+    bridge, reg, ble = _bridge_with("d4sh")
+    dev = ble.get(700)
+    for _ in range(3):
+        await bridge.publish_ble_command(reg.get(10), dev, 220, bytes([0, 1, 1, 1]))
+    seqs = [_decode_frame(json.loads(b)["params"]["payload"]["data"])[5]
+            for _, b in bridge._client.sent]
+    assert seqs == [0, 1, 2]
+
+
+async def test_an_accessory_remembers_when_it_last_spoke():
+    """`BLEDevice` had no timestamp of any kind, so there was no way to tell
+    one that has never reported from one reporting every four minutes — which
+    is the first question to ask when its scan type is a guess."""
+    bridge, reg, ble = _bridge_with("d4sh")
+    assert ble.get(700).last_seen == 0.0
+
+    await bridge._handle_ble_response(reg.get(10), {
+        "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
+                               "payload": [{"cmd": 230, "data": CTW3_CMD230}]}),
+    })
+    stamped = ble.get(700).last_seen
+    assert stamped > 0
+    # It has to survive a restart: an accessory reports only when polled, so a
+    # freshly loaded registry would otherwise read "never" for minutes.
+    from petkit_local.devices.ble import BLEDevice
+    assert BLEDevice.from_dict(ble.get(700).to_dict()).last_seen == stamped
+
+
+def test_the_refused_a_write_raises_is_the_one_the_panel_catches():
+    """Two classes of one name reaching the same `except` is a trap, and the
+    panel imports one of them from `ha.commands` while the accessory raises
+    the other."""
+    from petkit_local.devices.base import Refused as Base
+    from petkit_local.devices.ble import Refused as Ble
+    from petkit_local.ha.commands import Refused as Ha
+
+    assert Ble is Ha is Base
+
+
+# --- coverage against the protocol map in issue #4 --------------------------
+
+def test_the_mac_goes_out_in_the_shape_the_cloud_uses():
+    """Uppercase is our canonical form for comparing one; every captured cloud
+    frame carries lowercase. Nothing says the parent compares case-sensitively,
+    but nothing says it does not, and a MAC it will not match is a pairing that
+    fails with no symptom."""
+    from petkit_local.devices.ble import BLEDevice
+
+    dev = BLEDevice(ble_type="ctw3", petkit_id=1, mac="A4C138AABBCC")
+    assert dev.mac == "A4C138AABBCC"          # stored, for matching
+    assert dev.wire_mac == "a4c138aabbcc"     # sent
+    assert dev.to_ble_list_entry()["mac"] == "a4c138aabbcc"
+
+
+async def test_relay_plumbing_stays_out_of_the_timeline():
+    """`ble_relay_start` and `ble_relay_over` bracket every reading. With a
+    poll timer that is two rows per accessory per interval, for ever, in a
+    Timeline that is supposed to be about the animal.
+
+    `codes.MQTT_TRANSPORT_TOPICS` names all six and asks the bridge to read it;
+    the bridge had drifted to a hardcoded three."""
+    from petkit_local.events import codes
+
+    assert {"ble_relay_start", "ble_relay_over", "property_post"} <= codes.MQTT_TRANSPORT_TOPICS
+    src = (Path(__file__).resolve().parents[1]
+           / "petkit_local" / "mqtt" / "bridge.py").read_text()
+    assert "event_type not in codes.MQTT_TRANSPORT_TOPICS" in src
+    assert 'event_type not in ("property", "data_get", "ble_response")' not in src
+
+
+async def test_a_write_acknowledgement_is_named_rather_than_dropped(caplog):
+    """A write comes back as a bare `01` on its own cmd. Silently ignoring it
+    left "the switch flipped back" as the only symptom of a frame the
+    accessory did not accept."""
+    import base64
+    import logging
+
+    bridge, reg, ble = _bridge_with("d4sh")
+    ack = base64.b64encode(bytes([1])).decode()
+    with caplog.at_level(logging.INFO):
+        await bridge._handle_ble_response(reg.get(10), {
+            "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
+                                   "payload": [{"cmd": 220, "data": ack}]}),
+        })
+    assert "cmd 220" in caplog.text

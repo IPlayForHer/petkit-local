@@ -15,13 +15,20 @@ Deliberate decisions
 * **Never raises on device input.** Everything a device sends is untrusted
   text. Both accessors return ``None``/``""`` for anything unusable instead of
   propagating an exception into the handler.
-* **Header before query.** The X-Device header is sent by the firmware on
-  every request, whereas ``?id=``/``?sn=`` only appear on a few endpoints, so
-  the header is tried first and the query string is the fallback. The fallback
-  triggers whenever the header does not yield a *usable* value, not merely
-  when the key is absent. (``handlers/signup.py`` historically preferred the
-  query parameter; the two disagree only if a device sends both with different
-  values, which has never been observed.)
+* **Header, then query, then body.** The X-Device header is sent by the
+  firmware on every request, whereas ``?id=``/``?sn=`` only appear on a few
+  endpoints, so the header is tried first and the query string is the
+  fallback. Each fallback triggers whenever the previous source does not yield
+  a *usable* value, not merely when the key is absent. (``handlers/signup.py``
+  historically preferred the query parameter; the two disagree only if a
+  device sends both with different values, which has never been observed.)
+
+  The body is last and was added because of a model that uses nothing else: a
+  Feeder D4 signs up with no header and no query string, everything
+  urlencoded in the POST body. Until 1.5.0 it was unidentifiable to every
+  endpoint here — signup answered 400 and, worse, ``dev_iot_device_info``
+  answered **200** with no MQTT credentials, so the device silently never
+  reached the broker.
 * **id before serial.** ``DeviceRegistry.get()`` is an O(1) primary-key lookup
   and the petkit id is the registry's only identity; ``by_serial()`` is an O(n)
   scan that exists purely as a rescue path for requests whose id is missing or
@@ -77,32 +84,50 @@ def _coerce_device_id(value: object) -> int | None:
     return parsed if parsed is not None and parsed > 0 else None
 
 
+def device_field(request: web.Request, name: str) -> str | None:
+    """One identity field, from whichever of the three places carries it.
+
+    Header, then query string, then the urlencoded POST body
+    (``request["form"]``, filled by ``http/middleware.py``). The first two are
+    the Ingenic models; the third is the only one an ESP32 feeder uses, which
+    is why it exists — see `parse_form_body`.
+
+    Returns the first non-blank value, or None.
+    """
+    x_device = request.get("x_device") or {}
+    form = request.get("form") or {}
+    for source in (x_device.get(name), request.query.get(name), form.get(name)):
+        if isinstance(source, str) and source.strip():
+            return source.strip()
+    return None
+
+
 def device_id(request: web.Request) -> int | None:
     """Return the requesting device's petkit id, or None if unidentifiable.
 
     Reads the X-Device header first (parsed into ``request["x_device"]`` by
-    ``http/middleware.py``), then the ``id`` query parameter.
+    ``http/middleware.py``), then the ``id`` query parameter, then the ``id``
+    field of an urlencoded POST body.
 
     Returns:
         A positive int, or None when the id is missing, non-numeric, or <= 0.
         Never raises, whatever the device sent.
     """
     x_device = request.get("x_device") or {}
-    return _coerce_device_id(x_device.get("id")) or _coerce_device_id(request.query.get("id"))
+    form = request.get("form") or {}
+    return (_coerce_device_id(x_device.get("id"))
+            or _coerce_device_id(request.query.get("id"))
+            or _coerce_device_id(form.get("id")))
 
 
 def device_serial(request: web.Request) -> str:
     """Return the requesting device's serial number, or "" if not supplied.
 
-    Same header-then-query precedence as :func:`device_id`. The value is
-    device-supplied text and is only ever used for an equality lookup, so it is
-    passed through unvalidated apart from stripping surrounding whitespace.
+    Same header-then-query-then-body precedence as :func:`device_id`. The value
+    is device-supplied text and is only ever used for an equality lookup, so it
+    is passed through unvalidated apart from stripping surrounding whitespace.
     """
-    x_device = request.get("x_device") or {}
-    for source in (x_device.get("sn"), request.query.get("sn")):
-        if isinstance(source, str) and source.strip():
-            return source.strip()
-    return ""
+    return device_field(request, "sn") or ""
 
 
 def request_device(request: web.Request, registry: DeviceRegistry | None = None) -> Device | None:

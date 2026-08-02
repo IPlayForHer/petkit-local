@@ -1,5 +1,89 @@
 # Changelog
 
+## 1.5.0 — 2026-08-02
+
+### Some models could never register at all
+
+A Feeder D4 sends its id and serial in the body of its signup request, not in
+the header every other model uses. Nothing here looked at the body, so the
+device was answered "missing device id" and stopped there — and the endpoint
+that hands out MQTT credentials answered **200 with nothing in it**, which is
+worse, because there is no error to see. The device simply never appeared.
+
+The body is a third place identity can come from now, after the header and the
+query string. This is one report's evidence (thank you), but it is not one
+model's bug: about eighteen endpoints resolve a device the same way.
+
+### Bluetooth provisioning on the ESP32 models
+
+The Provision tab spoke one protocol and assumed every PetKit device spoke it.
+The ESP32 models do not: a D4 and a T4 carry **BLUFI**, Espressif's own
+provisioning profile, and expose nothing at the address the panel was looking
+for. Selecting one produced a Bluetooth error about a missing GATT service.
+
+The panel now asks the device which of the two it speaks and uses that one. The
+Wi-Fi credentials, the server address and the timezone are the same either way.
+
+Two related things that were wrong for every model:
+
+- **"Provisioned" meant "the write returned".** It was printed whether or not
+  the device had understood a word, and the Bluetooth link was cut a second and
+  a half later — before a slower reply could arrive. It now means the device
+  answered, and says plainly when it did not.
+- **The device chooser offered accessories.** A W5, a CTW3 or a Pura Air would
+  appear in the list and then fail with a raw error. They have no Wi-Fi to
+  configure; the panel says so and points at where they are actually paired.
+
+Feeder Mini and its generation have no Bluetooth setup at all — those still
+need a DNS redirect, and the panel names that too instead of failing silently.
+
+### The EverSweet Max Cordless
+
+A CTW3 owner mapped their fountain's whole protocol and sent it in, which is
+the only reason any of this exists. It is supported now: tanks, pump, battery,
+filter, drinking detection, faults — and its controls, which is the first time
+any Bluetooth accessory here could be *set* rather than only read.
+
+Power, working, flow mode, light, brightness, do-not-disturb and both timers.
+Two caveats worth knowing: a setting can only be changed once the fountain has
+reported at least once, because the device takes its settings as one block and
+the rest of it has to be read before one part of it can be written; and the
+number the relay is told to scan for is **24** for this model, not the 14 that
+1.4.0 guessed.
+
+### A Bluetooth accessory is a device in the panel now
+
+It was three cells in its parent's card: type, address, unpair. Everything the
+last two releases added to it — the decoded readings, twenty-one entities, the
+controls — existed only in Home Assistant.
+
+It gets its own panel in **Devices**, next to the device that relays for it,
+with its state and its controls. Not a copy of a device panel: there are no
+HTTP or MQTT counters, no command queue, no patchers. An accessory has no
+network of its own, so every one of those numbers would be a zero pretending to
+be a reading. What it does have is a **BLE** badge instead of MQTT-or-heartbeat,
+a line saying which device relays for it, and — at last — when it last said
+anything, which was previously not recorded anywhere at all.
+
+Its controls work from the panel too, not just from Home Assistant, and there
+is a **Read now** button: an accessory speaks only when its parent is told to
+open a Bluetooth session, which otherwise happens on a timer up to four minutes
+away — no way to answer "did that pairing work" except to wait. Where the scan
+type is still a guess, the panel now says so on the accessory itself rather
+than keeping it in a field nobody reads.
+
+### Accessories were never being asked to report
+
+An accessory only speaks when its parent is told to open a Bluetooth session,
+and the only thing that ever told it was the arrival of a status report from
+the parent itself. A feeder does not send those. So a fountain relayed by a
+feeder was polled zero times, for ever, while looking perfectly paired.
+
+There is a timer now, which is what the real cloud uses. The session is also
+closed once the reading is in, instead of being left open indefinitely, and a
+Pura Air is no longer asked to open one at all — it is not reachable that way
+and never was.
+
 ## 1.4.0 — 2026-08-02
 
 ### Commands sent over HTTP never arrived

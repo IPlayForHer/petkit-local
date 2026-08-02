@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "petkit-local"
-version = "1.4.0"
+version = "1.5.0"
 description = "Local cloud replacement for PetKit litter boxes, feeders, fountains and purifiers"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -31,6 +31,22 @@ from petkit_local.utils.coerce import to_bool, to_float
 from petkit_local.utils.crypto import generate_device_secret, generate_product_key
 from petkit_local.utils.timeutil import local_offset_hours
 
+
+class Refused(ValueError):
+    """The write was understood and rejected, and nothing was changed.
+
+    Distinct from a `None` return, which means "applied, but there is nothing to
+    send to the device" -- a capability toggle, a schedule write. Both used to be
+    `None`, so the panel answered `{"ok": true}` to a value it had just thrown
+    away, which is the silent failure that refusing was supposed to avoid.
+
+    Lives here rather than in `ha/commands.py` because a BLE accessory refuses
+    writes too (`devices/ble.py`), and `devices/` cannot import `ha/`. Two
+    classes of one name reaching the same `except` in `web/panel.py` is the
+    trap this avoids.
+    """
+
+
 if TYPE_CHECKING:  # `devices.ble` imports `devices.registry`, which imports us.
     from petkit_local.devices.ble import BLERegistry
 

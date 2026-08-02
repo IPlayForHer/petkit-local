@@ -303,10 +303,15 @@ async def test_every_published_entity_component_has_somewhere_to_render():
     were published to Home Assistant and rendered nowhere in the panel, which is
     invisible until someone goes looking for a schedule editor that does not
     exist. Any NEW component must be routed too."""
+    from petkit_local.devices.ble import BLE_TYPES, get_ble_entities
     from petkit_local.devices.categories import CATEGORY_SPECS
 
     published = {e.component for spec in CATEGORY_SPECS.values()
                  for e in spec.entities_for(True)}
+    # BLE accessories publish to HA through a different table entirely
+    # (`get_ble_entities`), and this guard used to look only at the device one.
+    # A CTW3 brought switches, selects and numbers in through that gap.
+    published |= {e.component for t in BLE_TYPES for e in get_ble_entities(t)}
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
@@ -564,10 +569,18 @@ async def test_provision_ui_has_ble_protocol():
         html = await (await c.get("/")).text()
         assert "Provision via Bluetooth" in html
         js = await (await c.get("/static/app.js")).text()
-        # GATT protocol from demo/petkit_ble.py
+        # PetKit's own GATT protocol, from demo/petkit_ble.py
         assert "0000aaa0-0000-1000-8000-00805f9b34fb" in js  # service
         assert "0000aaa2-0000-1000-8000-00805f9b34fb" in js  # RX (write)
         assert "0000aaa1-0000-1000-8000-00805f9b34fb" in js  # TX (notify)
+        # BLUFI, which the ESP32 models speak instead. Values from ESP-IDF's
+        # `btc_blufi_prf.h`; a D4 exposes no 0xAAA0 service at all, which is
+        # the NotFoundError its owner reported.
+        assert "0000ffff-0000-1000-8000-00805f9b34fb" in js  # service
+        assert "0000ff01-0000-1000-8000-00805f9b34fb" in js  # phone -> ESP32
+        assert "0000ff02-0000-1000-8000-00805f9b34fb" in js  # ESP32 -> phone
+        # Which one a device speaks is asked, not assumed from a model table.
+        assert "getPrimaryServices" in js
         # Quoted or bare, spaced or not — the payload key is what matters.
         assert re.search(r"""["']?key["']?\s*:\s*151""", js)
         # The self-signed HTTPS panel on 8098 is gone — it published this
@@ -1249,5 +1262,204 @@ async def test_the_ha_indicator_reports_ha_not_the_device_bridge():
     c = await _mk_client(app)
     try:
         assert (await (await c.get("/api/info")).json())["ha_publishing"] is True
+    finally:
+        await c.close()
+
+
+async def test_provision_refuses_a_bluetooth_only_accessory():
+    """A W5 or a CTW3 shows up in the chooser because the filter is a name
+    prefix, and selecting one used to end in a raw `NotFoundError` about a GATT
+    service. There is no WiFi on those models to configure at all."""
+    app, reg, hub = _panel()
+    c = await _mk_client(app)
+    try:
+        js = await (await c.get("/static/app.js")).text()
+        for prefix in ("Petkit_W5", "Petkit_CTW3", "Petkit_K3"):
+            assert prefix in js, prefix
+        assert "BLE accessories" in js
+    finally:
+        await c.close()
+
+
+async def test_provision_does_not_claim_success_for_a_write_that_returned():
+    """"provisioned — device will restart" was printed because an ATT write
+    resolved, which is true of a payload the firmware never understood."""
+    app, reg, hub = _panel()
+    c = await _mk_client(app)
+    try:
+        js = await (await c.get("/static/app.js")).text()
+        assert "the device never answered" in js
+        # And the link is no longer torn down before a reply can arrive.
+        assert "}, 1500);" not in js
+    finally:
+        await c.close()
+
+
+# --- a BLE accessory is its own panel ---------------------------------------
+
+def _paired_ctw3_app():
+    """A panel with one D4SH and a CTW3 relayed by it, already reporting."""
+    from petkit_local.devices.ble import BLERegistry
+
+    app, reg, hub = _panel()
+    parent = reg.get_or_create(petkit_id=10, device_type="d4sh", serial_number="SN10")
+    parent.online = True
+    parent.mqtt_connected = True
+    ble = BLERegistry()
+    dev = ble.register(ble_type="ctw3", petkit_id=700, mac="AABBCCDDEEFF",
+                       secret="s", interval=240, link_with=10)
+    dev.state = {"states": {"powerStatus": 1, "suspendStatus": 1, "mode": 1,
+                            "runStatus": 1, "detectStatus": 0, "batteryPercent": 100,
+                            "electricStatus": 2, "lackWarning": 0, "filterWarning": 0,
+                            "breakdownWarning": 0, "lowBattery": 0,
+                            "waterPumpRunTime": 1, "todayPumpRunTime": 1,
+                            "supplyVoltage": 5312, "batteryVoltage": 4207,
+                            "energyInterval": 300, "sleepTime": 1200,
+                            "lightSwitch": 1, "brightness": 3,
+                            "noDisturbingSwitch": 0},
+                 "consumables": {"filterPercent": 59}}
+    dev.last_seen = 1785625866
+    app["ble_registry"] = ble
+    return app, reg, ble
+
+
+async def test_the_accessory_view_carries_everything_its_panel_needs():
+    """It carried three keys — type, mac, id — while its decoded state, 21
+    entities and 8 controls existed only in Home Assistant."""
+    app, reg, ble = _paired_ctw3_app()
+    c = await _mk_client(app)
+    try:
+        body = await (await c.get("/api/ble")).json()
+        a = body["accessories"][0]
+        assert a["name"] == "EverSweet Max Cordless"
+        assert a["parent_name"] == "YumShare Dual-Hopper"
+        assert a["parent_online"] is True
+        assert a["last_seen"] == 1785625866
+        assert len(a["entities"]) == 21
+        # Every entity resolves against the accessory's own state document —
+        # an entity whose `value_path` names a section nothing fills reads
+        # unknown forever, which is what the device-side guard exists for too.
+        for e in a["entities"]:
+            assert e["value"] is not None, e["key"]
+        assert sum(1 for e in a["entities"] if e["settable"]) == 8
+    finally:
+        await c.close()
+
+
+async def test_the_panel_can_set_an_accessory_control():
+    app, reg, ble = _paired_ctw3_app()
+
+    class _Bridge:
+        _client = object()
+
+        def __init__(self):
+            self.sent = []
+
+        async def publish_ble_command(self, parent, dev, cmd, payload):
+            self.sent.append((parent.petkit_id, dev.petkit_id, cmd, payload))
+            return True
+
+    bridge = _Bridge()
+    app["bridge"] = bridge
+    c = await _mk_client(app)
+    try:
+        r = await c.post("/api/ble/700/command",
+                         json={"entity": "ctw3_mode", "value": "intermittent"})
+        assert r.status == 200, await r.text()
+        assert (await r.json())["delivered"] == "ble"
+        parent_id, ble_id, cmd, payload = bridge.sent[0]
+        assert (parent_id, ble_id, cmd) == (10, 700, 220)
+        # power, suspend restated; mode is the one that changed.
+        assert payload == bytes([0x00, 1, 1, 2])
+        # Optimistic, like a real device's.
+        assert ble.get(700).state["states"]["mode"] == 2
+    finally:
+        await c.close()
+
+
+async def test_an_accessory_write_says_why_it_cannot_be_delivered():
+    """A real device off MQTT still has a heartbeat queue; an accessory has
+    nothing to queue into, so silence would be a lie."""
+    app, reg, ble = _paired_ctw3_app()
+    reg.get(10).mqtt_connected = False
+    app["bridge"] = type("B", (), {"_client": object()})()
+    c = await _mk_client(app)
+    try:
+        r = await c.post("/api/ble/700/command",
+                         json={"entity": "ctw3_power", "value": "OFF"})
+        assert r.status == 409
+        assert "not on MQTT" in (await r.json())["error"]
+    finally:
+        await c.close()
+
+
+async def test_an_accessory_write_is_refused_before_the_first_reading():
+    from petkit_local.devices.ble import BLERegistry
+
+    app, reg, hub = _panel()
+    parent = reg.get_or_create(petkit_id=10, device_type="d4sh", serial_number="SN10")
+    parent.online = parent.mqtt_connected = True
+    ble = BLERegistry()
+    ble.register(ble_type="ctw3", petkit_id=700, mac="AABBCCDDEEFF", link_with=10)
+    app["ble_registry"] = ble
+    app["bridge"] = type("B", (), {"_client": object()})()
+    c = await _mk_client(app)
+    try:
+        r = await c.post("/api/ble/700/command",
+                         json={"entity": "ctw3_brightness", "value": "low"})
+        assert r.status == 400
+        assert "status" in (await r.json())["error"]
+        r = await c.post("/api/ble/999/command", json={"entity": "x", "value": "1"})
+        assert r.status == 404
+    finally:
+        await c.close()
+
+
+async def test_the_accessory_panel_is_its_own_panel_and_is_trimmed():
+    app, reg, hub = _panel()
+    c = await _mk_client(app)
+    try:
+        js = await (await c.get("/static/app.js")).text()
+        assert "accpanel" in js and "accSummary" in js and "accBody" in js
+        assert "relayed by" in js
+        # A transport badge that is true of an accessory. `linkBadge`'s two
+        # answers are both false: no MQTT session, no heartbeat queue.
+        assert "badge ble" in js
+        css = await (await c.get("/static/styles.css")).text()
+        assert ".badge.ble" in css
+        # The parent's machinery must not follow it across.
+        body = js[js.index("function accBody("):]
+        body = body[: body.index("\n}\n")]
+        for absent in ("http_count", "mqtt_count", "queue", "patcher", "log_upload"):
+            assert absent not in body, absent
+    finally:
+        await c.close()
+
+
+async def test_the_panel_can_ask_for_a_reading_now():
+    """The one action an accessory has, and it belongs to the relay: nothing in
+    the CTW3 protocol is shaped like "do X now". Without it the only way to
+    find out whether a freshly paired accessory answers is to wait out its poll
+    interval — up to four minutes of staring at "never"."""
+    app, reg, ble = _paired_ctw3_app()
+
+    class _Bridge:
+        _client = object()
+        asked = None
+
+        async def request_ble_reading(self, parent, dev):
+            _Bridge.asked = (parent.petkit_id, dev.petkit_id)
+            return True
+
+    app["bridge"] = _Bridge()
+    c = await _mk_client(app)
+    try:
+        r = await c.post("/api/ble/700/poll")
+        assert r.status == 200
+        assert _Bridge.asked == (10, 700)
+        # And it refuses in the same words the write path does.
+        reg.get(10).mqtt_connected = False
+        r = await c.post("/api/ble/700/poll")
+        assert r.status == 409
     finally:
         await c.close()

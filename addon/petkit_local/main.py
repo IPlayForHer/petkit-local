@@ -478,6 +478,12 @@ def main() -> None:
             _spawn(app_instance, "availability-watchdog",
                    ha_publisher.availability_watchdog(config.offline_timeout))
 
+        # A BLE accessory reports only when we tell its parent to open a
+        # session. Reacting to the parent's own traffic is not enough — a
+        # feeder has none to react to (see `poll_ble_loop`).
+        if mqtt_bridge is not None:
+            _spawn(app_instance, "ble-poll", mqtt_bridge.poll_ble_loop())
+
         sweeper = RetentionSweeper(event_store, retention_config,
                                    log_root=config.device_log_dir,
                                    raw_root=raw_root,

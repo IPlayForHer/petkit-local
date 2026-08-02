@@ -96,7 +96,9 @@ from petkit_local.utils.const import (
 )
 from petkit_local.utils.dicts import dig_path
 from petkit_local.utils.jsonio import atomic_write_json, read_json
-from petkit_local.devices.ble import BLE_TYPES, normalize_mac
+from petkit_local.devices.ble import (
+    BLE_TYPES, ctw3_command_for, get_ble_entities, normalize_mac,
+)
 from petkit_local.utils.paths import UnsafePathError, safe_join
 from petkit_local.utils.timeutil import local_day_bounds, local_offset_hours
 
@@ -288,6 +290,8 @@ def create_panel_app(registry: DeviceRegistry, ble_registry: BLERegistry | None,
     app.router.add_get("/api/ble", api_ble_accessories)
     app.router.add_post("/api/ble", api_ble_accessories)
     app.router.add_delete("/api/ble/{id}", api_ble_delete)
+    app.router.add_post("/api/ble/{id}/command", api_ble_command)
+    app.router.add_post("/api/ble/{id}/poll", api_ble_poll)
 
     # --- patchers (on-device binary patches) ---
     app.router.add_get("/api/devices/{id}/patcher", api_patcher_status)
@@ -1671,11 +1675,40 @@ def _next_accessory_id(reg: DeviceRegistry, ble: BLERegistry) -> int:
     return candidate
 
 
-def _ble_view(dev: BLEDevice) -> dict[str, Any]:
-    """One accessory as the panel shows it, including the wire entry it produces."""
+def _ble_view(dev: BLEDevice, reg: DeviceRegistry | None = None) -> dict[str, Any]:
+    """One accessory as the panel shows it: identity, wire entry, and its state.
+
+    Carries the same `entities` block a real device's detail does — resolved
+    values included — because the panel renders an accessory as its own device
+    panel and reuses the very same table and control renderers. Without it the
+    accessory was three cells in its parent's card while its decoded state,
+    twenty-one entities and eight controls existed only in Home Assistant.
+
+    The state document needs no adapter: an accessory's `value_path` is already
+    `states.x`/`consumables.x` and `dev.state` has exactly those sections, so
+    `dig_path` reads it directly.
+    """
+    entities = get_ble_entities(dev.ble_type)
+    parent = reg.get(dev.link_with) if (reg and dev.link_with) else None
     return {
         "petkit_id": dev.petkit_id,
         "ble_type": dev.ble_type,
+        "name": device_display_name(dev.ble_type),
+        # Who relays for it. An accessory with no reachable parent is not
+        # merely offline, it is unaddressable, and the panel says which.
+        "parent_name": device_display_name(parent.device_type) if parent else "",
+        "parent_type": parent.device_type if parent else "",
+        "parent_online": bool(parent and parent.online),
+        "last_seen": dev.last_seen,
+        "entities": [{
+            "component": e.component, "key": e.key, "name": e.name,
+            "value_path": e.value_path, "unit": e.unit, "device_class": e.device_class,
+            "icon": e.icon, "options": e.options, "option_values": e.option_values,
+            "settable": e.is_settable,
+            "entity_category": e.entity_category,
+            "min": e.min_value, "max": e.max_value, "step": e.step,
+            "value": dig_path(dev.state, e.value_path),
+        } for e in entities],
         "mac": dev.mac,
         "secret": dev.secret,
         "interval": dev.interval,
@@ -1806,7 +1839,138 @@ async def api_ble_accessories(request: web.Request) -> web.Response:
         if ble_type == "k3" and link_with:
             await _send_k3_link(request, link_with, petkit_id)
 
-    return web.json_response({"accessories": [_ble_view(d) for d in ble.all()]})
+    return web.json_response({"accessories": [_ble_view(d, reg) for d in ble.all()]})
+
+
+def _ble_entity_value(entity: Any, payload: str) -> int | None:
+    """A panel control's payload as the integer an accessory frame carries.
+
+    Same three shapes Home Assistant sends — ON/OFF, a select label, a decimal
+    — because `controlRow` in the panel emits exactly what the HA entity would.
+    None for anything else: a write to a fountain is not worth guessing at.
+    """
+    text = payload.strip()
+    if entity.component == "switch":
+        upper = text.upper()
+        if upper in ("ON", "1", "TRUE"):
+            return 1
+        if upper in ("OFF", "0", "FALSE"):
+            return 0
+        return None
+    if entity.component == "select":
+        options = list(entity.options or [])
+        if text in options:
+            values = entity.option_values or list(range(len(options)))
+            return int(values[options.index(text)])
+        return None
+    return to_int(text, None)
+
+
+async def api_ble_command(request: web.Request) -> web.Response:
+    """Set one entity on a BLE accessory, from the panel.
+
+    The accessory twin of `api_send_command`, and it has to be a twin rather
+    than a branch: the delivery rules are different in a way that matters.
+
+    There is no `transport` here. A real device that is off MQTT still has a
+    heartbeat queue to hold a command until it polls; an accessory has neither
+    — it is reachable only while its parent is on MQTT, because the command is
+    a `thing/service/ble` publish to that parent. So the honest answers are
+    "sent" or "cannot reach it", and queueing into nothing is not one of them.
+
+    Returns 400 with the reason when the write is refused — both CTW3 frames
+    restate every field they carry, so a setting cannot be changed before the
+    accessory has reported the rest of them.
+    """
+    ble = request.app["ble_registry"]
+    reg = request.app["registry"]
+    bridge = request.app.get("bridge")
+    hub = request.app["hub"]
+
+    ble_id = to_int(request.match_info.get("id"), 0) or 0
+    dev = ble.get(ble_id)
+    if dev is None:
+        return web.json_response({"error": "not found"}, status=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+
+    entity_key = body.get("entity")
+    entity = next((e for e in get_ble_entities(dev.ble_type) if e.key == entity_key), None)
+    if entity is None:
+        return web.json_response({"error": f"unknown entity {entity_key}"}, status=400)
+
+    value = _ble_entity_value(entity, str(body.get("value", "")))
+    if value is None:
+        return web.json_response(
+            {"error": f"unusable value for {entity.key}"}, status=400)
+
+    parent = reg.get(dev.link_with) if dev.link_with else None
+    if parent is None:
+        return web.json_response(
+            {"error": "no registered parent to relay through"}, status=409)
+    if bridge is None or not getattr(bridge, "_client", None):
+        return web.json_response({"error": "MQTT bridge is not running"}, status=409)
+    if not parent.mqtt_connected:
+        return web.json_response(
+            {"error": f"{device_display_name(parent.device_type)} is not on MQTT — "
+                      f"an accessory can only be reached while its parent is"},
+            status=409)
+
+    try:
+        cmd, payload = ctw3_command_for(dev, entity.key, value)
+    except Refused as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+    if not await bridge.publish_ble_command(parent, dev, cmd, payload):
+        return web.json_response({"error": "nothing was sent"}, status=502)
+
+    # Optimistic, exactly as the HA path is: the accessory acknowledges the
+    # write, but only its next status proves it, and that is a poll away.
+    dev.state.setdefault("states", {})[entity.value_path.split(".")[-1]] = value
+    ble.mark_dirty()
+    hub.record_command(ble_id, "ble", f"{entity.key}={value} (cmd {cmd})")
+    return web.json_response({"ok": True, "delivered": "ble", "entity": entity.key,
+                              "cmd": cmd, "via": parent.petkit_id})
+
+
+async def api_ble_poll(request: web.Request) -> web.Response:
+    """Ask an accessory's parent to fetch a reading now.
+
+    The one action a BLE accessory has, and it is not the accessory's: nothing
+    in the CTW3 protocol is shaped like "do X now" — its four writes are all
+    settings. What IS worth a button is the relay itself, because an accessory
+    speaks only when its parent is told to open a session, and otherwise that
+    happens on a timer up to `interval` seconds away. When the scan type is a
+    guess, "has it ever answered" is the only question, and waiting four
+    minutes to ask it is not a workflow.
+    """
+    ble = request.app["ble_registry"]
+    reg = request.app["registry"]
+    bridge = request.app.get("bridge")
+    hub = request.app["hub"]
+
+    dev = ble.get(to_int(request.match_info.get("id"), 0) or 0)
+    if dev is None:
+        return web.json_response({"error": "not found"}, status=404)
+    parent = reg.get(dev.link_with) if dev.link_with else None
+    if parent is None:
+        return web.json_response(
+            {"error": "no registered parent to relay through"}, status=409)
+    if bridge is None or not getattr(bridge, "_client", None):
+        return web.json_response({"error": "MQTT bridge is not running"}, status=409)
+    if not parent.mqtt_connected:
+        return web.json_response(
+            {"error": f"{device_display_name(parent.device_type)} is not on MQTT — "
+                      f"an accessory can only be reached while its parent is"},
+            status=409)
+
+    if not await bridge.request_ble_reading(parent, dev):
+        return web.json_response({"error": "nothing was sent"}, status=502)
+    hub.record_command(dev.petkit_id, "ble", "read now")
+    return web.json_response({"ok": True, "via": parent.petkit_id})
 
 
 async def api_ble_delete(request: web.Request) -> web.Response:
@@ -1833,7 +1997,7 @@ async def api_ble_delete(request: web.Request) -> web.Response:
         await _send_k3_link(request, parent_id, 0)
     return web.json_response({
         "ok": True,
-        "accessories": [_ble_view(d) for d in ble.all()],
+        "accessories": [_ble_view(d, request.app["registry"]) for d in ble.all()],
         "note": "Home Assistant keeps the entities until you delete the device there.",
     })
 

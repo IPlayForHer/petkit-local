@@ -90,6 +90,91 @@ async def test_full_boot_sequence():
         await client.close()
 
 
+# --- a device that puts its identity in the body ----------------------------
+#
+# The Ingenic models send `X-Device: id=...&sn=...` on every request. An ESP32
+# feeder sends no such header, no query string either, and urlencodes
+# everything into the POST body. Until 1.5.0 that device was unidentifiable to
+# every endpoint here.
+
+# The signup a Feeder D4 running firmware 1.267 actually sends, from the
+# capture in issue #3. Kept whole rather than trimmed to the fields under test:
+# the point is that this exact string works.
+D4_SIGNUP_BODY = (
+    "hardware=1&firmware=1.267&mac=c05d89d25204&timezone=2.0"
+    "&locale=Europe/Amsterdam&id=400090690&sn=20241223G11497"
+    "&bt_mac=c05d89d25206&ap_mac=c05d89d25205&chipid=13783556"
+)
+FORM = {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+async def test_a_device_that_identifies_itself_only_in_the_body_registers():
+    """This answered 400 "missing device id" — the device never got past its
+    first request, and no amount of retrying would have helped."""
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        r = await client.post("/6/d4/dev_signup", data=D4_SIGNUP_BODY, headers=FORM)
+        assert r.status == 200
+        dev = reg.get(400090690)
+        assert dev is not None
+        assert dev.device_type == "d4"
+        # Not just the id: a blank serial would have burnt itself into
+        # `mqtt_device_name`, which is minted once and never repaired.
+        assert dev.serial_number == "20241223G11497"
+        assert dev.mqtt_device_name == "d_d4_20241223G11497"
+        assert dev.mac == "c05d89d25204"
+        assert dev.firmware == "1.267"
+        # The device is the only source of its own BLE address and offers it
+        # exactly once, here.
+        assert dev.config.get("bt_mac") == "c05d89d25206"
+    finally:
+        await client.close()
+
+
+async def test_the_same_device_then_gets_its_mqtt_credentials():
+    """The quieter half of the same bug: `dev_iot_device_info` answered 200
+    with an empty result, so the device never reached the broker and nothing
+    anywhere looked wrong."""
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        await client.post("/6/d4/dev_signup", data=D4_SIGNUP_BODY, headers=FORM)
+        r = await client.post("/6/d4/dev_iot_device_info",
+                              data="id=400090690&sn=20241223G11497", headers=FORM)
+        result = (await r.json())["result"]
+        assert result, "no credentials at all"
+        assert result.get("deviceSecret") or result.get("productKey")
+    finally:
+        await client.close()
+
+
+async def test_the_header_still_wins_over_the_body():
+    """Precedence is header, then query, then body. A device sending both is
+    not something anybody has seen, but the order has to be decided."""
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        await client.post("/6/t5/dev_signup", headers={**HDR, **FORM},
+                          data="id=999&sn=SN999")
+        assert reg.get(100) is not None
+        assert reg.get(999) is None
+    finally:
+        await client.close()
+
+
+async def test_a_body_with_no_usable_id_still_answers_400():
+    """The body is a third source, not an excuse to accept anything."""
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        r = await client.post("/6/d4/dev_signup", data="sn=SN&id=abc", headers=FORM)
+        assert r.status == 400
+        assert (await r.json())["error"] == "missing device id"
+    finally:
+        await client.close()
+
+
 async def test_heartbeat_delivers_queued_command():
     reg = DeviceRegistry()
     client = await _client(reg)

@@ -79,6 +79,30 @@ def device_is_stale(device: Device, now: float, timeout: int) -> bool:
     return (now - last_seen) > timeout
 
 
+def _ble_command_value(entity: Any, payload: str) -> int | None:
+    """An HA command payload as the integer an accessory's frame carries.
+
+    Switches arrive as ON/OFF, selects as one of their labels, numbers as a
+    decimal string. Anything else returns None rather than a default: a write
+    to a fountain is not worth guessing at.
+    """
+    text = payload.strip()
+    if entity.component == "switch":
+        upper = text.upper()
+        if upper in ("ON", "1", "TRUE"):
+            return 1
+        if upper in ("OFF", "0", "FALSE"):
+            return 0
+        return None
+    if entity.component == "select":
+        if text in (entity.options or []):
+            index = list(entity.options).index(text)
+            values = entity.option_values or list(range(len(entity.options)))
+            return int(values[index])
+        return None
+    return to_int(text, None)
+
+
 class HAPublisher:
     """Publishes devices to Home Assistant over MQTT and applies HA's commands.
 
@@ -496,6 +520,12 @@ class HAPublisher:
         if not self._client or not self._connected:
             return
         entities = get_ble_entities(ble_dev.ble_type)
+        # Same routing table a real device gets. Without it every command
+        # published to an accessory's topic was dropped as "unknown entity",
+        # which is how the accessories stayed read-only long after they had
+        # switches.
+        self._entity_index[ble_dev.petkit_id] = {
+            e.unique_id_suffix: e for e in entities if e.is_settable}
         state_topic = f"petkit-local/{ble_dev.petkit_id}/state"
         device_name = f"PetKit {ble_dev.ble_type.upper()} {ble_dev.serial_number}".strip()
         for entity in entities:
@@ -570,6 +600,58 @@ class HAPublisher:
             "capabilities": {ct: (ct in enabled) for ct in Device.CAPABILITY_TYPES},
         }
 
+    async def _handle_ble_command(self, ble_id: int, entity: Any, message: Any) -> None:
+        """Apply one HA command to a BLE accessory, through its parent.
+
+        Three things have to line up and any of them can be absent: the
+        accessory must still be paired, the parent it is relayed by must be a
+        registered device, and the accessory must have reported enough of its
+        own state for the frame to be built (both CTW3 frames restate every
+        field they carry). Each is logged by name rather than collapsed into
+        one failure, because from Home Assistant they look identical: the
+        switch flips back and nothing happens.
+        """
+        from petkit_local.devices.ble import Refused, ctw3_command_for
+
+        ble_dev = self._ble_registry.get(ble_id) if self._ble_registry else None
+        if ble_dev is None:
+            log.warning("Command for unknown accessory %d", ble_id)
+            return
+        parent = self._registry.get(ble_dev.link_with)
+        if parent is None:
+            log.warning("Accessory %d has no registered parent (link_with=%s)",
+                        ble_id, ble_dev.link_with)
+            return
+        if self._command_sink is None:
+            log.warning("No MQTT bridge; cannot reach accessory %d", ble_id)
+            return
+
+        raw = message.payload
+        payload = raw.decode(errors="replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+        value = _ble_command_value(entity, payload)
+        if value is None:
+            log.warning("Unusable value %r for %s on accessory %d",
+                        payload, entity.key, ble_id)
+            return
+
+        try:
+            cmd, frame_payload = ctw3_command_for(ble_dev, entity.key, value)
+        except Refused as exc:
+            log.warning("Refused %s on accessory %d: %s", entity.key, ble_id, exc)
+            return
+
+        sent = await self._command_sink.publish_ble_command(
+            parent, ble_dev, cmd, frame_payload)
+        if not sent:
+            return
+        # Optimistic, like a real device's: the accessory acknowledges the write
+        # but its next status is what actually confirms it, and that is a poll
+        # away. Reflecting immediately keeps the control from snapping back.
+        ble_dev.state.setdefault("states", {})[entity.value_path.split(".")[-1]] = value
+        if self._ble_registry:
+            self._ble_registry.mark_dirty()
+        await self.publish_ble_state(ble_dev)
+
     async def _handle_command(self, message: Any) -> None:
         """Apply one HA command published to petkit-local/{device_id}/cmd/{suffix}.
 
@@ -588,13 +670,16 @@ class HAPublisher:
         suffix = parts[3]
 
         device = self._registry.get(device_id)
-        if not device:
-            log.warning("Command for unknown device %d", device_id)
-            return
-
         entity = self._entity_index.get(device_id, {}).get(suffix)
         if entity is None:
             log.warning("Command for unknown entity '%s' on device %d", suffix, device_id)
+            return
+
+        if device is None:
+            # Not a real device: an accessory has an HA identity of its own but
+            # lives in the BLE registry, and its commands travel through the
+            # parent that relays for it.
+            await self._handle_ble_command(device_id, entity, message)
             return
 
         raw = message.payload

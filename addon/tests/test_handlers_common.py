@@ -52,12 +52,14 @@ def _registry_with(petkit_id: int, serial: str = "") -> DeviceRegistry:
     return reg
 
 
-def _mocked(x_device=None, query="") -> web.Request:
+def _mocked(x_device=None, query="", form=None) -> web.Request:
     """A request that bypasses the middleware, for values a real header cannot
     carry (e.g. a 5000-digit id would exceed aiohttp's header size limit)."""
     request = make_mocked_request("GET", PROBE_PATH + query)
     if x_device is not None:
         request["x_device"] = x_device
+    if form is not None:
+        request["form"] = form
     return request
 
 
@@ -203,3 +205,52 @@ def test_no_device_response_shape():
     resp = no_device_response()
     assert resp.status == 200
     assert resp.body == b'{"result": {}}'
+
+
+# --- the third source: an urlencoded POST body ------------------------------
+#
+# Some models send no `X-Device` and no query string at all — a Feeder D4 puts
+# its whole identity in the body. `http/middleware.py` parses it once into
+# `request["form"]` so these accessors can stay synchronous.
+
+def test_identity_can_come_from_the_body_alone():
+    req = _mocked(form={"id": "400090690", "sn": "20241223G11497"})
+    assert device_id(req) == 400090690
+    assert device_serial(req) == "20241223G11497"
+
+
+def test_the_body_is_the_last_resort_not_the_first():
+    """Header beats query beats body. Nobody has seen a device send more than
+    one, but a precedence that is not decided is a precedence that varies."""
+    req = _mocked({"id": "1", "sn": "H"}, query="?id=2&sn=Q",
+                  form={"id": "3", "sn": "B"})
+    assert device_id(req) == 1
+    assert device_serial(req) == "H"
+
+    req = _mocked(query="?id=2&sn=Q", form={"id": "3", "sn": "B"})
+    assert device_id(req) == 2
+    assert device_serial(req) == "Q"
+
+
+def test_an_unusable_value_falls_through_to_the_body():
+    """The fallback fires on unusable, not merely absent — the same rule the
+    header/query pair already follows."""
+    assert device_id(_mocked({"id": "abc"}, form={"id": "400090690"})) == 400090690
+    assert device_serial(_mocked({"sn": "  "}, form={"sn": "SN"})) == "SN"
+
+
+def test_a_junk_body_identifies_nothing():
+    assert device_id(_mocked(form={"id": "abc"})) is None
+    assert device_id(_mocked(form={})) is None
+    assert device_serial(_mocked(form={})) == ""
+
+
+def test_device_field_reads_any_name_the_same_way():
+    """`handlers/signup.py` uses it for `mac`, `firmware` and `bt_mac`, which
+    are not identity but arrive by the same three routes."""
+    from petkit_local.http.handlers._common import device_field
+
+    req = _mocked(query="?mac=QUERY", form={"mac": "BODY", "firmware": "1.267"})
+    assert device_field(req, "mac") == "QUERY"
+    assert device_field(req, "firmware") == "1.267"
+    assert device_field(req, "absent") is None
