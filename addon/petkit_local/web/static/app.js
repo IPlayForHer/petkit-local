@@ -2245,8 +2245,7 @@ function blufiExplain(view) {
   return 'type ' + pktType + ' subtype 0x' + subtype.toString(16);
 }
 
-async function provisionBlufi(gatt, cfg) {
-  const service = await gatt.getPrimaryService(BLUFI_SERVICE);
+async function provisionBlufi(service, cfg) {
   const p2e = await service.getCharacteristic(BLUFI_P2E);
   const e2p = await service.getCharacteristic(BLUFI_E2P);
 
@@ -2284,8 +2283,7 @@ async function provisionBlufi(gatt, cfg) {
   return connected;
 }
 
-async function provisionPetkit(gatt, cfg) {
-  const service = await gatt.getPrimaryService(BLE_SERVICE);
+async function provisionPetkit(service, cfg) {
   const tx = await service.getCharacteristic(BLE_TX);
   const rx = await service.getCharacteristic(BLE_RX);
   let answered = false;
@@ -2359,27 +2357,49 @@ async function doProvision() {
     const locale = navigator.language || '';
     const cfg = { ssid, pwd, payload: { ssid, pwd, locale, timezone, apiServers: [server] } };
 
-    // Ask the device which protocol it speaks rather than assuming. Both are
-    // in `optionalServices`, so either can be opened; whichever resolves is
-    // the answer.
-    const services = await gatt.getPrimaryServices();
-    const has = uuid => services.some(x => x.uuid === uuid);
+    // Ask the device which protocol it speaks rather than assuming — but ask
+    // for each service BY NAME, never with `getPrimaryServices()`.
+    //
+    // The enumeration lists what the browser has already discovered and cached
+    // for this device, which is not the same set as what it will hand over when
+    // asked directly. A D4SH that provisions fine through `getPrimaryService(
+    // BLE_SERVICE)` can be missing from it — reported by an owner whose feeder
+    // paired from the hosted page (still on the 1.4.0 code, which asked by
+    // name) and refused to pair from the add-on the moment 1.5.0 switched to
+    // enumerating. So the PetKit path makes the exact call it made when it
+    // worked, BLUFI is a fallback, and the enumeration is demoted to writing
+    // the error message, where an incomplete answer costs nothing.
+    const open = async uuid => {
+      try {
+        return await gatt.getPrimaryService(uuid);
+      } catch (e) {
+        return null;
+      }
+    };
     st.textContent = ' sending…';
     let heard;
-    if (has(BLE_SERVICE)) {
+    const petkit = await open(BLE_SERVICE);
+    const blufi = petkit ? null : await open(BLUFI_SERVICE);
+    if (petkit) {
       plog('protocol: PetKit (0xAAA0)');
-      heard = await provisionPetkit(gatt, cfg);
-    } else if (has(BLUFI_SERVICE)) {
+      heard = await provisionPetkit(petkit, cfg);
+    } else if (blufi) {
       plog('protocol: BLUFI (0xFFFF)');
-      heard = await provisionBlufi(gatt, cfg);
+      heard = await provisionBlufi(blufi, cfg);
     } else {
+      let seen = [];
+      try {
+        seen = (await gatt.getPrimaryServices()).map(x => x.uuid);
+      } catch (e) {
+        seen = ['(could not be listed: ' + e.name + ')'];
+      }
       st.textContent = ' unknown device.';
       plog(
-        "This device exposes neither PetKit's provisioning service (0xAAA0) nor " +
-          'BLUFI (0xFFFF), so there is nothing here that can configure it. Older ' +
-          'models such as the Feeder Mini have no Bluetooth setup at all — those ' +
-          'are pointed here with a DNS redirect instead. Services seen: ' +
-          services.map(x => x.uuid).join(', '),
+        "This device answered to neither PetKit's provisioning service (0xAAA0) " +
+          'nor BLUFI (0xFFFF), so there is nothing here that can configure it. ' +
+          'Older models such as the Feeder Mini have no Bluetooth setup at all — ' +
+          'those are pointed here with a DNS redirect instead. Services seen: ' +
+          seen.join(', '),
       );
       return;
     }

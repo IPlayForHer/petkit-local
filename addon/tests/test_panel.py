@@ -579,8 +579,17 @@ async def test_provision_ui_has_ble_protocol():
         assert "0000ffff-0000-1000-8000-00805f9b34fb" in js  # service
         assert "0000ff01-0000-1000-8000-00805f9b34fb" in js  # phone -> ESP32
         assert "0000ff02-0000-1000-8000-00805f9b34fb" in js  # ESP32 -> phone
-        # Which one a device speaks is asked, not assumed from a model table.
-        assert "getPrimaryServices" in js
+        # Which one a device speaks is asked, not assumed from a model table --
+        # and asked BY NAME, per service. `getPrimaryServices()` returns what
+        # the browser has already discovered for the device, which is not what
+        # it hands over when asked directly: a D4SH that provisions through
+        # `getPrimaryService(0xAAA0)` was absent from the enumeration, so 1.5.0
+        # refused to pair a feeder that 1.4.0 paired fine. The enumeration may
+        # be read in exactly one place -- describing a device that answered to
+        # neither service -- and may never decide which protocol to speak.
+        assert "open(BLE_SERVICE)" in js
+        assert "open(BLUFI_SERVICE)" in js
+        assert js.count("gatt.getPrimaryServices()") == 1
         # Quoted or bare, spaced or not — the payload key is what matters.
         assert re.search(r"""["']?key["']?\s*:\s*151""", js)
         # The self-signed HTTPS panel on 8098 is gone — it published this
