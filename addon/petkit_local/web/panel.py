@@ -97,7 +97,7 @@ from petkit_local.utils.const import (
 from petkit_local.utils.dicts import dig_path
 from petkit_local.utils.jsonio import atomic_write_json, read_json
 from petkit_local.devices.ble import (
-    BLE_TYPES, ctw3_command_for, get_ble_entities, normalize_mac,
+    BLE_TYPES, ble_command_for, get_ble_entities, normalize_mac,
 )
 from petkit_local.utils.paths import UnsafePathError, safe_join
 from petkit_local.utils.timeutil import local_day_bounds, local_offset_hours
@@ -1681,12 +1681,13 @@ def _ble_view(dev: BLEDevice, reg: DeviceRegistry | None = None) -> dict[str, An
     Carries the same `entities` block a real device's detail does — resolved
     values included — because the panel renders an accessory as its own device
     panel and reuses the very same table and control renderers. Without it the
-    accessory was three cells in its parent's card while its decoded state,
-    twenty-one entities and eight controls existed only in Home Assistant.
+    accessory was three cells in its parent's card while its decoded state, its
+    entities and its controls existed only in Home Assistant.
 
     The state document needs no adapter: an accessory's `value_path` is already
     `states.x`/`consumables.x` and `dev.state` has exactly those sections, so
-    `dig_path` reads it directly.
+    `dig_path` reads it directly. A button has no path and no value — it is an
+    action, and `None` is the honest answer rather than the whole document.
     """
     entities = get_ble_entities(dev.ble_type)
     parent = reg.get(dev.link_with) if (reg and dev.link_with) else None
@@ -1707,7 +1708,7 @@ def _ble_view(dev: BLEDevice, reg: DeviceRegistry | None = None) -> dict[str, An
             "settable": e.is_settable,
             "entity_category": e.entity_category,
             "min": e.min_value, "max": e.max_value, "step": e.step,
-            "value": dig_path(dev.state, e.value_path),
+            "value": dig_path(dev.state, e.value_path) if e.value_path else None,
         } for e in entities],
         "mac": dev.mac,
         "secret": dev.secret,
@@ -1848,8 +1849,13 @@ def _ble_entity_value(entity: Any, payload: str) -> int | None:
     Same three shapes Home Assistant sends — ON/OFF, a select label, a decimal
     — because `controlRow` in the panel emits exactly what the HA entity would.
     None for anything else: a write to a fountain is not worth guessing at.
+
+    A button carries no value; 0 stands in for one, and the command it builds
+    never reads it.
     """
     text = payload.strip()
+    if entity.component == "button":
+        return 0
     if entity.component == "switch":
         upper = text.upper()
         if upper in ("ON", "1", "TRUE"):
@@ -1920,7 +1926,7 @@ async def api_ble_command(request: web.Request) -> web.Response:
             status=409)
 
     try:
-        cmd, payload = ctw3_command_for(dev, entity.key, value)
+        cmd, payload = ble_command_for(dev, entity.key, value)
     except Refused as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
@@ -1928,8 +1934,10 @@ async def api_ble_command(request: web.Request) -> web.Response:
         return web.json_response({"error": "nothing was sent"}, status=502)
 
     # Optimistic, exactly as the HA path is: the accessory acknowledges the
-    # write, but only its next status proves it, and that is a poll away.
-    dev.state.setdefault("states", {})[entity.value_path.split(".")[-1]] = value
+    # write, but only its next status proves it, and that is a poll away. A
+    # button has no state and no `value_path` to file one under.
+    if entity.value_path:
+        dev.state.setdefault("states", {})[entity.value_path.split(".")[-1]] = value
     ble.mark_dirty()
     hub.record_command(ble_id, "ble", f"{entity.key}={value} (cmd {cmd})")
     return web.json_response({"ok": True, "delivered": "ble", "entity": entity.key,

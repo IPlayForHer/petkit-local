@@ -131,7 +131,31 @@ def test_w5_undecodable_returns_empty():
     assert parse_w5_ble_response({"unrelated": "x"}) == {}
 
 
-def test_decode_w5_status_is_bounds_safe():
-    out = _decode_w5_status(b"\x01")
+def test_a_w5_frame_too_short_to_be_a_status_is_dropped_whole():
+    """It used to emit every field whose offset happened to be in range, which
+    turned a one-byte ACK into a confident `powerStatus` of 1. The block is 12
+    bytes on every firmware, so anything shorter is a broken frame."""
+    assert _decode_w5_status(b"\x01") == {"states": {}, "consumables": {}}
+    assert _decode_w5_status(bytes(11)) == {"states": {}, "consumables": {}}
+
+
+def test_the_shortest_real_w5_status_decodes_in_full():
+    out = _decode_w5_status(bytes([1, 2, 0, 0, 1, 0, 0, 0, 0x10, 0x20, 55, 1]))
     assert out["states"]["powerStatus"] == 1
-    assert out["consumables"] == {}
+    assert out["states"]["mode"] == 2
+    assert out["states"]["warningWaterMissing"] == 1
+    assert out["states"]["runningStatus"] == 1
+    assert out["states"]["pumpRuntime"] == 0x1020
+    assert out["consumables"]["filterPercentage"] == 55
+    # Nothing beyond byte 11 was sent, so nothing beyond byte 11 is claimed.
+    assert "todayPumpRunTime" not in out["states"]
+    assert "smartWorkingTime" not in out["states"]
+
+
+def test_a_longer_w5_status_yields_the_fields_the_longer_firmware_adds():
+    data = bytes([1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 90, 1]) + \
+        (83460).to_bytes(4, "big") + bytes([15, 25])
+    out = _decode_w5_status(data)["states"]
+    assert out["todayPumpRunTime"] == 83460
+    assert out["smartWorkingTime"] == 15
+    assert out["smartSleepTime"] == 25

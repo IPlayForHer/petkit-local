@@ -571,13 +571,48 @@ def test_the_config_tail_of_a_long_frame_is_decoded():
 
 
 def test_a_short_frame_is_dropped_rather_than_half_read():
-    """The W5 decoder emits whatever fits, which turns a one-byte frame into a
-    confident `powerStatus`. This block has a known length, so a short one is
-    a broken frame."""
+    """A block with a known length that arrives short is a broken frame, and
+    emitting the fields that happen to fit turns it into a confident reading.
+    Both families now refuse; the W5 one used to be the permissive example."""
     import base64
 
     short = base64.b64encode(bytes(range(10))).decode()
     assert _ctw3(data=short) == {}
+
+
+def test_the_older_ctw3_firmware_that_stops_at_26_bytes_is_still_read():
+    """Every field the decoder names fits in 26. This demanded 30 and dropped
+    the shorter block whole, which is the length aavdberg/ha-petkit accepts
+    from real hardware."""
+    import base64
+
+    from petkit_local.devices.ble import CTW3_CONFIG_OFFSET
+
+    full = base64.b64decode(CTW3_CMD230)
+    short = base64.b64encode(full[:26]).decode()
+    st = _ctw3(data=short)["states"]
+    assert st["powerStatus"] == 1
+    assert st["moduleStatus"] == 0
+    # No config tail at that length, so none is claimed.
+    assert "lightSwitch" not in st
+    assert len(full) >= CTW3_CONFIG_OFFSET
+
+    assert _ctw3(data=base64.b64encode(full[:25]).decode()) == {}
+
+
+def test_a_transient_mode_of_zero_is_not_taken_as_the_mode():
+    """A CTW3 reports 0 in the sleep half of its smart cycle. Stored, it turns
+    the next touch of the power switch into cmd 220 with mode 0 — off, in no
+    mode — because that frame is rebuilt from the last reading."""
+    import base64
+
+    full = bytearray(base64.b64decode(CTW3_CMD230))
+    full[2] = 0
+    st = _ctw3(data=base64.b64encode(bytes(full)).decode())["states"]
+    assert "mode" not in st
+
+    full[2] = 2
+    assert _ctw3(data=base64.b64encode(bytes(full)).decode())["states"]["mode"] == 2
 
 
 def test_a_non_status_cmd_is_ignored():
@@ -590,11 +625,18 @@ def test_a_non_status_cmd_is_ignored():
 
 def test_the_ctw3_entities_read_what_the_decoder_writes():
     """The failure this prevents is silent: an entity whose `value_path` names
-    a section the parser never fills reads unknown forever."""
+    a section the parser never fills reads unknown forever.
+
+    A button is exempt and has to be: it names no path because it is an action,
+    not a reading.
+    """
     from petkit_local.devices.ble import get_ble_entities
 
     fragment = _ctw3()
     for entity in get_ble_entities("ctw3"):
+        if entity.component == "button":
+            assert not entity.value_path, entity.key
+            continue
         section, _, field = entity.value_path.partition(".")
         assert section in fragment, entity.key
         assert field in fragment[section], entity.key
@@ -697,68 +739,241 @@ def _decode_frame(encoded):
 
 
 def test_an_outbound_frame_has_the_shape_the_accessory_answers_with():
+    """The length is 16-bit LITTLE-endian, and this used to write one byte.
+
+    Everything after it was therefore shifted by one: the accessory read our
+    payload's first byte as the high half of the length, so a 12-byte config
+    write announced 0x030C = 780 bytes and was still being waited for when the
+    session closed. Silence at both ends, which is why no settings write to a
+    CTW3 has ever been seen to take.
+    """
     from petkit_local.devices.ble import build_ble_frame
 
-    raw = _decode_frame(build_ble_frame(0xDC, 7, bytes([0x00, 1, 1, 2])))
+    raw = _decode_frame(build_ble_frame(220, 7, bytes([1, 1, 2])))
     assert raw[:3] == bytes([0xFA, 0xFC, 0xFD])
-    assert raw[3] == 0xDC          # opcode, not the MQTT cmd
-    assert raw[4] == 0x01          # constant
+    assert raw[3] == 220           # cmd, and the opcode: the same number
+    assert raw[4] == 0x01          # type: request
     assert raw[5] == 7             # sequence
-    assert raw[6] == 4             # payload length
-    assert raw[7:11] == bytes([0x00, 1, 1, 2])
+    assert raw[6:8] == bytes([3, 0])   # length, little-endian
+    assert raw[8:11] == bytes([1, 1, 2])
     assert raw[-1] == 0xFB
+
+
+def test_the_frame_builder_and_the_frame_reader_agree():
+    """They never did. `_ble_unframe` has always read the payload from offset
+    8 while the builder put it at 7, so this module encoded and decoded to two
+    different specifications."""
+    from petkit_local.devices.ble import _ble_unframe, build_ble_frame
+
+    payload = bytes(range(20))
+    cmd, data = _ble_unframe(_decode_frame(build_ble_frame(221, 3, payload)))
+    assert cmd == 221
+    assert data == payload
+
+
+def test_a_command_we_have_no_frame_for_is_not_invented():
+    from petkit_local.devices.ble import ble_command_frame
+
+    assert ble_command_frame(999, 0, b"") is None
+    assert ble_command_frame(221, 0, b"\x01") is not None
 
 
 def test_setting_the_mode_restates_power_and_suspend():
     """cmd 220 carries all three. Sending it with only the field that changed
     would switch the fountain off as a side effect of changing its mode."""
-    from petkit_local.devices.ble import CTW3_CMD_SET_POWER, ctw3_command_for
+    from petkit_local.devices.ble import CMD_SET_MODE, ble_command_for
 
     dev = _paired_ctw3(powerStatus=1, suspendStatus=1, mode=1)
-    cmd, payload = ctw3_command_for(dev, "ctw3_mode", 2)
-    assert cmd == CTW3_CMD_SET_POWER
-    assert payload == bytes([0x00, 1, 1, 2])
+    cmd, payload = ble_command_for(dev, "ctw3_mode", 2)
+    assert cmd == CMD_SET_MODE
+    assert payload == bytes([1, 0, 2])
 
 
-def test_setting_the_brightness_restates_the_whole_config_blob():
-    from petkit_local.devices.ble import CTW3_CMD_SET_CONFIG, ctw3_command_for
+def test_picking_a_mode_means_running_in_it():
+    """Reading power back out of the last status sends `power=0` whenever the
+    fountain was caught in the sleep half of its smart cycle, which leaves the
+    pump off and makes the mode select look like it did nothing."""
+    from petkit_local.devices.ble import ble_command_for
 
-    dev = _paired_ctw3(energyInterval=300, sleepTime=1200, lightSwitch=1,
-                       brightness=3, noDisturbingSwitch=0)
-    cmd, payload = ctw3_command_for(dev, "ctw3_brightness", 1)
-    assert cmd == CTW3_CMD_SET_CONFIG
-    assert len(payload) == 12
-    assert payload[0:2] == bytes([0x03, 0x03])
+    asleep = _paired_ctw3(powerStatus=0, suspendStatus=0, mode=2)
+    assert ble_command_for(asleep, "ctw3_mode", 1)[1] == bytes([1, 1, 1])
+    assert ble_command_for(asleep, "ctw3_mode", 2)[1] == bytes([1, 0, 2])
+
+
+def test_switching_a_ctw3_off_leaves_nothing_suspended():
+    from petkit_local.devices.ble import ble_command_for
+
+    dev = _paired_ctw3(powerStatus=1, suspendStatus=1, mode=1)
+    assert ble_command_for(dev, "ctw3_power", 0)[1] == bytes([0, 0, 1])
+
+
+def test_setting_the_brightness_restates_the_whole_config_block():
+    """Ten bytes, and none of them constants. The first two used to be written
+    as 0x03, 0x03 — the smart-cycle times one captured frame happened to carry,
+    mistaken for structure — and byte 10 as 0x01, which that same frame has as
+    0x00.
+
+    Bytes 6-8 go out in aavdberg/ha-petkit's order, which is the only direct
+    evidence about a WRITE; `decode_ctw3_config` reads the status tail the
+    other way round and says why the two are kept apart.
+    """
+    from petkit_local.devices.ble import CMD_SET_CONFIG, ble_command_for
+
+    dev = _paired_ctw3(smartWorkingTime=3, smartSleepTime=3, energyInterval=300,
+                       sleepTime=1200, lightSwitch=1, brightness=3,
+                       noDisturbingSwitch=0, childLock=0)
+    cmd, payload = ble_command_for(dev, "ctw3_brightness", 1)
+    assert cmd == CMD_SET_CONFIG
+    assert len(payload) == 10
+    assert payload[0:2] == bytes([3, 3])                # smart cycle, restated
     assert payload[2:4] == (300).to_bytes(2, "big")     # 012C, unchanged
     assert payload[4:6] == (1200).to_bytes(2, "big")    # 04B0, unchanged
-    assert payload[6] == 1                              # light still on
-    assert payload[7] == 1                              # the one field asked for
+    assert payload[6] == 0                              # do not disturb, off
+    assert payload[7] == 1                              # light still on
+    assert payload[8] == 1                              # the one field asked for
+    assert payload[9] == 0                              # child lock
 
 
 def test_a_config_write_is_refused_before_the_first_full_status():
-    """The blob goes whole. Filling the unknown half with zeros would turn the
-    light off and reset both intervals as a side effect of one change."""
-    from petkit_local.devices.ble import Refused, ctw3_command_for
+    """The block goes whole. Filling the unknown half with zeros would turn the
+    light off and reset both intervals as a side effect of one change.
+
+    The mode select is the exception and has to be: it states all three of
+    cmd 220's fields itself, so it needs nothing read back.
+    """
+    from petkit_local.devices.ble import Refused, ble_command_for
 
     with pytest.raises(Refused):
-        ctw3_command_for(_paired_ctw3(), "ctw3_brightness", 2)
+        ble_command_for(_paired_ctw3(), "ctw3_brightness", 2)
     with pytest.raises(Refused):
-        ctw3_command_for(_paired_ctw3(powerStatus=1), "ctw3_mode", 2)
+        ble_command_for(_paired_ctw3(powerStatus=1), "ctw3_power", 0)
+    assert ble_command_for(_paired_ctw3(), "ctw3_mode", 2)[1] == bytes([1, 0, 2])
 
 
 def test_a_key_that_is_not_writable_is_refused_not_guessed():
-    from petkit_local.devices.ble import Refused, ctw3_command_for
+    from petkit_local.devices.ble import Refused, ble_command_for
 
     with pytest.raises(Refused):
-        ctw3_command_for(_paired_ctw3(), "ctw3_battery", 50)
+        ble_command_for(_paired_ctw3(), "ctw3_battery", 50)
+
+
+def test_a_ctw3_key_is_refused_on_a_w5_and_the_other_way_round():
+    """One dispatcher serves both families now, and a key that belongs to the
+    other one has to be refused rather than half-recognised."""
+    from petkit_local.devices.ble import BLEDevice, Refused, ble_command_for
+
+    w5 = BLEDevice(ble_type="w5", petkit_id=701, mac="AABBCCDDEEFF")
+    w5.state = {"states": {"powerStatus": 1, "mode": 1}}
+    with pytest.raises(Refused):
+        ble_command_for(w5, "ctw3_power", 1)
+    with pytest.raises(Refused):
+        ble_command_for(_paired_ctw3(powerStatus=1), "w5_power", 1)
+
+
+def test_the_filter_reset_needs_no_reading_at_all():
+    """It carries no payload built from state, so it is the one write that
+    works on an accessory that has never reported."""
+    from petkit_local.devices.ble import CMD_RESET_FILTER, ble_command_for
+
+    assert ble_command_for(_paired_ctw3(), "ctw3_reset_filter", 0)[0] == CMD_RESET_FILTER
 
 
 def test_every_writable_entity_has_a_frame_behind_it():
     """A switch HA can toggle but nothing can send is worse than no switch."""
-    from petkit_local.devices.ble import CTW3_WRITABLE, get_ble_entities
+    from petkit_local.devices.ble import (
+        CTW3_WRITABLE, W5_WRITABLE, get_ble_entities,
+    )
 
-    settable = {e.key for e in get_ble_entities("ctw3") if e.is_settable}
-    assert settable == CTW3_WRITABLE
+    assert {e.key for e in get_ble_entities("ctw3") if e.is_settable} == CTW3_WRITABLE
+    assert {e.key for e in get_ble_entities("w5") if e.is_settable} == W5_WRITABLE
+
+
+# --- the W5 family's own settings and writes --------------------------------
+#
+# Layout from mr-ransel's protocol notes, matching aavdberg/ha-petkit's parser
+# and builder field for field. Nobody here owns a W4, W5 or CTW2, so every byte
+# below is asserted against those two sources rather than against a capture —
+# which is exactly why it is asserted rather than described.
+
+def _paired_w5(**state):
+    from petkit_local.devices.ble import BLEDevice
+
+    dev = BLEDevice(ble_type="w5", petkit_id=701, mac="AABBCCDDEEFF", link_with=10)
+    dev.state = {"states": state}
+    return dev
+
+
+#: One settings block: smart 5/10, ring on at brightness 7 from 08:00 to 22:00,
+#: quiet from 23:00 to 07:00, child lock on.
+W5_CONFIG = bytes([5, 10, 1, 7, 0x01, 0xE0, 0x05, 0x28, 1,
+                   0x05, 0x64, 0x01, 0xA4, 1])
+
+
+def test_a_w5_settings_frame_decodes_field_for_field():
+    """cmd 211 was ignored entirely, so everything a settings write has to
+    restate — both schedules included — had nowhere to come from."""
+    import base64
+
+    from petkit_local.devices.ble import parse_w5_ble_response
+
+    st = parse_w5_ble_response({
+        "device": {"mac": "aabbccddeeff"},
+        "payload": [{"cmd": 211, "data": base64.b64encode(W5_CONFIG).decode()}],
+    })["states"]
+    assert st["smartWorkingTime"] == 5
+    assert st["smartSleepTime"] == 10
+    assert st["lampRingSwitch"] == 1
+    assert st["lampRingBrightness"] == 7
+    assert st["lampRingLightUpTime"] == 480      # 08:00
+    assert st["lampRingGoOutTime"] == 1320       # 22:00
+    assert st["noDisturbingSwitch"] == 1
+    assert st["noDisturbingStartTime"] == 1380   # 23:00
+    assert st["noDisturbingEndTime"] == 420      # 07:00
+    assert st["isLock"] == 1
+
+
+def test_a_w5_settings_write_restates_the_schedules_it_did_not_change():
+    """The block goes whole and carries both schedules as minutes from
+    midnight. Rebuilding it from anything but the last reading would erase
+    them, and nothing else in the relayed traffic carries them."""
+    from petkit_local.devices.ble import (
+        CMD_SET_CONFIG, _decode_w5_config, ble_command_for,
+    )
+
+    dev = _paired_w5(**_decode_w5_config(W5_CONFIG))
+    cmd, payload = ble_command_for(dev, "w5_brightness", 3)
+    assert cmd == CMD_SET_CONFIG
+    assert len(payload) == 14
+    assert payload[3] == 3                       # the one field asked for
+    assert payload == W5_CONFIG[:3] + bytes([3]) + W5_CONFIG[4:]
+
+
+def test_a_w5_settings_write_is_refused_until_a_settings_frame_arrives():
+    """A status frame carries the smart-cycle times but neither schedule, so
+    reporting is not the same as being writable here."""
+    from petkit_local.devices.ble import Refused, ble_command_for
+
+    with pytest.raises(Refused):
+        ble_command_for(_paired_w5(smartWorkingTime=5, smartSleepTime=10), "w5_light", 1)
+
+
+def test_a_w5_power_write_names_the_mode_because_one_byte_carries_both():
+    """cmd 220 byte 0 is 0 off, 1 normal, 2 smart — there is no separate power
+    field, so switching on means naming a mode."""
+    from petkit_local.devices.ble import CMD_SET_MODE, ble_command_for
+
+    smart = _paired_w5(mode=2)
+    assert ble_command_for(smart, "w5_power", 1) == (CMD_SET_MODE, bytes([2, 0]))
+    assert ble_command_for(smart, "w5_power", 0) == (CMD_SET_MODE, bytes([0, 0]))
+    assert ble_command_for(smart, "w5_mode", 1) == (CMD_SET_MODE, bytes([1, 0]))
+    # Never reported: normal, rather than a fountain that will not switch on.
+    assert ble_command_for(_paired_w5(), "w5_power", 1) == (CMD_SET_MODE, bytes([1, 0]))
+
+
+def test_the_w5_filter_reset_is_the_same_command_on_both_families():
+    from petkit_local.devices.ble import CMD_RESET_FILTER, ble_command_for
+
+    assert ble_command_for(_paired_w5(), "w5_reset_filter", 0)[0] == CMD_RESET_FILTER
 
 
 async def test_a_command_reaches_the_parent_as_a_ble_service_call():
@@ -766,8 +981,8 @@ async def test_a_command_reaches_the_parent_as_a_ble_service_call():
     dev = ble.get(700)
     dev.state = {"states": {"powerStatus": 1, "suspendStatus": 1, "mode": 1}}
 
-    from petkit_local.devices.ble import ctw3_command_for
-    cmd, payload = ctw3_command_for(dev, "ctw3_power", 0)
+    from petkit_local.devices.ble import ble_command_for
+    cmd, payload = ble_command_for(dev, "ctw3_power", 0)
     assert await bridge.publish_ble_command(reg.get(10), dev, cmd, payload)
 
     topic, body = bridge._client.sent[-1]
@@ -775,7 +990,7 @@ async def test_a_command_reaches_the_parent_as_a_ble_service_call():
     params = json.loads(body)["params"]
     assert params["device"] == {"type": 24, "mac": "aabbccddeeff"}
     assert params["payload"]["cmd"] == 220
-    assert _decode_frame(params["payload"]["data"])[7:11] == bytes([0x00, 0, 1, 1])
+    assert _decode_frame(params["payload"]["data"])[8:11] == bytes([0, 0, 1])
 
 
 async def test_the_sequence_number_advances_per_accessory():

@@ -102,18 +102,21 @@ to sit at "unknown".
 | Feeder D3 / D4s | D3, D4S | — | — |
 | Feeder / Feeder Mini | feeder, feedermini ‡ | — | — |
 | EverSweet Ultra AI | W7H | ✅ | ✅ |
-| EverSweet 3 Pro | W5 † | — | — |
-| EverSweet | W4 † | — | — |
+| EverSweet 3 Pro | W5 † — also W5C, W5N | — | — |
+| EverSweet | W4 † — also W4X, W4X UVC | — | — |
 | EverSweet Solo 2 | CTW2 † | — | — |
 | EverSweet Max Cordless | CTW3 † | — | — |
 | Pura Air smart spray | K2, K3 † | — | — |
 
-**† No Wi-Fi — Bluetooth only.** They pair to a mains-powered litter box or feeder, which relays for
-them, so their readings arrive inside its traffic; no parent nearby means no data at all. They still
-appear as their own Home Assistant devices. Pair them from the **Devices** tab, on the panel of the
-device that will relay for them — a parent never discovers anything, it asks the cloud what to scan
-for, and the cloud is now this. For every fountain but the W5 that scan number is a guess: if one
-never reports, change **Scan type** under Advanced and tell us which value worked.
+**† No Wi-Fi — Bluetooth only.** A mains-powered litter box or feeder relays for them, so no parent
+nearby means no data. Pair them from the **Devices** tab, on the panel of the device that will
+relay — a parent discovers nothing, it asks the cloud what to scan for. That scan number is a guess
+for every fountain but the W5: if one never reports, change **Scan type** under Advanced and say
+which value worked. Variants sharing a row speak one protocol and pair as the row's codename.
+
+**Nothing to relay through?** Then this cannot reach a fountain at all — use
+**[aavdberg/ha-petkit](https://github.com/aavdberg/ha-petkit)** instead, which talks to these models
+over Bluetooth from Home Assistant itself, with no parent involved.
 
 **‡ No Bluetooth radio at all.** So the Provision tab cannot reach one — DNS redirect only. And its
 signup carries no id and no serial, which this add-on has no way to mint, so a factory-fresh feeder
@@ -299,8 +302,8 @@ without a device, and what is easy to break.
 
 ## 🙇 Credits
 
-Two projects published reverse engineering that saved a great deal of time here. This is an
-independent implementation and no code was copied from either, but they answered questions that
+Several projects published reverse engineering that saved a great deal of time here. This is an
+independent implementation and no code was copied from any of them, but they answered questions that
 would otherwise have had to be answered from scratch:
 
 - **[dwyschka/localkit](https://github.com/dwyschka/localkit)** and its
@@ -312,6 +315,13 @@ would otherwise have had to be answered from scratch:
   **[pypetkitapi](https://github.com/Jezza34000/py-petkit-api)** (both MIT) — the Home Assistant
   entity definitions, device groupings and value mappings started from this integration and its data
   models.
+- **[aavdberg/ha-petkit](https://github.com/aavdberg/ha-petkit)** (MIT) — the Bluetooth accessories.
+  It reaches a fountain the other way round, straight from Home Assistant instead of through a
+  relay, which means every command layout in it has been exercised on real hardware. Its CTW3 work
+  settled the mode frame here, found a length field this had been writing one byte short, and where
+  the two still disagree — three bytes of the settings block — the code says so rather than picking.
+  It also vendors **[mr-ransel/petkit-ble-reverse-engineering](https://github.com/mr-ransel/petkit-ble-reverse-engineering)**,
+  which is the W5 protocol itself: framing, the command set, and what every byte of a status means.
 
 The rest was worked out here, against real firmware and real traffic: the event code tables and the
 evidence grade on every row, the MQTT authentication, the media encryption and the stitching of a
@@ -324,6 +334,6 @@ in a capture.
 but a modified version you distribute has to stay under the same terms with its source available.
 
 Third-party components keep their own licences: the reference work above (both Jezza34000 projects
-are MIT), the shipped `dropbear-mipsel` binary carries its own notice in
+and ha-petkit are MIT), the shipped `dropbear-mipsel` binary carries its own notice in
 [`addon/petkit_local/web/static/bin/`](addon/petkit_local/web/static/bin/), and the image installs
 FFmpeg from Alpine (Debian on 32-bit ARM).

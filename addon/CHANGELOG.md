@@ -1,5 +1,95 @@
 # Changelog
 
+## 1.6.0 — 2026-08-02
+
+### Every Bluetooth write this has ever sent was malformed
+
+The frame that carries a command to a fountain announces its own payload length
+in two bytes, low half first. This wrote one. Everything after it was therefore
+shifted by one, and the accessory read the first byte of the payload as the
+high half of the length: a mode change claimed four bytes and delivered three
+and a trailer, and a settings change claimed **780 bytes** and was still being
+waited for when the session closed.
+
+Both fail in silence — there is no error, the frame is simply never acted on —
+which is why "a settings write cannot be verified" has been in the notes here
+since the write path was added. It could not have worked.
+
+Found by comparing this against [aavdberg/ha-petkit](https://github.com/aavdberg/ha-petkit),
+which reaches these fountains straight from Home Assistant rather than through
+a relay and has therefore had every one of its command layouts exercised on
+real hardware. Three sources agree on the eight-byte header, including this
+project's own frame *reader*, which has always expected one — so the encoder
+and the decoder here were written to two different specifications and nobody
+noticed, because nothing ever round-tripped one.
+
+With the length fixed, the mode frame drops the leading zero it used to carry
+— that zero was the missing length byte, compensated for in the wrong place —
+and becomes byte-identical to the one ha-petkit sends.
+
+### Fountain controls that did the wrong thing when they worked at all
+
+- **Picking a flow mode switched the pump off.** The frame carries power, pause
+  and mode together, so it was rebuilt from the last reading — and a CTW3
+  reports power 0 in the sleep half of its smart cycle. Choosing a mode now
+  states that the pump should run, because that is what choosing a mode means.
+- **A mode of 0 was believed.** Same sleep phase, same report: it is not a mode
+  and it is not "off", it is the fountain resting between runs. Latched, it
+  turned the next touch of the power switch into "off, in no mode". It is
+  discarded now and the last real mode stands.
+- **Switching a fountain off left it marked as pumping.** The pause byte is
+  forced to 0 when the power is.
+- **The settings block was written with invented bytes.** Two constants at the
+  front were the smart-cycle times one captured frame happened to carry,
+  mistaken for structure, and one byte near the end was a value that frame does
+  not have. It is rebuilt from the reading now, and the smart-cycle times are
+  yours to set.
+- **The flow modes are called Normal and Smart**, as PetKit's app calls them
+  and as both reference projects do. They were "continuous" and "intermittent"
+  — accurate about the pump, matching nothing you can compare against. An
+  automation that names the old labels needs updating.
+
+### Where the two projects disagree, the code says so
+
+Three bytes of the CTW3 settings block are read one way here and the other way
+by ha-petkit. This reads them from a real status frame, where they are coherent
+as light / brightness / do-not-disturb; ha-petkit reads the same positions in a
+capture of PetKit's own app writing, where they are do-not-disturb / light /
+brightness. Neither observed the other's direction, and nothing says a status
+echo is byte-identical to a write.
+
+So the status is decoded the way the status frame reads, the write goes out the
+way the write capture reads, and the disagreement is written down where the
+bytes are rather than resolved by preference. If a CTW3 owner finds the Light
+switch turning do-not-disturb on, that is the note to read.
+
+### Fountains gained what they were already reporting
+
+- **CTW3**: child lock, both smart-cycle times, a module status byte, and a
+  power source that says "mains" instead of `2`. An older firmware that sends a
+  26-byte status is read rather than dropped — this demanded 30.
+- **W4 / W5 / CTW2**: today's pump runtime and both smart-cycle times, and the
+  settings frame is decoded at all now, which is where the light, its
+  brightness, both schedules and the child lock live.
+- **A filter reset** on both families, as a button. It carries nothing built
+  from state, so it is the one write that works on an accessory that has never
+  reported.
+- A status frame too short to be one is dropped whole on the W5 family too. It
+  used to emit every field whose offset happened to fit, which turned a
+  one-byte acknowledgement into a confident "the pump is on".
+
+### Controls for the W4 / W5 / CTW2 fountains — untested
+
+They had five entities, all read-only. They now have power, mode, light,
+brightness, do-not-disturb, child lock, both smart-cycle times and the filter
+reset. **Nobody involved owns one.** The layouts come from two independent
+sources that agree, and that is all that can be said for them; a settings write
+is refused until the fountain has sent a settings frame, rather than guessed
+from defaults that would erase both schedules.
+
+`w5_power` became a switch, having been a read-only sensor. If you are running
+one, the old `binary_sensor` entity is orphaned and the switch replaces it.
+
 ## 1.5.1 — 2026-08-02
 
 ### Bluetooth provisioning worked again, on the models 1.5.0 had not broken

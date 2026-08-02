@@ -85,8 +85,14 @@ def _ble_command_value(entity: Any, payload: str) -> int | None:
     Switches arrive as ON/OFF, selects as one of their labels, numbers as a
     decimal string. Anything else returns None rather than a default: a write
     to a fountain is not worth guessing at.
+
+    A button has no value at all — HA publishes the entity key as its
+    `payload_press` — so it is answered with 0, which the command builder for a
+    button never reads.
     """
     text = payload.strip()
+    if entity.component == "button":
+        return 0
     if entity.component == "switch":
         upper = text.upper()
         if upper in ("ON", "1", "TRUE"):
@@ -606,12 +612,12 @@ class HAPublisher:
         Three things have to line up and any of them can be absent: the
         accessory must still be paired, the parent it is relayed by must be a
         registered device, and the accessory must have reported enough of its
-        own state for the frame to be built (both CTW3 frames restate every
-        field they carry). Each is logged by name rather than collapsed into
-        one failure, because from Home Assistant they look identical: the
-        switch flips back and nothing happens.
+        own state for the frame to be built (every write restates a whole
+        block). Each is logged by name rather than collapsed into one failure,
+        because from Home Assistant they look identical: the switch flips back
+        and nothing happens.
         """
-        from petkit_local.devices.ble import Refused, ctw3_command_for
+        from petkit_local.devices.ble import Refused, ble_command_for
 
         ble_dev = self._ble_registry.get(ble_id) if self._ble_registry else None
         if ble_dev is None:
@@ -635,7 +641,7 @@ class HAPublisher:
             return
 
         try:
-            cmd, frame_payload = ctw3_command_for(ble_dev, entity.key, value)
+            cmd, frame_payload = ble_command_for(ble_dev, entity.key, value)
         except Refused as exc:
             log.warning("Refused %s on accessory %d: %s", entity.key, ble_id, exc)
             return
@@ -647,7 +653,10 @@ class HAPublisher:
         # Optimistic, like a real device's: the accessory acknowledges the write
         # but its next status is what actually confirms it, and that is a poll
         # away. Reflecting immediately keeps the control from snapping back.
-        ble_dev.state.setdefault("states", {})[entity.value_path.split(".")[-1]] = value
+        # A button has no state to reflect — and no `value_path`, so writing one
+        # anyway would file it under the empty string.
+        if entity.value_path:
+            ble_dev.state.setdefault("states", {})[entity.value_path.split(".")[-1]] = value
         if self._ble_registry:
             self._ble_registry.mark_dirty()
         await self.publish_ble_state(ble_dev)

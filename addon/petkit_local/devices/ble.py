@@ -45,6 +45,12 @@ log = logging.getLogger(__name__)
 # exists: the owner of the hardware can override it without a code change, the
 # panel shows the exact entry that will be sent, and whatever value turns out to
 # work can be brought back here as a real one — which is exactly how 24 arrived.
+#
+# NOT the same number as the `typeCode` in mr-ransel's protocol notes, which
+# gives W5 1, W5C 2 and W5N 3. That one is the accessory's own idea of what it
+# is, read over its BLE session; this one is what a PARENT is told to scan for.
+# Two namespaces, and the resemblance is a trap: "correcting" 14 to 1 from that
+# table would throw away the only value anybody has confirmed.
 BLE_TYPE_MAP = {"w5": 14, "w4": 14, "ctw3": 24, "ctw2": 24, "k3": 0}
 
 #: Which of those values is evidence and which is a working assumption.
@@ -59,15 +65,17 @@ BLE_TYPES = tuple(BLE_TYPE_MAP)
 #: The EverSweets that speak the W5 BLE protocol.
 #:
 #: One pair of GATT UUIDs and one frame parser serve all of them in
-#: `phldgmn/ha-petkit-ble`, which advertises for `Petkit_W5`, `Petkit_W5C`,
-#: `Petkit_W5N`, `Petkit_W4X`, `Petkit_W4XUVC` and `Petkit_CTW2` — so a frame
-#: from any of them decodes with `parse_w5_ble_response` and reads through
-#: `W5_ENTITIES`.
+#: `phldgmn/ha-petkit-ble` and in `aavdberg/ha-petkit`, both of which advertise
+#: for `Petkit_W5`, `Petkit_W5C`, `Petkit_W5N`, `Petkit_W4X`, `Petkit_W4XUVC`
+#: and `Petkit_CTW2` — so a frame from any of them decodes with
+#: `parse_w5_ble_response` and reads through `W5_ENTITIES`. The variants are
+#: not separate `ble_type`s here for that reason: there is nothing to branch
+#: on, and each new one would need a `BLE_TYPE_MAP` scan number nobody has.
 #:
-#: CTW3 is absent from that integration and does NOT belong here — its status
-#: block is a different length with a different layout, so reading it with
-#: these offsets would produce confident nonsense. It has its own decoder
-#: further down.
+#: CTW3 does NOT belong here — its status block is a different length with a
+#: different layout, so reading it with these offsets would produce confident
+#: nonsense, and `aavdberg/ha-petkit` keeps it on a separate parser for the
+#: same reason. It has its own decoder further down.
 W5_PROTOCOL = frozenset({"w5", "w4", "ctw2"})
 
 
@@ -195,21 +203,81 @@ K3_ENTITIES = [
               icon="mdi:battery"),
 ]
 
+#: W5 / W4 / CTW2. One protocol serves the whole family, so one list does too.
+#:
+#: `w5_power` is a switch and used to be a binary sensor. A switch shows the
+#: state AND sets it, so keeping both would put the same fact on screen twice;
+#: the cost is that an existing `binary_sensor.…_w5_power` is orphaned, which
+#: is a real break for anyone already running one and is in the changelog.
+#:
+#: The settings half — light, brightness, do-not-disturb, child lock, both
+#: smart-cycle times — is only ever populated by a cmd-211 frame, which nothing
+#: here asks for. Until one arrives those entities sit at unknown and a write to
+#: them is refused rather than guessed (`w5_config_payload`).
 W5_ENTITIES = [
-    EntityDef(component="sensor", key="w5_filter", name="W5 Filter",
+    EntityDef(component="sensor", key="w5_filter", name="Filter",
               value_path="consumables.filterPercentage", unit="%", icon="mdi:filter"),
-    EntityDef(component="binary_sensor", key="w5_power", name="W5 Power",
-              value_path="states.powerStatus", device_class="power", icon="mdi:power"),
-    EntityDef(component="binary_sensor", key="w5_running", name="W5 Running",
+    EntityDef(component="switch", key="w5_power", name="Power",
+              value_path="states.powerStatus", icon="mdi:power"),
+    # 0 is off, which is why it is not among the options: this select says which
+    # mode the fountain runs in, and the power switch says whether it runs.
+    EntityDef(component="select", key="w5_mode", name="Mode",
+              value_path="states.mode", icon="mdi:water-pump",
+              options=["normal", "smart"], option_values=[1, 2]),
+    EntityDef(component="binary_sensor", key="w5_running", name="Pump Running",
               value_path="states.runningStatus", device_class="running",
               icon="mdi:pump"),
-    EntityDef(component="binary_sensor", key="w5_water_missing", name="W5 Water Missing",
+    EntityDef(component="binary_sensor", key="w5_water_missing", name="Water Low",
               value_path="states.warningWaterMissing", device_class="problem",
               icon="mdi:water-off"),
-    EntityDef(component="binary_sensor", key="w5_filter_warn", name="W5 Filter Warning",
+    EntityDef(component="binary_sensor", key="w5_filter_warn", name="Filter Warning",
               value_path="states.warningFilter", device_class="problem",
               icon="mdi:filter-remove"),
+    EntityDef(component="binary_sensor", key="w5_breakdown", name="Breakdown",
+              value_path="states.warningBreakdown", device_class="problem",
+              icon="mdi:alert"),
+    EntityDef(component="binary_sensor", key="w5_dnd_active", name="Quiet Now",
+              value_path="states.dndState", icon="mdi:sleep"),
+    EntityDef(component="switch", key="w5_light", name="Light",
+              value_path="states.lampRingSwitch", icon="mdi:lightbulb"),
+    # A byte, and the protocol notes say so; aavdberg/ha-petkit's slider stops
+    # at 10 because that is what their fountains report. Bounding it at what the
+    # field can hold means a device that reports 100 is displayed rather than
+    # rejected as out of range.
+    EntityDef(component="number", key="w5_brightness", name="Brightness",
+              value_path="states.lampRingBrightness", icon="mdi:brightness-6",
+              min_value=0, max_value=255, step=1, entity_category="config"),
+    EntityDef(component="switch", key="w5_dnd", name="Do Not Disturb",
+              value_path="states.noDisturbingSwitch", icon="mdi:sleep"),
+    EntityDef(component="switch", key="w5_child_lock", name="Child Lock",
+              value_path="states.isLock", icon="mdi:lock", entity_category="config"),
+    EntityDef(component="number", key="w5_smart_work", name="Smart Mode Run Time",
+              value_path="states.smartWorkingTime", unit="min", icon="mdi:timer-outline",
+              min_value=1, max_value=60, step=1, entity_category="config"),
+    EntityDef(component="number", key="w5_smart_sleep", name="Smart Mode Rest Time",
+              value_path="states.smartSleepTime", unit="min", icon="mdi:timer-sand",
+              min_value=1, max_value=60, step=1, entity_category="config"),
+    EntityDef(component="button", key="w5_reset_filter", name="Reset Filter",
+              icon="mdi:filter-check"),
+    EntityDef(component="sensor", key="w5_pump_runtime", name="Pump Runtime",
+              value_path="states.pumpRuntime", unit="s", device_class="duration",
+              icon="mdi:timer-outline", entity_category="diagnostic"),
+    EntityDef(component="sensor", key="w5_pump_today", name="Pump Runtime Today",
+              value_path="states.todayPumpRunTime", unit="s", device_class="duration",
+              icon="mdi:timer-outline", entity_category="diagnostic"),
 ]
+
+
+#: `electricStatus` value meaning mains power rather than the battery.
+CTW3_ELECTRIC_AC = 2
+
+#: The mode values that are real. A CTW3 reports 0 in the sleep half of its
+#: smart cycle (aavdberg/ha-petkit issue #57) and it does NOT mean "off": the
+#: pump is idle between runs and the mode has not changed. Latching it would be
+#: harmless if `mode` were only ever displayed, but `ble_command_for` rebuilds
+#: cmd 220 from the last reading, so a stored 0 turns the next touch of the
+#: power switch into "off, in mode nothing".
+CTW3_MODES = (1, 2)
 
 
 #: CTW3 (EverSweet Max Cordless). Named after the fields the decoder produces,
@@ -232,9 +300,12 @@ CTW3_ENTITIES = [
               value_path="states.powerStatus", icon="mdi:power"),
     EntityDef(component="switch", key="ctw3_working", name="Working",
               value_path="states.suspendStatus", icon="mdi:play-pause"),
+    # PetKit's own two names for these, and both other implementations use
+    # them. They were "continuous"/"intermittent" here, which describes what
+    # the pump does but matches nothing a user can compare against.
     EntityDef(component="select", key="ctw3_mode", name="Flow Mode",
               value_path="states.mode", icon="mdi:water-pump",
-              options=["continuous", "intermittent"], option_values=[1, 2]),
+              options=["normal", "smart"], option_values=[1, 2]),
     EntityDef(component="switch", key="ctw3_light", name="Light",
               value_path="states.lightSwitch", icon="mdi:lightbulb"),
     EntityDef(component="select", key="ctw3_brightness", name="Brightness",
@@ -242,12 +313,23 @@ CTW3_ENTITIES = [
               options=["low", "medium", "high"], option_values=[1, 2, 3]),
     EntityDef(component="switch", key="ctw3_dnd", name="Do Not Disturb",
               value_path="states.noDisturbingSwitch", icon="mdi:sleep"),
-    EntityDef(component="number", key="ctw3_energy_interval", name="Battery Mode Interval",
+    EntityDef(component="switch", key="ctw3_child_lock", name="Child Lock",
+              value_path="states.childLock", icon="mdi:lock",
+              entity_category="config"),
+    EntityDef(component="number", key="ctw3_energy_interval", name="Battery Work Time",
               value_path="states.energyInterval", unit="s", icon="mdi:timer-outline",
               min_value=15, max_value=3600, step=15, entity_category="config"),
-    EntityDef(component="number", key="ctw3_sleep_time", name="Sleep Time",
+    EntityDef(component="number", key="ctw3_sleep_time", name="Battery Sleep Time",
               value_path="states.sleepTime", unit="s", icon="mdi:timer-sand",
               min_value=60, max_value=7200, step=60, entity_category="config"),
+    EntityDef(component="number", key="ctw3_smart_work", name="Smart Mode Run Time",
+              value_path="states.smartWorkingTime", unit="min", icon="mdi:timer-outline",
+              min_value=1, max_value=60, step=1, entity_category="config"),
+    EntityDef(component="number", key="ctw3_smart_sleep", name="Smart Mode Rest Time",
+              value_path="states.smartSleepTime", unit="min", icon="mdi:timer-sand",
+              min_value=1, max_value=60, step=1, entity_category="config"),
+    EntityDef(component="button", key="ctw3_reset_filter", name="Reset Filter",
+              icon="mdi:filter-check"),
     # Read-only: the pump is not something you switch, it is what the fountain
     # is doing right now.
     EntityDef(component="binary_sensor", key="ctw3_running", name="Pump Running",
@@ -266,8 +348,16 @@ CTW3_ENTITIES = [
     EntityDef(component="binary_sensor", key="ctw3_low_battery", name="Low Battery",
               value_path="states.lowBattery", device_class="battery",
               icon="mdi:battery-alert"),
+    # 2 is mains, and that is the only value with a meaning behind it
+    # (aavdberg/ha-petkit gates its power estimate on it). 0 is taken to be the
+    # battery. Anything else renders as the raw number rather than as a label
+    # somebody invented.
     EntityDef(component="sensor", key="ctw3_power_source", name="Power Source",
               value_path="states.electricStatus", icon="mdi:power-plug",
+              options=["battery", "mains"], option_values=[0, CTW3_ELECTRIC_AC],
+              entity_category="diagnostic"),
+    EntityDef(component="sensor", key="ctw3_module_status", name="Module Status",
+              value_path="states.moduleStatus", icon="mdi:chip",
               entity_category="diagnostic"),
     # `duration` rather than a bare second count: 1056887 says nothing, and
     # both the panel and HA render the class as something readable.
@@ -299,14 +389,56 @@ def get_ble_entities(ble_type: str) -> list[EntityDef]:
     return []
 
 
-# The framing both fountain families share: `FA FC FD | opcode | 01 | seq |
-# len | payload | FB`, carried as urlencode(base64(...)) inside a relayed
-# `ble_response`. Only the DATA layout inside it differs per model, so the
-# decode/unframe helpers below are shared and the offset tables are not.
+# The framing both fountain families share, carried as urlencode(base64(...))
+# inside a relayed `ble_response`:
+#
+#     FA FC FD | cmd | type | seq | len_lo | len_hi | payload | FB
+#
+# Only the DATA layout inside it differs per model, so the decode/unframe
+# helpers below are shared and the offset tables are not.
+#
+# The length is a 16-bit LITTLE-endian field, and getting that wrong is not a
+# cosmetic detail: `build_ble_frame` used to emit a single length byte, so an
+# accessory read the first byte of our PAYLOAD as the high half of the length.
+# A 4-byte mode write announced 4 bytes and delivered 3 plus the trailer; a
+# 12-byte config write announced 0x030C = 780 and was still being waited for
+# when the session closed. Both fail in silence, which is why no settings write
+# to a CTW3 has ever been seen to take effect.
+#
+# Three sources agree on the 8-byte header: mr-ransel's W5 protocol notes,
+# aavdberg/ha-petkit's builder and parser, and `_ble_unframe` immediately
+# below — which has always read the payload from offset 8, so this module was
+# encoding and decoding to two different specifications.
 BLE_FRAME_HEADER = bytes([0xFA, 0xFC, 0xFD])
-CMD_DEVICE_STATUS = 230
-CMD_DEVICE_STATE = 210
+BLE_FRAME_TRAILER = 0xFB
+BLE_FRAME_HEADER_LEN = 8
 
+#: The `type` byte: 1 request, 2 response, 3 request wanting no answer. We only
+#: ever send the first.
+BLE_TYPE_REQUEST = 0x01
+
+# The commands, in the one numbering that runs in both directions. `cmd` and
+# the opcode inside the frame are THE SAME NUMBER — 220 is 0xDC — which is
+# worth stating because a table here once mapped one to the other as though
+# they were different, and reading it that way makes 222 look like a value
+# nobody has.
+CMD_GET_STATE = 210         # short status block, on request
+CMD_GET_CONFIG = 211        # settings block. A CTW3 never answers it.
+CMD_SET_MODE = 220          # power / mode. CTW3 adds a suspend byte.
+CMD_SET_CONFIG = 221        # the settings block, written whole
+CMD_RESET_FILTER = 222      # filter life back to 100%
+CMD_DEVICE_STATUS = 230     # status the accessory pushes unasked
+
+#: The commands we know how to build a frame for. Anything else is refused
+#: rather than sent as a frame whose length or payload we would be inventing.
+BLE_SENDABLE = frozenset({CMD_SET_MODE, CMD_SET_CONFIG, CMD_RESET_FILTER})
+
+# --- W5 / W4 / CTW2 ---------------------------------------------------------
+#
+# Offsets from mr-ransel's protocol notes, matching aavdberg/ha-petkit's
+# parser field for field. The block is 12 bytes on every firmware, 16 where
+# `todayPumpRunTime` is supported (typeCode 2 from firmware 24, the rest from
+# 35) and 18 where the smart-cycle times are appended.
 _W5_STATUS_STATE_OFFSETS = {
     "powerStatus": 0,
     "mode": 1,
@@ -317,6 +449,11 @@ _W5_STATUS_STATE_OFFSETS = {
     "runningStatus": 11,
 }
 _W5_STATUS_FILTER_OFFSET = 10  # filterPercentage, raw byte 0-100 for cmd 230
+
+#: The shortest block that is a status rather than a fragment. Reading fewer
+#: bytes than this used to turn a one-byte ACK into a confident `powerStatus`,
+#: because every field was emitted whenever its offset happened to be in range.
+_W5_MIN_STATUS_LEN = 12
 
 
 def _ble_decode_data(blob: Any) -> bytes | None:
@@ -382,22 +519,65 @@ def _iter_ble_frames(content: Any) -> Iterator[tuple[Any, bytes]]:
 
 
 def _decode_w5_status(data: bytes) -> dict[str, dict[str, int]]:
-    """Decode a cmd-230 DATA block into `{"states": {...}, "consumables": {...}}`.
+    """Decode a cmd-210/230 DATA block into `{"states": {...}, "consumables": {...}}`.
 
-    Every field is read only if the blob is long enough to hold it: firmware
-    builds differ in how much they send, and a short frame must yield fewer
-    fields rather than an IndexError on the state-report path.
+    The first 12 bytes are the block every firmware sends and are read or the
+    frame is dropped. What follows is genuinely optional — older builds stop at
+    12 — so those fields are read only when they are there, and their absence
+    leaves the previous reading alone rather than publishing a zero.
     """
-    states: dict[str, int] = {}
-    consumables: dict[str, int] = {}
-    for name, off in _W5_STATUS_STATE_OFFSETS.items():
-        if off < len(data):
-            states[name] = data[off]
-    if _W5_STATUS_FILTER_OFFSET < len(data):
-        consumables["filterPercentage"] = data[_W5_STATUS_FILTER_OFFSET]
-    if len(data) >= 10:
-        states["pumpRuntime"] = int.from_bytes(bytes(data[6:10]), "big")
+    if len(data) < _W5_MIN_STATUS_LEN:
+        log.warning("W5 status frame is %d bytes, expected at least %d - dropped",
+                    len(data), _W5_MIN_STATUS_LEN)
+        return {"states": {}, "consumables": {}}
+
+    states = {name: data[off] for name, off in _W5_STATUS_STATE_OFFSETS.items()}
+    states["pumpRuntime"] = int.from_bytes(data[6:10], "big")
+    consumables = {"filterPercentage": data[_W5_STATUS_FILTER_OFFSET]}
+
+    if len(data) >= 16:
+        states["todayPumpRunTime"] = int.from_bytes(data[12:16], "big")
+    if len(data) >= 17:
+        states["smartWorkingTime"] = data[16]
+    if len(data) >= 18:
+        states["smartSleepTime"] = data[17]
     return {"states": states, "consumables": consumables}
+
+
+#: The cmd-211 settings block, `(offset, width)` big-endian. 13 bytes on every
+#: firmware that answers at all, 14 where the child lock exists.
+#:
+#: Nothing here asks for this frame — the parent decides what it polls — so the
+#: decoder sits idle until one arrives. It costs nothing to have, and without
+#: it a settings write can never be anything but a guess: the block is written
+#: whole, so the fields nobody is changing have to come from somewhere.
+_W5_CONFIG_BYTE_FIELDS = {
+    "smartWorkingTime": 0,       # minutes the pump runs in smart mode
+    "smartSleepTime": 1,         # minutes it then rests
+    "lampRingSwitch": 2,
+    "lampRingBrightness": 3,
+    "noDisturbingSwitch": 8,
+}
+_W5_CONFIG_INT_FIELDS = {
+    "lampRingLightUpTime": (4, 2),    # minutes from midnight
+    "lampRingGoOutTime": (6, 2),
+    "noDisturbingStartTime": (9, 2),
+    "noDisturbingEndTime": (11, 2),
+}
+W5_CONFIG_LEN = 13
+W5_CONFIG_LOCK_OFFSET = 13
+
+
+def _decode_w5_config(data: bytes) -> dict[str, int]:
+    """Decode a cmd-211 settings block. Empty for anything shorter than 13 bytes."""
+    if len(data) < W5_CONFIG_LEN:
+        return {}
+    out = {name: data[off] for name, off in _W5_CONFIG_BYTE_FIELDS.items()}
+    for name, (off, width) in _W5_CONFIG_INT_FIELDS.items():
+        out[name] = int.from_bytes(data[off:off + width], "big")
+    if len(data) > W5_CONFIG_LOCK_OFFSET:
+        out["isLock"] = data[W5_CONFIG_LOCK_OFFSET]
+    return out
 
 
 def parse_w5_ble_response(content: Any) -> dict[str, dict[str, Any]]:
@@ -426,10 +606,14 @@ def parse_w5_ble_response(content: Any) -> dict[str, dict[str, Any]]:
             result["consumables"]["filterPercentage"] = content["filterPercentage"]
 
     for cmd, data in _iter_ble_frames(content):
-        if cmd in (CMD_DEVICE_STATUS, CMD_DEVICE_STATE) and data:
+        if not data:
+            continue
+        if cmd in (CMD_DEVICE_STATUS, CMD_GET_STATE):
             dec = _decode_w5_status(data)
             result["states"].update(dec["states"])
             result["consumables"].update(dec["consumables"])
+        elif cmd == CMD_GET_CONFIG:
+            result["states"].update(_decode_w5_config(data))
 
     return {k: v for k, v in result.items() if v}
 
@@ -447,15 +631,18 @@ def parse_w5_ble_response(content: Any) -> dict[str, dict[str, Any]]:
 # families disagree, matching the cloud is what lets a report be compared with
 # what the PetKit app shows.
 
-_CTW3_MIN_STATUS_LEN = 30
+#: Everything the decoder names fits in 26 bytes, and 26 is what an older
+#: firmware sends — aavdberg/ha-petkit accepts that length from real hardware.
+#: This used to demand 30 and drop the shorter block whole.
+_CTW3_MIN_STATUS_LEN = 26
 
 #: Single-byte fields, offset into the DATA block.
 _CTW3_BYTE_FIELDS = {
     "powerStatus": 0,
     # Inverted against the English: 0 is paused/sleeping, 1 is working.
     "suspendStatus": 1,
-    "mode": 2,                  # 1 continuous, 2 intermittent
-    # NOT a boolean. 2 has been seen, on the AC/charging path.
+    "mode": 2,                  # 1 normal (continuous), 2 smart (cycling)
+    # NOT a boolean. 2 is the AC path — the fountain is on mains.
     "electricStatus": 3,
     "noDisturbingSwitch": 4,
     "breakdownWarning": 5,
@@ -467,6 +654,9 @@ _CTW3_BYTE_FIELDS = {
     # 0 is nobody; anything else (0x02 observed) is a pet at the bowl.
     "detectStatus": 19,
     "batteryPercent": 24,
+    # Undecoded. Kept because it is the last byte of the short block and a
+    # value nobody can see is a value nobody can explain.
+    "moduleStatus": 25,
 }
 
 #: Multi-byte fields as `(offset, width)`, big-endian.
@@ -477,42 +667,63 @@ _CTW3_INT_FIELDS = {
     "batteryVoltage": (22, 2),
 }
 
-#: Where the 12-byte config tail starts in a cmd-230 block. Same layout as the
-#: payload of a cmd-221 write, which is what makes a read-modify-write of one
-#: setting possible at all.
+#: Where the 12-byte config tail starts in a cmd-230 block.
 CTW3_CONFIG_OFFSET = 30
 CTW3_CONFIG_LEN = 12
 
 
 def decode_ctw3_config(tail: bytes) -> dict[str, int]:
-    """The 12-byte config blob, as named fields.
+    """The 12-byte config tail of a cmd-230 status, as named fields.
 
-    Shared by the status tail and by whatever we are about to write, so a
-    single-setting change can be built from the last reading rather than from
-    zeros.
+    Everything a cmd-221 write has to restate comes from here, which is what
+    makes changing one setting possible without inventing the rest.
+
+    CONFLICTED, on bytes 6, 7 and 8 only.
+
+    This reads them as light switch / brightness / do-not-disturb, from the one
+    real cmd-230 frame anybody has handed us (issue #4, firmware 111), where
+    they are 1, 3, 0 — coherent for a fountain with the ring on at high.
+    aavdberg/ha-petkit reads the same three positions in a cmd-221 WRITE as
+    do-not-disturb / light switch / brightness, from a capture of PetKit's own
+    app toggling the LED and moving the brightness slider (their commit
+    775c808, which reversed exactly the order used here).
+
+    Both cannot describe one layout, and neither observed the other's
+    direction: nothing says a status echo is byte-identical to a write. So the
+    two are kept apart — this decodes the status, `ctw3_config_payload` builds
+    the write to their order — and the disagreement is recorded rather than
+    resolved by preference. If a CTW3 owner reports the Light switch turning
+    do-not-disturb on, this is the paragraph that was wrong.
+
+    Bytes 0, 1 and 9 are not in dispute: both sides read them as the smart
+    cycle's two times and the child lock. They used to be written as the
+    constants 0x03, 0x03 and 0x00 — the values that one frame happened to
+    carry, mistaken for structure.
     """
     if len(tail) < CTW3_CONFIG_LEN:
         return {}
     return {
+        "smartWorkingTime": tail[0],
+        "smartSleepTime": tail[1],
         "energyInterval": int.from_bytes(tail[2:4], "big"),
         "sleepTime": int.from_bytes(tail[4:6], "big"),
         "lightSwitch": tail[6],
         "brightness": tail[7],          # 1 low, 2 medium, 3 high
         "noDisturbingSwitch": tail[8],
+        "childLock": tail[9],
     }
 
 
 def _decode_ctw3_status(data: bytes) -> dict[str, dict[str, int]]:
     """Decode a CTW3 cmd-210/230 DATA block.
 
-    Refuses anything shorter than the 30 bytes the short form is defined to be,
-    rather than emitting the handful of fields that happen to fit. The W5
-    decoder does the permissive thing — every field if its offset is in range —
-    which turns a one-byte frame into a confident `powerStatus`. Here the block
-    length is known, so a short one is a broken frame and is dropped.
+    Refuses anything shorter than the 26 bytes the short form is defined to be,
+    rather than emitting the handful of fields that happen to fit — a one-byte
+    ACK read permissively becomes a confident `powerStatus`. The block length is
+    known, so a short one is a broken frame and is dropped.
     """
     if len(data) < _CTW3_MIN_STATUS_LEN:
-        log.warning("CTW3 status frame is %d bytes, expected at least %d — dropped",
+        log.warning("CTW3 status frame is %d bytes, expected at least %d - dropped",
                     len(data), _CTW3_MIN_STATUS_LEN)
         return {"states": {}, "consumables": {}}
 
@@ -520,13 +731,21 @@ def _decode_ctw3_status(data: bytes) -> dict[str, dict[str, int]]:
     for name, (off, width) in _CTW3_INT_FIELDS.items():
         states[name] = int.from_bytes(data[off:off + width], "big")
 
+    # A mode outside 1/2 is the smart cycle's sleep half, not a new mode. Drop
+    # the key rather than store it: the caller merges, so absence keeps what was
+    # there, and what was there is the last mode the fountain really had.
+    if states.get("mode") not in CTW3_MODES:
+        log.debug("CTW3 reported mode=%s - keeping the last real one",
+                  states.get("mode"))
+        states.pop("mode", None)
+
     # `filterPercent` is the one field a human treats as a consumable rather
     # than a state, and the entity reads it from there.
     consumables = {"filterPercent": states.pop("filterPercent")}
 
     if len(data) >= CTW3_CONFIG_OFFSET + CTW3_CONFIG_LEN:
         tail = data[CTW3_CONFIG_OFFSET:CTW3_CONFIG_OFFSET + CTW3_CONFIG_LEN]
-        # `noDisturbingSwitch` appears in both halves; the tail is the one the
+        # `noDisturbingSwitch` appears in both halves; the tail is the one a
         # config write round-trips, so let it win.
         states.update(decode_ctw3_config(tail))
 
@@ -538,105 +757,142 @@ def parse_ctw3_ble_response(content: Any) -> dict[str, dict[str, Any]]:
 
     Same contract as `parse_w5_ble_response`: an empty dict means nothing was
     decodable, and the caller leaves the previous state alone.
+
+    cmd 211 is deliberately not handled. On the W5 family it is the settings
+    block; a CTW3 does not answer it at all, and its settings arrive as the tail
+    of a long cmd-230 instead.
     """
     result: dict[str, dict[str, Any]] = {"states": {}, "consumables": {}}
     for cmd, data in _iter_ble_frames(content):
-        if cmd in (CMD_DEVICE_STATUS, CMD_DEVICE_STATE) and data:
+        if cmd in (CMD_DEVICE_STATUS, CMD_GET_STATE) and data:
             dec = _decode_ctw3_status(data)
             result["states"].update(dec["states"])
             result["consumables"].update(dec["consumables"])
     return {k: v for k, v in result.items() if v}
 
 
-# --- writing to a CTW3 -------------------------------------------------------
+# --- writing to an accessory -------------------------------------------------
 #
 # The other direction of the same relay: we publish `thing/service/ble` to the
-# PARENT, which forwards the bytes over its open BLE session. Nothing here had
-# a write path at all before — an accessory was read-only.
+# PARENT, which forwards the bytes over its open BLE session and does not
+# interpret them.
 #
-# `cmd` in the MQTT envelope and `opcode` inside the frame are two different
-# numbers for the same operation, which is the trap: 220 carries `DC`, 221
-# carries `DD`. Both are sent.
-
-CTW3_CMD_SET_POWER = 220        # opcode DC — power / suspend / mode
-CTW3_CMD_SET_CONFIG = 221       # opcode DD — the 12-byte config blob
-CTW3_CMD_SET_LIGHT_SCHEDULE = 225   # opcode E1
-CTW3_CMD_SET_DND_SCHEDULE = 226     # opcode E2
-
-_CTW3_OPCODES = {
-    CTW3_CMD_SET_POWER: 0xDC,
-    CTW3_CMD_SET_CONFIG: 0xDD,
-    CTW3_CMD_SET_LIGHT_SCHEDULE: 0xE1,
-    CTW3_CMD_SET_DND_SCHEDULE: 0xE2,
-}
-
-BLE_FRAME_TRAILER = 0xFB
+# Every write here restates a whole block. The device has no "set one field"
+# frame, so each builder starts from the accessory's last decoded status and
+# replaces one value — and refuses outright when that status has never
+# arrived. Filling the unknown half with zeros would turn the light off and
+# reset both intervals as a side effect of changing the brightness.
 
 
-def build_ble_frame(opcode: int, seq: int, payload: bytes) -> str:
+def build_ble_frame(cmd: int, seq: int, payload: bytes) -> str:
     """One outbound BLE frame, encoded the way `thing/service/ble` carries it.
 
-    `FA FC FD | opcode | 01 | seq | len | payload | FB`, then base64, then
-    urlencode — the exact inverse of what `_ble_decode_data` and `_ble_unframe`
-    undo on the way in.
+    `FA FC FD | cmd | type | seq | len_lo | len_hi | payload | FB`, then base64,
+    then urlencode — the exact inverse of what `_ble_decode_data` and
+    `_ble_unframe` undo on the way in.
 
     `seq` wraps at a byte. Nothing has been observed rejecting a repeat, but it
     is a sequence number and sending a constant would be the kind of detail
     that works until it does not.
     """
-    body = bytes([*BLE_FRAME_HEADER, opcode & 0xFF, 0x01, seq & 0xFF,
-                  len(payload), *payload, BLE_FRAME_TRAILER])
+    body = bytes([*BLE_FRAME_HEADER, cmd & 0xFF, BLE_TYPE_REQUEST, seq & 0xFF,
+                  len(payload) & 0xFF, (len(payload) >> 8) & 0xFF,
+                  *payload, BLE_FRAME_TRAILER])
     return urllib.parse.quote(base64.b64encode(body).decode())
 
 
-def ctw3_power_payload(power: int, suspend: int, mode: int) -> bytes:
-    """cmd 220 — the three settings that share one frame.
+def ble_command_frame(cmd: int, seq: int, payload: bytes) -> str | None:
+    """The encoded frame for one command, or None if it is not one we send."""
+    if cmd not in BLE_SENDABLE:
+        return None
+    return build_ble_frame(cmd, seq, payload)
+
+
+def ctw3_mode_payload(power: int, suspend: int, mode: int) -> bytes:
+    """cmd 220 on a CTW3 — the three settings that share one frame.
 
     All three travel together, so changing one means restating the other two.
-    `suspend` is 1 for WORKING and 0 for paused, inverted against its name.
+    `suspend` is 1 for WORKING and 0 for paused, inverted against its name; a
+    fountain being switched off has nothing to suspend, so 0 is forced there
+    rather than left at whatever the last reading held.
+
+    Three bytes, matching aavdberg/ha-petkit's `build_ctw3_mode_payload`. This
+    used to emit four, with a leading zero — which was the frame's missing
+    `len_hi` byte, compensated for in the wrong place.
     """
-    return bytes([0x00, power & 0xFF, suspend & 0xFF, mode & 0xFF])
+    if not power:
+        suspend = 0
+    return bytes([power & 0xFF, suspend & 0xFF, mode & 0xFF])
 
 
 def ctw3_config_payload(state: dict[str, Any]) -> bytes | None:
-    """cmd 221 — the 12-byte config blob, rebuilt from the last status.
+    """cmd 221 on a CTW3 — the settings block, rebuilt from the last status.
 
-    The device takes the blob whole, so a single-setting change has to restate
-    everything else. `state` is the accessory's decoded `states`, which carries
-    those values only because a cmd-230 status includes the same blob as its
-    tail.
+    Ten bytes. Bytes 0-5 are the smart cycle's two times and the two battery-
+    mode intervals, restated from the reading. Bytes 6-9 are written in
+    aavdberg/ha-petkit's order — do-not-disturb, light, brightness, child lock
+    — which is the only direct evidence anybody has about a WRITE; the status
+    tail this state was decoded FROM disagrees on the middle three, and
+    `decode_ctw3_config` says how.
 
-    Returns None when the accessory has never reported a long status. Writing
-    zeros instead would silently reset the light, the brightness and both
-    intervals — a settings write is not worth guessing at.
+    Returns None when the accessory has never reported a long status.
     """
-    needed = ("energyInterval", "sleepTime", "lightSwitch", "brightness",
-              "noDisturbingSwitch")
+    needed = ("smartWorkingTime", "smartSleepTime", "energyInterval", "sleepTime",
+              "lightSwitch", "brightness", "noDisturbingSwitch")
     if any(k not in state for k in needed):
         return None
     return bytes([
-        0x03, 0x03,
+        int(state["smartWorkingTime"]) & 0xFF,
+        int(state["smartSleepTime"]) & 0xFF,
         *int(state["energyInterval"]).to_bytes(2, "big"),
         *int(state["sleepTime"]).to_bytes(2, "big"),
+        int(state["noDisturbingSwitch"]) & 0xFF,
         int(state["lightSwitch"]) & 0xFF,
         int(state["brightness"]) & 0xFF,
-        int(state["noDisturbingSwitch"]) & 0xFF,
-        0x00, 0x01, 0x00,
+        int(state.get("childLock", 0)) & 0xFF,
     ])
 
 
-def ble_command_frame(cmd: int, seq: int, payload: bytes) -> str | None:
-    """The encoded frame for one MQTT `cmd`, or None if we know no opcode."""
-    opcode = _CTW3_OPCODES.get(cmd)
-    if opcode is None:
+def w5_mode_payload(mode: int) -> bytes:
+    """cmd 220 on a W5/W4/CTW2 — `[mode, submode]`.
+
+    One byte carries power and mode together: 0 off, 1 normal, 2 smart. There
+    is no separate power field, so switching the fountain off is mode 0 and
+    switching it on is whichever mode it was last in.
+    """
+    return bytes([mode & 0xFF, 0x00])
+
+
+def w5_config_payload(state: dict[str, Any]) -> bytes | None:
+    """cmd 221 on a W5/W4/CTW2 — the 14-byte settings block.
+
+    Returns None until a cmd-211 has been decoded for this accessory. Both
+    schedules live in this block as minutes from midnight, and writing it from
+    defaults would erase them; nothing else in the relayed traffic carries
+    them, so there is nothing to reconstruct them from.
+    """
+    if any(k not in state for k in _W5_CONFIG_BYTE_FIELDS):
         return None
-    return build_ble_frame(opcode, seq, payload)
+    if any(k not in state for k in _W5_CONFIG_INT_FIELDS):
+        return None
+    return bytes([
+        int(state["smartWorkingTime"]) & 0xFF,
+        int(state["smartSleepTime"]) & 0xFF,
+        int(state["lampRingSwitch"]) & 0xFF,
+        int(state["lampRingBrightness"]) & 0xFF,
+        *int(state["lampRingLightUpTime"]).to_bytes(2, "big"),
+        *int(state["lampRingGoOutTime"]).to_bytes(2, "big"),
+        int(state["noDisturbingSwitch"]) & 0xFF,
+        *int(state["noDisturbingStartTime"]).to_bytes(2, "big"),
+        *int(state["noDisturbingEndTime"]).to_bytes(2, "big"),
+        int(state.get("isLock", 0)) & 0xFF,
+    ])
 
 
-#: Entity key -> the field of `states` it sets. Both frames restate every field
-#: they carry, so which frame a key belongs to decides what else must be read
-#: back out of the last status.
-_CTW3_POWER_FIELDS = {
+#: Entity key -> the field of `states` it sets, per frame. A block restates
+#: every field it carries, so which frame a key belongs to decides what else
+#: has to be read back out of the last status.
+_CTW3_MODE_FIELDS = {
     "ctw3_power": "powerStatus",
     "ctw3_working": "suspendStatus",
     "ctw3_mode": "mode",
@@ -645,45 +901,105 @@ _CTW3_CONFIG_FIELDS = {
     "ctw3_light": "lightSwitch",
     "ctw3_brightness": "brightness",
     "ctw3_dnd": "noDisturbingSwitch",
+    "ctw3_child_lock": "childLock",
     "ctw3_energy_interval": "energyInterval",
     "ctw3_sleep_time": "sleepTime",
+    "ctw3_smart_work": "smartWorkingTime",
+    "ctw3_smart_sleep": "smartSleepTime",
+}
+_W5_CONFIG_ENTITY_FIELDS = {
+    "w5_light": "lampRingSwitch",
+    "w5_brightness": "lampRingBrightness",
+    "w5_dnd": "noDisturbingSwitch",
+    "w5_child_lock": "isLock",
+    "w5_smart_work": "smartWorkingTime",
+    "w5_smart_sleep": "smartSleepTime",
 }
 
-CTW3_WRITABLE = frozenset(_CTW3_POWER_FIELDS) | frozenset(_CTW3_CONFIG_FIELDS)
+#: The buttons, and the command each one is. No payload is built from state —
+#: they carry none.
+_RESET_FILTER_KEYS = {"ctw3_reset_filter", "w5_reset_filter"}
+
+#: mr-ransel's notes give cmd 222 an empty payload; aavdberg/ha-petkit sends a
+#: single zero, which is the version that has been pressed on real fountains.
+_RESET_FILTER_PAYLOAD = bytes([0x00])
+
+CTW3_WRITABLE = (frozenset(_CTW3_MODE_FIELDS) | frozenset(_CTW3_CONFIG_FIELDS)
+                 | {"ctw3_reset_filter"})
+W5_WRITABLE = (frozenset(_W5_CONFIG_ENTITY_FIELDS)
+               | {"w5_power", "w5_mode", "w5_reset_filter"})
 
 
-def ctw3_command_for(ble_dev: BLEDevice, key: str, value: int) -> tuple[int, bytes]:
-    """The `(cmd, payload)` that sets one CTW3 entity to `value`.
-
-    Neither frame carries a single field: 220 restates power, suspend and mode
-    together, and 221 restates the whole config blob. So both are built from
-    the accessory's last decoded status with one value replaced.
-
-    Raises:
-        Refused: when the accessory has not reported the fields the frame needs.
-            An accessory that has never sent a long status cannot have its
-            config written without inventing the rest of the blob, and inventing
-            it would switch the light off and reset both intervals as a side
-            effect of changing brightness.
-    """
+def _ctw3_command_for(ble_dev: BLEDevice, key: str, value: int) -> tuple[int, bytes]:
+    """`(cmd, payload)` for one CTW3 entity. See `ble_command_for`."""
     states = dict(ble_dev.state.get("states") or {})
-    if key in _CTW3_POWER_FIELDS:
-        states[_CTW3_POWER_FIELDS[key]] = value
+
+    if key in _CTW3_MODE_FIELDS:
+        states[_CTW3_MODE_FIELDS[key]] = value
+        if key == "ctw3_mode":
+            # Picking a mode means "run in it". Reading power back out of the
+            # last status instead sends `power=0` whenever the fountain was
+            # caught in the sleep half of its smart cycle, which leaves the
+            # pump off and the mode select looking like it did nothing
+            # (aavdberg/ha-petkit issue #54).
+            states["powerStatus"] = 1
+            states["suspendStatus"] = 1 if value == 1 else 0
         missing = [f for f in ("powerStatus", "suspendStatus", "mode") if f not in states]
         if missing:
             raise Refused(f"no reading yet for {', '.join(missing)}")
-        return CTW3_CMD_SET_POWER, ctw3_power_payload(
+        return CMD_SET_MODE, ctw3_mode_payload(
             states["powerStatus"], states["suspendStatus"], states["mode"])
 
-    if key in _CTW3_CONFIG_FIELDS:
-        states[_CTW3_CONFIG_FIELDS[key]] = value
-        payload = ctw3_config_payload(states)
-        if payload is None:
-            raise Refused("no full status reported yet — the config blob is "
-                          "written whole, and the rest of it is not known")
-        return CTW3_CMD_SET_CONFIG, payload
+    states[_CTW3_CONFIG_FIELDS[key]] = value
+    payload = ctw3_config_payload(states)
+    if payload is None:
+        raise Refused("no full status reported yet - the settings block is "
+                      "written whole, and the rest of it is not known")
+    return CMD_SET_CONFIG, payload
 
-    raise Refused(f"{key} is not a writable CTW3 field")
+
+def _w5_command_for(ble_dev: BLEDevice, key: str, value: int) -> tuple[int, bytes]:
+    """`(cmd, payload)` for one W5/W4/CTW2 entity. See `ble_command_for`."""
+    states = dict(ble_dev.state.get("states") or {})
+
+    if key in ("w5_power", "w5_mode"):
+        if key == "w5_mode":
+            mode = value
+        elif value:
+            # One byte is both power and mode, so switching on means naming a
+            # mode. Normal is the fallback when none has been reported.
+            mode = states.get("mode") or 1
+        else:
+            mode = 0
+        return CMD_SET_MODE, w5_mode_payload(mode)
+
+    states[_W5_CONFIG_ENTITY_FIELDS[key]] = value
+    payload = w5_config_payload(states)
+    if payload is None:
+        raise Refused("no settings block reported yet - it is written whole, "
+                      "and it carries both schedules")
+    return CMD_SET_CONFIG, payload
+
+
+def ble_command_for(ble_dev: BLEDevice, key: str, value: int) -> tuple[int, bytes]:
+    """The `(cmd, payload)` that sets one accessory entity to `value`.
+
+    No frame carries a single field, so each is built from the accessory's last
+    decoded status with one value replaced.
+
+    Raises:
+        Refused: when the key is not writable on this accessory, or when the
+            block it belongs to has never been reported in full. Both mean the
+            same thing from Home Assistant — the control snaps back — so both
+            say which it was.
+    """
+    if key in _RESET_FILTER_KEYS:
+        return CMD_RESET_FILTER, _RESET_FILTER_PAYLOAD
+    if ble_dev.ble_type == "ctw3" and key in CTW3_WRITABLE:
+        return _ctw3_command_for(ble_dev, key, value)
+    if ble_dev.ble_type in W5_PROTOCOL and key in W5_WRITABLE:
+        return _w5_command_for(ble_dev, key, value)
+    raise Refused(f"{key} is not a writable {ble_dev.ble_type.upper()} field")
 
 
 #: Which decoder an accessory's frames go through.

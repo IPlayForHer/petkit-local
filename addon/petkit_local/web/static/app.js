@@ -387,6 +387,7 @@ function accBody(a) {
   const ents = a.entities || [];
   const sensors = ents.filter(e => e.component === 'sensor' || e.component === 'binary_sensor');
   const controls = ents.filter(e => ['switch', 'number', 'select'].includes(e.component));
+  const actions = ents.filter(e => e.component === 'button');
   return `<div class="dh"></div>
   <div class="meta">
     <div><div class="m-k">Bluetooth address</div><div class="m-v"><code>${esc(a.mac)}</code></div></div>
@@ -406,9 +407,14 @@ function accBody(a) {
       : ''
   }
   <div class="card"><h3>Actions${help(
-    "Nothing in this accessory's protocol is shaped like an action — its writes are all settings, and they are in Controls. What is worth a button is the relay: the accessory speaks only when its parent is told to open a Bluetooth session, and otherwise that happens on a timer up to the poll interval away.",
+    'Read now is about the relay rather than the accessory: it speaks only when its parent is told to open a Bluetooth session, and otherwise that happens on a timer up to the poll interval away. The rest are the accessory’s own — a filter reset carries no settings and is the one write that works before it has ever reported.',
   )}</h3>
-    <div><button class="act" data-action="ble-read-now" data-id="${esc(a.petkit_id)}">Read now</button></div></div>
+    <div><button class="act" data-action="ble-read-now" data-id="${esc(a.petkit_id)}">Read now</button>${actions
+      .map(
+        e =>
+          `<button class="act" data-action="press-entity" data-id="${esc(a.petkit_id)}" data-key="${esc(e.key)}" data-kind="ble" data-name="${esc(e.name)}">${esc(e.name)}</button>`,
+      )
+      .join('')}</div></div>
   ${
     sensors.length
       ? `<div class="card"><h3>State</h3>
@@ -726,7 +732,9 @@ function renderPanelBody(d) {
         <div class="col"><label class="mut">Bluetooth address (MAC)</label><input class="ble-mac" placeholder="AA:BB:CC:DD:EE:FF"></div>
       </div>
       <div class="row" style="margin-top:8px">
-        <div class="col"><label class="mut">Pairing secret</label><input class="ble-secret" placeholder="from the accessory"></div>
+        <div class="col"><label class="mut">Pairing secret${help(
+          'Eight bytes, written into the accessory once and kept there until a factory reset. PetKit’s cloud generates it the first time the app sets the fountain up, and the accessory then refuses any session that presents a different one — so a fountain that has already been through PetKit’s app needs THAT secret, not a new one. A factory-fresh accessory has none and accepts eight zero bytes, which is what a reset gets you back to.',
+        )}</label><input class="ble-secret" placeholder="from the accessory"></div>
         <div class="col"><label class="mut">Name it (optional)</label><input class="ble-sn" placeholder="serial or a label"></div>
       </div>
       <details class="adv" style="margin-top:10px"><summary>Advanced</summary>
@@ -1169,6 +1177,14 @@ async function setEntity(id, key, value, onAccepted, kind) {
     kind,
   );
 }
+// A `button` entity, as opposed to a device ACTION (`send-action`). The two
+// look identical on screen and are different things underneath: an action is
+// looked up in `ALL_ACTIONS` and posted as `{action}`, while a button entity is
+// one of the device's own entities and is posted as `{entity}` like every other
+// control. A BLE accessory only has the second kind.
+onAction('press-entity', el =>
+  setEntity(Number(el.dataset.id), el.dataset.key, '', null, el.dataset.kind),
+);
 onAction('send-raw', el => sendRaw(el, Number(el.dataset.id)));
 async function sendRaw(el, id) {
   const box = el.closest('details');

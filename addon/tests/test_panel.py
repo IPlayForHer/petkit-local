@@ -327,6 +327,30 @@ async def test_every_published_entity_component_has_somewhere_to_render():
         await c.close()
 
 
+async def test_the_accessory_panel_renders_every_component_an_accessory_has():
+    """`ENTITY_SECTION` routes a device panel. An accessory has its own
+    renderer, `accBody`, which picks components by name into three cards — so a
+    component that reaches HA fine can still land nowhere here. The filter
+    reset was the first: `button` was routed by ENTITY_SECTION and dropped by
+    accBody, which knew only switch, number, select and the two sensors."""
+    from petkit_local.devices.ble import BLE_TYPES, get_ble_entities
+
+    app, reg, hub = _panel()
+    c = await _mk_client(app)
+    try:
+        js = await (await c.get("/static/app.js")).text()
+        body = js[js.index("function accBody("):]
+        body = body[: body.index("\nfunction ")]
+        for t in BLE_TYPES:
+            for e in get_ble_entities(t):
+                assert f"'{e.component}'" in body, (
+                    f"a {t} publishes a {e.component} entity and accBody has "
+                    f"no card that collects one"
+                )
+    finally:
+        await c.close()
+
+
 async def test_device_detail_answers_in_one_request():
     """The sidecars are folded in, so a panel refresh is one round trip. They
     must stay identical to their standalone endpoints, which the API still
@@ -1307,8 +1331,16 @@ async def test_provision_does_not_claim_success_for_a_write_that_returned():
 # --- a BLE accessory is its own panel ---------------------------------------
 
 def _paired_ctw3_app():
-    """A panel with one D4SH and a CTW3 relayed by it, already reporting."""
-    from petkit_local.devices.ble import BLERegistry
+    """A panel with one D4SH and a CTW3 relayed by it, already reporting.
+
+    The state comes from the real cmd-230 frame in `test_ble_accessories`, run
+    through the real decoder, rather than being typed out here: a hand-written
+    copy drifts the moment the decoder learns a field, and then this fixture
+    reports an entity as unresolvable that a live accessory would fill.
+    """
+    from petkit_local.devices.ble import BLERegistry, parse_ctw3_ble_response
+
+    from .test_ble_accessories import CTW3_CMD230
 
     app, reg, hub = _panel()
     parent = reg.get_or_create(petkit_id=10, device_type="d4sh", serial_number="SN10")
@@ -1317,24 +1349,17 @@ def _paired_ctw3_app():
     ble = BLERegistry()
     dev = ble.register(ble_type="ctw3", petkit_id=700, mac="AABBCCDDEEFF",
                        secret="s", interval=240, link_with=10)
-    dev.state = {"states": {"powerStatus": 1, "suspendStatus": 1, "mode": 1,
-                            "runStatus": 1, "detectStatus": 0, "batteryPercent": 100,
-                            "electricStatus": 2, "lackWarning": 0, "filterWarning": 0,
-                            "breakdownWarning": 0, "lowBattery": 0,
-                            "waterPumpRunTime": 1, "todayPumpRunTime": 1,
-                            "supplyVoltage": 5312, "batteryVoltage": 4207,
-                            "energyInterval": 300, "sleepTime": 1200,
-                            "lightSwitch": 1, "brightness": 3,
-                            "noDisturbingSwitch": 0},
-                 "consumables": {"filterPercent": 59}}
+    dev.state = parse_ctw3_ble_response(
+        {"device": {"mac": "aabbccddeeff"},
+         "payload": [{"cmd": 230, "data": CTW3_CMD230}]})
     dev.last_seen = 1785625866
     app["ble_registry"] = ble
     return app, reg, ble
 
 
 async def test_the_accessory_view_carries_everything_its_panel_needs():
-    """It carried three keys — type, mac, id — while its decoded state, 21
-    entities and 8 controls existed only in Home Assistant."""
+    """It carried three keys — type, mac, id — while its decoded state, its
+    entities and its controls existed only in Home Assistant."""
     app, reg, ble = _paired_ctw3_app()
     c = await _mk_client(app)
     try:
@@ -1344,13 +1369,16 @@ async def test_the_accessory_view_carries_everything_its_panel_needs():
         assert a["parent_name"] == "YumShare Dual-Hopper"
         assert a["parent_online"] is True
         assert a["last_seen"] == 1785625866
-        assert len(a["entities"]) == 21
-        # Every entity resolves against the accessory's own state document —
-        # an entity whose `value_path` names a section nothing fills reads
+        # Every entity with a path resolves against the accessory's own state
+        # document — one whose `value_path` names a section nothing fills reads
         # unknown forever, which is what the device-side guard exists for too.
-        for e in a["entities"]:
+        # A button has no path: it is an action, not a reading.
+        valued = [e for e in a["entities"] if e["value_path"]]
+        assert len(valued) == len(a["entities"]) - 1
+        for e in valued:
             assert e["value"] is not None, e["key"]
-        assert sum(1 for e in a["entities"] if e["settable"]) == 8
+        assert any(e["component"] == "button" for e in a["entities"])
+        assert sum(1 for e in a["entities"] if e["settable"]) == 12
     finally:
         await c.close()
 
@@ -1373,15 +1401,41 @@ async def test_the_panel_can_set_an_accessory_control():
     c = await _mk_client(app)
     try:
         r = await c.post("/api/ble/700/command",
-                         json={"entity": "ctw3_mode", "value": "intermittent"})
+                         json={"entity": "ctw3_mode", "value": "smart"})
         assert r.status == 200, await r.text()
         assert (await r.json())["delivered"] == "ble"
         parent_id, ble_id, cmd, payload = bridge.sent[0]
         assert (parent_id, ble_id, cmd) == (10, 700, 220)
-        # power, suspend restated; mode is the one that changed.
-        assert payload == bytes([0x00, 1, 1, 2])
+        # Picking a mode means running in it: power on, and suspend follows
+        # from the mode rather than from whatever the last reading held.
+        assert payload == bytes([1, 0, 2])
         # Optimistic, like a real device's.
         assert ble.get(700).state["states"]["mode"] == 2
+    finally:
+        await c.close()
+
+
+async def test_the_panel_can_press_an_accessory_button():
+    """A button has no value, and both the coercion and the optimistic
+    write-back are shaped around one. Left alone they answered a press with
+    400 and then filed its state under the empty string."""
+    app, reg, ble = _paired_ctw3_app()
+
+    class _Bridge:
+        _client = object()
+        sent: list = []
+
+        async def publish_ble_command(self, parent, dev, cmd, payload):
+            self.sent.append((cmd, payload))
+            return True
+
+    app["bridge"] = _Bridge()
+    c = await _mk_client(app)
+    try:
+        r = await c.post("/api/ble/700/command", json={"entity": "ctw3_reset_filter"})
+        assert r.status == 200, await r.text()
+        assert _Bridge.sent[-1][0] == 222
+        assert "" not in ble.get(700).state["states"]
     finally:
         await c.close()
 
