@@ -23,7 +23,7 @@ predicates the rest of the code actually reads.
 #: the old entities, and there was no way — for them or for us — to tell whether
 #: the new code was running. The entity COUNT eventually gave it away. A version
 #: on the screen answers in one glance what took a screenshot and an inference.
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 
 DEVICE_TYPES_LITTER = {"t3", "t4", "t5", "t6", "t7"}
 DEVICE_TYPES_FEEDER = {"feeder", "feedermini", "d3", "d4", "d4s", "d4h", "d4sh"}

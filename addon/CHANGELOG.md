@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.5.1 — 2026-08-02
+
+### Bluetooth provisioning worked again, on the models 1.5.0 had not broken
+
+1.5.0 taught the Provision tab to recognise BLUFI as well as PetKit's own
+protocol, and picked between them by asking the device to list its Bluetooth
+services. That list turns out not to be the same thing as what a device hands
+over when asked for a service by name: a YumShare Dual-Hopper that opens
+PetKit's `0xAAA0` on request does not appear in it, so the tab decided it did
+not recognise the feeder and stopped.
+
+Reported by an owner who paired the same device from the hosted provisioning
+page minutes later — that page still runs the older code, which asked by name.
+Two pages, one device, one difference; without that comparison this would have
+read as a broken feeder.
+
+Both services are asked for by name now. The listing survives in one place,
+describing a device that answered to neither, where being incomplete costs
+nothing.
+
+### Two places pointed at tabs that do not exist
+
+The provisioning log told anyone who selected a Bluetooth-only accessory to
+pair it under "Setup", and the capture toggle was described as living under
+"Setup → Live settings". Neither exists: accessories pair from **Devices**, on
+the panel of the litter box or feeder that relays for them, and the capture
+toggle is under **Setup → Settings**.
+
 ## 1.5.0 — 2026-08-02
 
 ### Some models could never register at all
