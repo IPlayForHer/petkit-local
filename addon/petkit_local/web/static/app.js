@@ -2062,6 +2062,12 @@ const BLUFI_P2E = '0000ff01-0000-1000-8000-00805f9b34fb'; // phone -> ESP32, wri
 const BLUFI_E2P = '0000ff02-0000-1000-8000-00805f9b34fb'; // ESP32 -> phone, notify
 const BLUFI_TYPE_CTRL = 0x0;
 const BLUFI_TYPE_DATA = 0x1;
+// BLUFI's own Wi-Fi provisioning. DELIBERATELY UNUSED — kept named so that
+// what is not sent is as legible as what is, because sending them is worse
+// than useless here: they make the ESP's BLUFI layer join the network on its
+// own, without PetKit's firmware ever reading the server list, and the device
+// then comes up online on PetKit's cloud. Confirmed on a T4. PetKit's app
+// sends none of them; the SSID and password go inside the custom-data JSON.
 const BLUFI_CTRL_SET_SEC_MODE = 0x01;
 const BLUFI_CTRL_SET_WIFI_OPMODE = 0x02;
 const BLUFI_CTRL_CONN_TO_AP = 0x03;
@@ -2311,20 +2317,25 @@ async function provisionBlufi(service, cfg) {
   const ctr = { seq: 0 };
   const enc = new TextEncoder();
 
-  plog('BLUFI: security off, station mode');
-  await blufiSend(write, ctr, BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_SEC_MODE, [0x00]);
-  await blufiSend(write, ctr, BLUFI_TYPE_CTRL, BLUFI_CTRL_SET_WIFI_OPMODE, [0x01]);
-  plog('BLUFI: ssid + password');
-  await blufiSend(write, ctr, BLUFI_TYPE_DATA, BLUFI_DATA_STA_SSID, enc.encode(cfg.ssid));
-  await blufiSend(write, ctr, BLUFI_TYPE_DATA, BLUFI_DATA_STA_PASSWD, enc.encode(cfg.pwd));
-  // Everything PetKit adds on top of plain WiFi setup rides in BLUFI's custom
-  // channel — the same JSON the Ingenic models get, and the reason the D4
-  // firmware links `btc_blufi_send_custom_data` at all.
+  // ONE frame, and deliberately only one.
+  //
+  // BLUFI can provision Wi-Fi by itself — set the mode, hand it the SSID and
+  // the password, tell it to connect — and this used to do exactly that, with
+  // PetKit's own document sent alongside as an extra. That is what put a T4 on
+  // Wi-Fi and straight back onto PetKit's servers: the ESP's own BLUFI layer
+  // joined the network, the firmware's `key 151` handler never ran, and the
+  // device carried on with whatever server list it already had. Provisioned,
+  // online, visible in PetKit's app, and never once calling this add-on.
+  //
+  // PetKit's app sends no native Wi-Fi frames at all. `PetkitBLEManager` has
+  // one outbound call in it, `postCustomData`, and the SSID and password travel
+  // inside the JSON like every other setting — so the firmware does the joining
+  // itself, after it has read where to phone home. Matching that is the whole
+  // point: a device that ignores this document must fail to join, loudly,
+  // rather than join somebody else.
   const custom = JSON.stringify(cfg.payload);
   plog('BLUFI: custom data (' + enc.encode(custom).length + ' bytes)');
   await blufiSend(write, ctr, BLUFI_TYPE_DATA, BLUFI_DATA_CUSTOM, enc.encode(custom));
-  plog('BLUFI: connect');
-  await blufiSend(write, ctr, BLUFI_TYPE_CTRL, BLUFI_CTRL_CONN_TO_AP, []);
 
   // Hold the link open and take confirmation from either protocol. BLUFI's own
   // Wi-Fi report is one answer; PetKit's `151 -> state 1` and the join states
@@ -2334,6 +2345,10 @@ async function provisionBlufi(service, cfg) {
   for (let i = 0; i < 30; i++) {
     await new Promise(r => setTimeout(r, 500));
     if (connected || pkJoined(ctx.replies[112])) return true;
+    if (pkJoinFailed(ctx.replies[112])) {
+      plog('the device gave up: ' + pkJoinState(ctx.replies[112]));
+      return false;
+    }
   }
   if (ctx.replies[151] && ctx.replies[151].state === 1) {
     plog(
@@ -2402,22 +2417,39 @@ function pkFrame(seq, obj) {
   ]);
 }
 
-// Key 112 is the join report, and its states are the device's own progress
-// through provisioning. 7 and 10 both mean done: a T6 went 0 -> 1 -> 6 -> 10
-// and never reported 7 at all (issue #9), while a D4H stopped at 7 (#11), so
-// waiting for either one alone hangs on half the models.
+// Key 112 is the join report. The whole table is PetKit's app's own, read off
+// the log lines it prints per state (`BleDeviceBindProgressPresenter`, 13.8.1)
+// — including the four failures, which used to render as a bare number here.
+// Telling somebody their Wi-Fi password is wrong beats telling them "state 3".
 const PK_JOIN_STATES = {
   0: 'starting',
   1: 'looking for the network',
   2: 'connecting to the network',
-  6: 'on Wi-Fi, reaching the server',
+  3: 'the Wi-Fi password is wrong',
+  4: 'that Wi-Fi network was not found',
+  5: 'could not connect to the Wi-Fi',
+  6: 'on Wi-Fi, connecting to the server',
   7: 'connected to the server',
-  10: 'joined',
+  8: 'could not connect to the server',
+  9: 'connecting to MQTT',
+  10: 'online',
 };
+// The states that mean stop waiting and say why.
+const PK_JOIN_FAILED = [3, 4, 5, 8];
+// 7 and 10 both count as done, and neither model reaches both: a T6 goes
+// 0 -> 1 -> 6 -> 10 without ever reporting 7 (issue #9), a D4H stops at 7
+// (#11). 10 is "online", which for PetKit means MQTT is up as well — an ESP32
+// talking to this add-on cannot get there, because the TLS bypass it would
+// need has no ESP32 patcher, so it settles on the HTTP heartbeat instead. That
+// is a working degraded mode, and it is why stopping at 7 is not a failure.
 const PK_JOIN_DONE = [7, 10];
 
 function pkJoined(payload) {
   return !!payload && PK_JOIN_DONE.includes(payload.state);
+}
+
+function pkJoinFailed(payload) {
+  return !!payload && PK_JOIN_FAILED.includes(payload.state);
 }
 
 function pkJoinState(payload) {
@@ -2539,6 +2571,10 @@ async function provisionPetkit(service, cfg) {
       plog('device: ' + pkJoinState(replies[112]));
     }
     if (pkJoined(replies[112])) return true;
+    if (pkJoinFailed(replies[112])) {
+      plog('the device gave up: ' + pkJoinState(replies[112]));
+      return false;
+    }
   }
   // Not "joined" and not a failure either: the device took the credentials and
   // said so. Returning true without a word here reported a device that never
@@ -2598,11 +2634,26 @@ async function doProvision() {
     const tzEl = document.getElementById('p-tz');
     const timezone =
       tzEl && tzEl.value !== '' ? Number(tzEl.value) : -new Date().getTimezoneOffset() / 60;
-    const locale = navigator.language || '';
-    // `ipServers` mirrors `apiServers` and `hide:1` matches the official app —
-    // both present in the only 151 payload confirmed to provision an Ingenic
-    // device (upstream issue #9). Timezone goes out as the one-decimal string
-    // the device echoes back as "&timezone=%.1f", rather than a bare number.
+    // `locale` is a TIME ZONE NAME, not a language. PetKit's own app fills it
+    // with `TimeZone.getDefault().getID()` — "Europe/Amsterdam", "America/
+    // New_York" — right beside the numeric offset, and the captured signup body
+    // of a real D4 echoes exactly that back: `timezone=2.0&locale=Europe/
+    // Amsterdam`. This used to send `navigator.language`, so a device was told
+    // its zone was named "en-US".
+    //
+    // From the browser, which is the same source the phone uses. The picker
+    // above cannot supply it: it offers UTC offsets, and an offset names no
+    // single zone — half of UTC+01:00 is Berlin and half is Lagos. The two
+    // halves can therefore disagree when somebody overrides the offset by hand,
+    // and that is the right way round: the number is what the device runs its
+    // clock on, the name is a label it stores and echoes back.
+    const zoneName = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    // Everything below is the app's key-151 payload, field for field
+    // (`BleDeviceBindProgressPresenter.proceedNextStep`, PetKit 13.8.1):
+    // `hide` is the constant 1 rather than anything about the network, and the
+    // offset goes out as a string of hours. The app also sends `server` on the
+    // BLUFI path and explicitly nulls it on the other one; ours is already in
+    // `apiServers`, and no firmware here reads `server` at all.
     const cfg = {
       ssid,
       pwd,
@@ -2610,7 +2661,7 @@ async function doProvision() {
         ssid,
         pwd,
         hide: 1,
-        locale,
+        locale: zoneName,
         timezone: timezone.toFixed(1),
         apiServers: [server],
         ipServers: [server],
@@ -3781,5 +3832,33 @@ async function bindPetRef(ref, petId) {
   loadPets();
 }
 
+// Is this page the one the server would serve now?
+//
+// The Setup tab already shows the running version, and it answers a different
+// question: it comes from `/api/info`, so it reports the SERVER's build. A
+// fresh server behind a stale page reports the new number while running the old
+// code, which is exactly the case that keeps costing an afternoon — a fix is
+// deployed, served, and the panel quietly goes on doing the old thing with
+// nothing anywhere to say so.
+//
+// `PANEL_ASSET_V` came with the document and may have come out of a cache;
+// `asset_version` from `/api/info` is answered live. Only a stale document can
+// make them differ, so the check has no other way to fire.
+async function checkPageIsCurrent() {
+  const mine = window.PANEL_ASSET_V;
+  if (!mine) return; // an older index, or one served without the stamp
+  const info = await api('info').catch(() => null);
+  if (!info || !info.asset_version || info.asset_version === mine) return;
+  const bar = document.createElement('div');
+  bar.className = 'stale-banner';
+  bar.innerHTML =
+    '<b>This page is out of date.</b> The app has been updated since it was ' +
+    'loaded, and your browser is still running the older panel. ' +
+    '<button class="mini" data-action="reload-panel">Reload</button>';
+  document.body.prepend(bar);
+}
+onAction('reload-panel', () => location.reload());
+
 loadDevices();
 connectWS();
+checkPageIsCurrent();

@@ -678,27 +678,22 @@ def decode_ctw3_config(tail: bytes) -> dict[str, int]:
     Everything a cmd-221 write has to restate comes from here, which is what
     makes changing one setting possible without inventing the rest.
 
-    CONFLICTED, on bytes 6, 7 and 8 only.
+    SETTLED, and it was briefly unsettled for no good reason.
 
-    This reads them as light switch / brightness / do-not-disturb, from the one
-    real cmd-230 frame anybody has handed us (issue #4, firmware 111), where
-    they are 1, 3, 0 — coherent for a fountain with the ring on at high.
-    aavdberg/ha-petkit reads the same three positions in a cmd-221 WRITE as
-    do-not-disturb / light switch / brightness, from a capture of PetKit's own
-    app toggling the LED and moving the brightness slider (their commit
-    775c808, which reversed exactly the order used here).
+    PetKit's own app builds this exact block for a cmd-221 write, field by
+    field (`CTW3DataConvertor.changeSmartMode` / `changeBatteryMode`, app
+    13.8.1): smart working time, smart sleep time, battery working time and
+    battery sleep time as big-endian shorts, then lamp ring switch, lamp ring
+    brightness, do-not-disturb, child lock, and two inductive switches. Twelve
+    bytes, in the order below.
 
-    Both cannot describe one layout, and neither observed the other's
-    direction: nothing says a status echo is byte-identical to a write. So the
-    two are kept apart — this decodes the status, `ctw3_config_payload` builds
-    the write to their order — and the disagreement is recorded rather than
-    resolved by preference. If a CTW3 owner reports the Light switch turning
-    do-not-disturb on, this is the paragraph that was wrong.
-
-    Bytes 0, 1 and 9 are not in dispute: both sides read them as the smart
-    cycle's two times and the child lock. They used to be written as the
-    constants 0x03, 0x03 and 0x00 — the values that one frame happened to
-    carry, mistaken for structure.
+    So the status tail and the write payload ARE one layout, which is what the
+    real cmd-230 frame from issue #4 already said — 1, 3, 0 at bytes 6, 7, 8 is
+    a fountain with the ring on at high and quiet hours off.
+    aavdberg/ha-petkit reads those three as do-not-disturb / light / brightness
+    and writes ten bytes rather than twelve; 1.6.0 followed them for the write
+    and was wrong to. The app is the other end of that conversation and does
+    not need interpreting.
     """
     if len(tail) < CTW3_CONFIG_LEN:
         return {}
@@ -710,7 +705,11 @@ def decode_ctw3_config(tail: bytes) -> dict[str, int]:
         "lightSwitch": tail[6],
         "brightness": tail[7],          # 1 low, 2 medium, 3 high
         "noDisturbingSwitch": tail[8],
+        # Written by the app only on hardware+firmware/100 >= 1.35
+        # (`CTW3Utils.isSupportLockVersion`), and left at 0 below it.
         "childLock": tail[9],
+        "smartInductiveSwitch": tail[10],
+        "batteryInductiveSwitch": tail[11],
     }
 
 
@@ -828,12 +827,9 @@ def ctw3_mode_payload(power: int, suspend: int, mode: int) -> bytes:
 def ctw3_config_payload(state: dict[str, Any]) -> bytes | None:
     """cmd 221 on a CTW3 — the settings block, rebuilt from the last status.
 
-    Ten bytes. Bytes 0-5 are the smart cycle's two times and the two battery-
-    mode intervals, restated from the reading. Bytes 6-9 are written in
-    aavdberg/ha-petkit's order — do-not-disturb, light, brightness, child lock
-    — which is the only direct evidence anybody has about a WRITE; the status
-    tail this state was decoded FROM disagrees on the middle three, and
-    `decode_ctw3_config` says how.
+    Twelve bytes, the same layout `decode_ctw3_config` reads and the same one
+    PetKit's app writes. 1.6.0 sent ten in a different order, on the strength of
+    a third-party capture; the app settles it.
 
     Returns None when the accessory has never reported a long status.
     """
@@ -846,10 +842,12 @@ def ctw3_config_payload(state: dict[str, Any]) -> bytes | None:
         int(state["smartSleepTime"]) & 0xFF,
         *int(state["energyInterval"]).to_bytes(2, "big"),
         *int(state["sleepTime"]).to_bytes(2, "big"),
-        int(state["noDisturbingSwitch"]) & 0xFF,
         int(state["lightSwitch"]) & 0xFF,
         int(state["brightness"]) & 0xFF,
+        int(state["noDisturbingSwitch"]) & 0xFF,
         int(state.get("childLock", 0)) & 0xFF,
+        int(state.get("smartInductiveSwitch", 0)) & 0xFF,
+        int(state.get("batteryInductiveSwitch", 0)) & 0xFF,
     ])
 
 
@@ -920,9 +918,10 @@ _W5_CONFIG_ENTITY_FIELDS = {
 #: they carry none.
 _RESET_FILTER_KEYS = {"ctw3_reset_filter", "w5_reset_filter"}
 
-#: mr-ransel's notes give cmd 222 an empty payload; aavdberg/ha-petkit sends a
-#: single zero, which is the version that has been pressed on real fountains.
-_RESET_FILTER_PAYLOAD = bytes([0x00])
+#: Empty. mr-ransel's notes say so and PetKit's app agrees — its
+#: `getCTW3ResetFilterElement` is `PetkitBleMsg(222, new byte[0])`.
+#: aavdberg/ha-petkit sends a single zero; 1.6.1 copied that.
+_RESET_FILTER_PAYLOAD = b""
 
 CTW3_WRITABLE = (frozenset(_CTW3_MODE_FIELDS) | frozenset(_CTW3_CONFIG_FIELDS)
                  | {"ctw3_reset_filter"})
@@ -937,13 +936,16 @@ def _ctw3_command_for(ble_dev: BLEDevice, key: str, value: int) -> tuple[int, by
     if key in _CTW3_MODE_FIELDS:
         states[_CTW3_MODE_FIELDS[key]] = value
         if key == "ctw3_mode":
-            # Picking a mode means "run in it". Reading power back out of the
-            # last status instead sends `power=0` whenever the fountain was
-            # caught in the sleep half of its smart cycle, which leaves the
-            # pump off and the mode select looking like it did nothing
-            # (aavdberg/ha-petkit issue #54).
+            # Picking a mode means "run in it": PetKit's app sends power 1 and
+            # pause 1 with the chosen mode and reads nothing back
+            # (`CTW3HomePresenter.changeDeviceMode`, app 13.8.1). Taking power
+            # from the last status instead sends 0 whenever the fountain was
+            # caught in the sleep half of its smart cycle, leaving the pump off
+            # and the select looking like it did nothing (aavdberg/ha-petkit
+            # issue #54) — they fixed the power half and derived pause from the
+            # mode, which the app does not do.
             states["powerStatus"] = 1
-            states["suspendStatus"] = 1 if value == 1 else 0
+            states["suspendStatus"] = 1
         missing = [f for f in ("powerStatus", "suspendStatus", "mode") if f not in states]
         if missing:
             raise Refused(f"no reading yet for {', '.join(missing)}")

@@ -25,9 +25,9 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None,
                                 reason="node is needed to run the panel's JavaScript")
 
 #: Lifted from app.js by name. All pure, all DOM-free.
-FUNCTIONS = ("pkCrc16", "pkFrame", "pkParse", "pkBytes", "pkJoined", "pkJoinState",
+FUNCTIONS = ("pkCrc16", "pkFrame", "pkParse", "pkBytes", "pkJoined", "pkJoinFailed", "pkJoinState",
              "blufiExplain")
-CONSTANTS = ("PK_MAGIC", "PK_TAIL", "PK_TYPE_OUT", "PK_JOIN_STATES", "PK_JOIN_DONE",
+CONSTANTS = ("PK_MAGIC", "PK_TAIL", "PK_TYPE_OUT", "PK_JOIN_STATES", "PK_JOIN_DONE", "PK_JOIN_FAILED",
              "BLUFI_TYPE_CTRL", "BLUFI_TYPE_DATA", "BLUFI_DATA_WIFI_REP",
              "BLUFI_DATA_ERROR_INFO", "BLUFI_DATA_CUSTOM", "BLUFI_FC_FRAG")
 
@@ -186,4 +186,26 @@ def test_both_join_states_count_as_joined():
     assert out["s7"] and out["s10"]
     assert not out["s6"] and not out["none"]
     assert out["unreported"] == "never reported"
-    assert "reaching the server" in out["named"]
+    assert "connecting to the server" in out["named"]
+
+
+def test_a_reported_failure_is_named_rather_than_numbered():
+    """The four failure states came out of PetKit's own app, which logs one
+    line per state. Without them a wrong Wi-Fi password rendered as "state 3"
+    and the panel went on polling for another twenty-four seconds."""
+    out = _run("""
+      console.log(JSON.stringify({
+        pwd: [pkJoinFailed({state: 3}), pkJoinState({state: 3})],
+        missing: [pkJoinFailed({state: 4}), pkJoinState({state: 4})],
+        wifi: [pkJoinFailed({state: 5}), pkJoinState({state: 5})],
+        server: [pkJoinFailed({state: 8}), pkJoinState({state: 8})],
+        ok7: pkJoinFailed({state: 7}), ok9: pkJoinFailed({state: 9}),
+        none: pkJoinFailed(undefined),
+      }));
+    """)
+    assert out["pwd"] == [True, "the Wi-Fi password is wrong"]
+    assert out["missing"] == [True, "that Wi-Fi network was not found"]
+    assert out["wifi"][0] and out["server"][0]
+    assert "could not connect to the server" in out["server"][1]
+    # 9 is "connecting to MQTT" — progress, not a verdict.
+    assert not out["ok7"] and not out["ok9"] and not out["none"]

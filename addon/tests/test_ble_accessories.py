@@ -786,7 +786,7 @@ def test_setting_the_mode_restates_power_and_suspend():
     dev = _paired_ctw3(powerStatus=1, suspendStatus=1, mode=1)
     cmd, payload = ble_command_for(dev, "ctw3_mode", 2)
     assert cmd == CMD_SET_MODE
-    assert payload == bytes([1, 0, 2])
+    assert payload == bytes([1, 1, 2])
 
 
 def test_picking_a_mode_means_running_in_it():
@@ -797,7 +797,7 @@ def test_picking_a_mode_means_running_in_it():
 
     asleep = _paired_ctw3(powerStatus=0, suspendStatus=0, mode=2)
     assert ble_command_for(asleep, "ctw3_mode", 1)[1] == bytes([1, 1, 1])
-    assert ble_command_for(asleep, "ctw3_mode", 2)[1] == bytes([1, 0, 2])
+    assert ble_command_for(asleep, "ctw3_mode", 2)[1] == bytes([1, 1, 2])
 
 
 def test_switching_a_ctw3_off_leaves_nothing_suspended():
@@ -808,30 +808,33 @@ def test_switching_a_ctw3_off_leaves_nothing_suspended():
 
 
 def test_setting_the_brightness_restates_the_whole_config_block():
-    """Ten bytes, and none of them constants. The first two used to be written
-    as 0x03, 0x03 — the smart-cycle times one captured frame happened to carry,
-    mistaken for structure — and byte 10 as 0x01, which that same frame has as
-    0x00.
+    """Twelve bytes, in the order PetKit's own app writes them
+    (`CTW3DataConvertor.changeSmartMode`, app 13.8.1), which is the same order
+    the status tail is read in — so the two really are one layout, as the real
+    cmd-230 frame from issue #4 already implied.
 
-    Bytes 6-8 go out in aavdberg/ha-petkit's order, which is the only direct
-    evidence about a WRITE; `decode_ctw3_config` reads the status tail the
-    other way round and says why the two are kept apart.
+    1.6.0 sent ten bytes with 6-8 reordered, following aavdberg/ha-petkit's
+    capture. The app is the other end of that conversation and needs no
+    interpreting; this is the assertion that would have caught it.
     """
     from petkit_local.devices.ble import CMD_SET_CONFIG, ble_command_for
 
     dev = _paired_ctw3(smartWorkingTime=3, smartSleepTime=3, energyInterval=300,
                        sleepTime=1200, lightSwitch=1, brightness=3,
-                       noDisturbingSwitch=0, childLock=0)
+                       noDisturbingSwitch=0, childLock=0,
+                       smartInductiveSwitch=1, batteryInductiveSwitch=0)
     cmd, payload = ble_command_for(dev, "ctw3_brightness", 1)
     assert cmd == CMD_SET_CONFIG
-    assert len(payload) == 10
+    assert len(payload) == 12
     assert payload[0:2] == bytes([3, 3])                # smart cycle, restated
     assert payload[2:4] == (300).to_bytes(2, "big")     # 012C, unchanged
     assert payload[4:6] == (1200).to_bytes(2, "big")    # 04B0, unchanged
-    assert payload[6] == 0                              # do not disturb, off
-    assert payload[7] == 1                              # light still on
-    assert payload[8] == 1                              # the one field asked for
+    assert payload[6] == 1                              # light still on
+    assert payload[7] == 1                              # the one field asked for
+    assert payload[8] == 0                              # do not disturb, off
     assert payload[9] == 0                              # child lock
+    assert payload[10] == 1                             # smart inductive
+    assert payload[11] == 0                             # battery inductive
 
 
 def test_a_config_write_is_refused_before_the_first_full_status():
@@ -847,7 +850,7 @@ def test_a_config_write_is_refused_before_the_first_full_status():
         ble_command_for(_paired_ctw3(), "ctw3_brightness", 2)
     with pytest.raises(Refused):
         ble_command_for(_paired_ctw3(powerStatus=1), "ctw3_power", 0)
-    assert ble_command_for(_paired_ctw3(), "ctw3_mode", 2)[1] == bytes([1, 0, 2])
+    assert ble_command_for(_paired_ctw3(), "ctw3_mode", 2)[1] == bytes([1, 1, 2])
 
 
 def test_a_key_that_is_not_writable_is_refused_not_guessed():
