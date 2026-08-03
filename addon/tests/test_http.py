@@ -132,6 +132,51 @@ async def test_a_device_that_identifies_itself_only_in_the_body_registers():
         await client.close()
 
 
+async def test_a_device_is_told_back_the_timezone_it_reported():
+    """Its signup body carries `timezone` and `locale` — both are in the T4's
+    own format string in firmware, and the captured D4 body has them — and both
+    were read off the wire and dropped. The reply then used the SERVER's offset,
+    so a device that had just said it was at -4.0 was answered 2.0, and one that
+    said `en-US` was answered with nothing.
+
+    The device is the authority on where it is: it was handed that value over
+    BLE at provisioning and burns it into its video watermarks.
+    """
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        body = D4_SIGNUP_BODY.replace("timezone=2.0", "timezone=-4.0") \
+                             .replace("locale=Europe/Amsterdam", "locale=en-US")
+        res = (await (await client.post("/6/d4/dev_signup", data=body,
+                                        headers=FORM)).json())["result"]
+        assert res["timezone"] == -4.0
+        assert res["locale"] == "en-US"
+
+        # A manual override is for an install whose box lives elsewhere, so it
+        # has to keep winning over anything a device says about itself.
+        reg.get(400090690).config["timezone"] = 5.5
+        res = (await (await client.post("/6/d4/dev_signup", data=body,
+                                        headers=FORM)).json())["result"]
+        assert res["timezone"] == 5.5
+    finally:
+        await client.close()
+
+
+async def test_a_timezone_that_is_not_one_is_not_stored():
+    """A device reporting a parse failure as 0 is indistinguishable from one
+    genuinely at UTC, so only a value inside the range an offset can occupy is
+    believed; anything else leaves the field to the server's own clock."""
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        for bad in ("timezone=99", "timezone=-40.5", "timezone=abc", "timezone="):
+            body = D4_SIGNUP_BODY.replace("timezone=2.0", bad)
+            await client.post("/6/d4/dev_signup", data=body, headers=FORM)
+            assert "reported_timezone" not in reg.get(400090690).config, bad
+    finally:
+        await client.close()
+
+
 async def test_the_same_device_then_gets_its_mqtt_credentials():
     """The quieter half of the same bug: `dev_iot_device_info` answered 200
     with an empty result, so the device never reached the broker and nothing

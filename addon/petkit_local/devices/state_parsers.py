@@ -518,6 +518,55 @@ def _extract_error_flags(body: dict[str, Any], state: dict[str, Any],
         state["boxFull"] = err["full"]
 
 
+#: The device's LAN address inside the free-form `other` string, e.g.
+#: `"...,Ip:10.50.0.10,..."`. Quoted on some firmware and bare on others. The
+#: run of digits and dots is grabbed whole and judged afterwards, so a longer
+#: one is REJECTED rather than silently truncated to its first four groups.
+_IP_IN_OTHER = re.compile(r'Ip:"?([\d.]+)"?')
+
+
+def _looks_like_ipv4(value: Any) -> bool:
+    """Four dotted octets in range. Judged here rather than in the pattern.
+
+    A regex that merely counts groups accepts `999.999.999.999`, and one that
+    stops after four accepts `1.2.3.4.5` by taking the first four — an address
+    the device never reported.
+    """
+    if not isinstance(value, str):
+        return False
+    parts = value.split(".")
+    return len(parts) == 4 and all(p.isdigit() and len(p) <= 3 and int(p) <= 255
+                                   for p in parts)
+
+
+def _extract_ip(body: dict[str, Any], state: dict[str, Any]) -> None:
+    """Set `state["ip"]` from a flat key or from the `other` string.
+
+    Worth one helper rather than a copy per parser, because the field is read
+    much further away than it is written and its absence never looks like a
+    missing field. `media/go2rtc.py` skips a device with no `ip` when it builds
+    its stream config, and the whole Patchers tab reports the device as
+    unsupported — so a camera feeder whose parser dropped this had no stream
+    URL and could not be patched at all, with nothing anywhere naming the
+    cause. Two of the three parsers read it, in two different ways, and the
+    feeder read it in neither.
+
+    The value is checked for shape, which the old `[0-9.]+` did not do: it
+    matched `....` as readily as an address. This becomes a go2rtc source and
+    an SSH target, so one cheap look is worth having, and a device reporting
+    something else is left with no `ip` — a state every caller already handles.
+    """
+    ip = body.get("Ip") or body.get("ip") or ""
+    if not ip:
+        other = body.get("other")
+        if isinstance(other, str):
+            m = _IP_IN_OTHER.search(other)
+            if m:
+                ip = m.group(1)
+    if _looks_like_ipv4(ip):
+        state["ip"] = ip
+
+
 def _extract_wifi_rssi(body: dict[str, Any], state: dict[str, Any]) -> None:
     """Pull signal strength out of `wifi`, which spells it `rsq` or `rssi`.
 
@@ -602,9 +651,7 @@ def _parse_litter_camera(body: dict[str, Any]) -> dict[str, Any]:
     # _extract_camel so nested values override any flat keys.
     _extract_litter_nested(body, state)
     _extract_sensor_block(body, state, LITTER_CAMERA_HALLS)
-    ip = body.get("Ip", body.get("ip", ""))
-    if ip:
-        state["ip"] = ip
+    _extract_ip(body, state)
     _extract_wifi_rssi(body, state)
     return state
 
@@ -655,19 +702,7 @@ def _parse_feeder(body: dict[str, Any]) -> dict[str, Any]:
         ], parsed_fs)
         state["feedState"] = parsed_fs
 
-    # Camera feeders (D4H/D4SH) carry their LAN IP in the free-form `other`
-    # string, e.g. "...,Ip:10.50.0.10,...". The go2rtc camera probe needs
-    # state["ip"] or it never advertises a stream URL — and unlike the litter
-    # parser, this one used to drop it, so a camera feeder's stream stayed
-    # invisible. Prefer a flat Ip/ip key if a firmware ever sends one.
-    ip = body.get("Ip", body.get("ip", ""))
-    if not ip and isinstance(body.get("other"), str):
-        m = re.search(r'Ip:"?([0-9.]+)"?', body["other"])
-        if m:
-            ip = m.group(1)
-    if ip:
-        state["ip"] = ip
-
+    _extract_ip(body, state)
     _extract_wifi_rssi(body, state)
     return state
 
@@ -826,11 +861,8 @@ def normalize_property_params(device_type: str, params: dict[str, Any]) -> dict[
     if "firmware" in params:
         flat["firmware"] = params["firmware"]
 
-    # The `other` free-form string carries the device IP (needed for the camera).
-    other = params.get("other")
-    if isinstance(other, str):
-        m = re.search(r'Ip:"?([0-9.]+)"?', other)
-        if m:
-            flat["ip"] = m.group(1)
+    # The `other` free-form string carries the device IP (needed for the camera
+    # and for every patcher). Same reader as the HTTP parsers use.
+    _extract_ip(params, flat)
 
     return flat

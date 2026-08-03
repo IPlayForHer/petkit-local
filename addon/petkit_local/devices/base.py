@@ -340,13 +340,26 @@ class Device:
         Home Assistant's own configuration, and overridable per device via
         `config["timezone"]` for an install whose box lives in another zone.
 
+        Three sources, most specific first: the manual override, then whatever
+        the device itself reported at signup, then the container's clock. The
+        middle one matters because the device is the authority on where IT is —
+        it was handed that offset over BLE at provisioning and burns it into its
+        video watermarks — so answering with the server's instead told a device
+        in UTC-4 that it was at UTC+2.
+
         This used to be hardcoded to 1.0, which is wrong for half the year
         anywhere that observes DST. Note that fixing it does NOT fix the
         device's video watermarks: the firmware takes its timezone from the
         BLE provisioning payload, not from this response, so a device
         provisioned without one renders UTC regardless of what we say here.
         """
-        return to_float(self.config.get("timezone"), None) or local_offset_hours()
+        override = to_float(self.config.get("timezone"), None)
+        if override is not None:
+            return override
+        reported = to_float(self.config.get("reported_timezone"), None)
+        if reported is not None:
+            return reported
+        return local_offset_hours()
 
     @property
     def aliyun_mqtt_host(self) -> str:

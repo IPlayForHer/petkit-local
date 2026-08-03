@@ -83,6 +83,30 @@ def test_litter_camera_parses_core_fields():
     assert s["rssi"] == -55
 
 
+def test_a_camera_feeder_reports_its_address_like_a_litter_box_does():
+    """`state["ip"]` is read a long way from where it is written, and its
+    absence never looks like a missing field: `media/go2rtc.py` quietly skips a
+    device without one, and the Patchers tab reports the whole device as
+    unsupported. So a D4H had no stream URL and could not be patched, with
+    nothing naming the cause (PR #12, @nklmilojevic, confirmed on fw 867).
+
+    Both spellings, because the litter path saw it as a flat key and the MQTT
+    path saw it inside `other` — and the feeder parser read neither.
+    """
+    s = parse_state_report("d4h", {"other": 'PowerSRC:0,Ip:"10.50.0.10",disP:0'})
+    assert s["ip"] == "10.50.0.10"
+    assert parse_state_report("d4h", {"Ip": "10.50.0.11"})["ip"] == "10.50.0.11"
+
+
+def test_something_that_is_not_an_address_does_not_become_one():
+    """It ends up as a go2rtc source and an SSH target, and the pattern used to
+    be `[0-9.]+` — which matches `....` as happily as an address. No `ip` at
+    all is a state every caller already handles; a malformed one is not."""
+    for junk in ('Ip:1.2.3.4.5,x:1', "Ip:....", "Ip:not-an-ip", "PowerSRC:0"):
+        assert "ip" not in parse_state_report("d4h", {"other": junk}), junk
+    assert "ip" not in parse_state_report("t5", {"Ip": "999.999.999.999"})
+
+
 def test_litter_content_string_is_merged():
     import json
     body = {"workState": 0, "content": json.dumps({"sandPercent": 42})}
