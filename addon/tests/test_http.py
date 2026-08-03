@@ -230,6 +230,11 @@ def test_a_settings_write_goes_to_the_property_set_handler():
     assert content["msgType"] == 1
     # `web_property_set_recv_parse` reads `payload` and nothing else.
     assert content["payload"] == {"petDetection": 1}
+    # And no `type`, because the real cloud sends none. Captured from PetKit's
+    # own servers setting a D4's indicator light (PR #10). The key is inert
+    # either way, but a body that matches theirs is one a capture of ours can
+    # be compared against.
+    assert "type" not in content
 
 
 def test_a_service_keeps_the_name_the_firmware_dispatches_on():

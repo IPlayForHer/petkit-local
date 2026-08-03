@@ -137,6 +137,23 @@ def test_feed_uses_feed_realtime_topic():
     assert env["params"]["id"].startswith("r_")
 
 
+def test_the_feed_id_carries_its_number_twice():
+    """`r_20260802_882_882-1` and `r_20260802_4057_4057-1`, both captured off
+    PetKit's cloud talking to a D4 (PR #10). This was written from localkit's
+    `FeedRealtime`, which has the number once; two captures agreeing settles it
+    against a reimplementation. Two independent random numbers would match by
+    chance about once in eighty million times."""
+    import re
+
+    d = Device(device_type="d4h", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+    for _ in range(5):
+        _, env = handle_ha_command(d, idx["feed"], "")
+        m = re.fullmatch(r"r_(\d{8})_(\d+)_(\d+)-1", env["params"]["id"])
+        assert m, env["params"]["id"]
+        assert m.group(2) == m.group(3)
+
+
 def test_every_button_maps_to_an_action():
     # Coherence: every button entity across all device types must resolve to a
     # known action, else pressing it silently does nothing.

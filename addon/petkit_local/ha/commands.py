@@ -153,12 +153,16 @@ LITTER_ACTIONS = {
 def _feed(amount: int = 10) -> Command:
     """Dispense `amount` portions now; amount=0 cancels a pending manual feed.
 
-    The random `id` is the feed's own identifier (localkit FeedRealtime uses
-    the same `r_{date}_{nnnn}-1` shape), not the envelope id.
+    The `id` is the feed's own identifier, not the envelope id, and the number
+    in it appears TWICE: `r_20260802_882_882-1`, `r_20260802_4057_4057-1`, both
+    captured off PetKit's own cloud talking to a D4 (PR #10). This was written
+    from localkit's `FeedRealtime`, which has the number once — two independent
+    captures agreeing on the doubling settles it against a reimplementation.
     """
+    n = random.randint(1000, 9999)
     return ("feed_realtime", _envelope("thing.service.feed_realtime", {
         "amount": amount,
-        "id": f"r_{time.strftime('%Y%m%d')}_{random.randint(1000, 9999)}-1",
+        "id": f"r_{time.strftime('%Y%m%d')}_{n}_{n}-1",
     }))
 
 

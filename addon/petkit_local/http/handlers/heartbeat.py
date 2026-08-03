@@ -111,8 +111,9 @@ def _to_heartbeat_content(cmd: Any) -> str:
 
     Returns:
         A JSON string ``{"msgType": int, "payload": ..., "type": str,
-        "timestamp": int}``. An envelope whose service cannot be named at all
-        is sent as a `start` rather than dropped — a command that arrives
+        "timestamp": int}`` — without the `type` key for a property set, which
+        is what the real cloud sends. An envelope whose service cannot be named
+        at all is sent as a `start` rather than dropped — a command that arrives
         mislabelled is diagnosable from the device's reaction, one that
         disappears is not — and says so in the log.
     """
@@ -132,21 +133,28 @@ def _to_heartbeat_content(cmd: Any) -> str:
     params = cmd.get("params", cmd)
 
     if service == _PROPERTY_SET_SERVICE:
-        # `web_property_set_recv_parse` reads `payload` and nothing else, so
-        # `type` is inert here. Filled in anyway, because a heartbeat body with
-        # a blank `type` reads like a bug in a capture.
-        msg_type, type_str = MSG_TYPE_PROPERTY_SET, "property_set"
-    else:
-        if not service:
-            log.warning("Heartbeat command names no service (%s); "
-                        "sending it as `start`", sorted(cmd))
-            service = "start"
-        msg_type, type_str = MSG_TYPE_SERVICE_INVOKE, service
+        # No `type` at all. `web_property_set_recv_parse` reads `payload` and
+        # nothing else, so it is inert either way — but a capture of PetKit's
+        # own cloud setting a D4's light shows the key simply absent
+        # (`{"msgType": 1, "payload": {"lightMode": 0}, "timestamp": …}`, PR
+        # #10). This used to invent `"property_set"` on the grounds that a
+        # blank `type` reads like a bug; matching the cloud costs nothing and
+        # means a capture of ours can be compared with one of theirs.
+        return json.dumps({
+            "msgType": MSG_TYPE_PROPERTY_SET,
+            "payload": params,
+            "timestamp": int(time.time()),
+        })
+
+    if not service:
+        log.warning("Heartbeat command names no service (%s); "
+                    "sending it as `start`", sorted(cmd))
+        service = "start"
 
     return json.dumps({
-        "msgType": msg_type,
+        "msgType": MSG_TYPE_SERVICE_INVOKE,
         "payload": params,
-        "type": type_str,
+        "type": service,
         "timestamp": int(time.time()),
     })
 
