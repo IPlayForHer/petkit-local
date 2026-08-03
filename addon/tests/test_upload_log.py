@@ -194,3 +194,39 @@ def test_a_report_naming_petkit_s_own_oss_is_ordinary_proxied_traffic():
 
 def test_with_no_bucket_of_our_own_nothing_is_special_cased():
     assert _proxy_request("https://192.0.2.199:9000/devlog/1/x.log", bucket="") is False
+
+
+# --- and must not leak what the device recorded -----------------------------
+
+def _guarded(endpoint, block=True):
+    from aiohttp.test_utils import make_mocked_request
+
+    from petkit_local.http.middleware import GUARDED_LOCAL_ENDPOINTS
+    req = make_mocked_request("POST", f"/6/t5/{endpoint}")
+    name = req.path.rstrip("/").rsplit("/", 1)[-1]
+    return block and name in GUARDED_LOCAL_ENDPOINTS
+
+
+def test_what_the_device_recorded_is_not_reported_to_petkit():
+    """`dev_upload_file_info_v2` names every file the device just uploaded —
+    its `eventId`, its module type, its AES IV and the pet/clean/toilet flags.
+    Forwarded, that is a running account of what happened in somebody's home,
+    sent to PetKit by a device its owner has taken off PetKit; the media itself
+    goes to our bucket, so this metadata is the whole of what they would learn.
+
+    Redaction cannot cover it — that rewrites response bodies, and by the time
+    there is one the request has already been delivered. So the guard has to
+    withhold the request, like `_reports_a_local_log_upload` does.
+    """
+    assert _guarded("dev_upload_file_info_v2") is True
+
+
+def test_switching_the_guard_off_proxies_it_like_anything_else():
+    """Not parked in LOCAL_ONLY_ENDPOINTS: that would put it out of proxy
+    mode's reach for good, and proxy mode exists to be able to see traffic."""
+    assert _guarded("dev_upload_file_info_v2", block=False) is False
+
+
+def test_the_guard_does_not_reach_beyond_that_one_endpoint():
+    for other in ("dev_state_report", "dev_event_report", "dev_signup"):
+        assert _guarded(other) is False, other

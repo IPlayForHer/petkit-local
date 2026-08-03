@@ -76,6 +76,24 @@ API_PREFIX = "/6/"
 #: Turn proxy off to have our own pets take effect.
 LOCAL_ONLY_ENDPOINTS = frozenset({"dev_ble_device"})
 
+#: Endpoints whose REQUEST is the leak, withheld while the log-upload guard is
+#: on and forwarded normally when it is off.
+#:
+#: `dev_upload_file_info_v2` is how the device says what it just uploaded:
+#: `fileId`, `moduleType`, the AES IV, the `eventId` and the
+#: pet/clean/toilet flags. Forwarded, that is a running account of what happened
+#: in somebody's home — every visit, every recording, timestamped — sent to
+#: PetKit by a device its owner has taken off PetKit. The media itself never
+#: reaches them — it is PUT to our bucket — which makes this metadata the whole
+#: of what they would learn, and it is enough.
+#:
+#: Redaction cannot help: it rewrites response bodies, and by the time there is
+#: a body to rewrite the request has been delivered. So this is a request-side
+#: gate, exactly like `_reports_a_local_log_upload` below and for the same
+#: reason. It is NOT in `LOCAL_ONLY_ENDPOINTS`, because that would put it out of
+#: proxy mode's reach permanently; switching the guard off proxies it again.
+GUARDED_LOCAL_ENDPOINTS = frozenset({"dev_upload_file_info_v2"})
+
 
 def _reports_a_local_log_upload(request: web.Request, config: dict) -> bool:
     """Whether this is a `dev_upload_log` naming an object in OUR bucket.
@@ -331,6 +349,12 @@ async def proxy_middleware(request: web.Request, handler: Handler) -> web.Stream
         # there is nothing upstream can usefully say about an object it cannot
         # see, and a doctored `key` would be a lie rather than a redaction.
         log.debug("Not forwarding %s: it reports an upload to our own bucket",
+                  request.path)
+        return local
+
+    if (config.get("proxy_block_log_upload", True)
+            and request.path.rstrip("/").rsplit("/", 1)[-1] in GUARDED_LOCAL_ENDPOINTS):
+        log.debug("Not forwarding %s: the log-upload guard withholds it",
                   request.path)
         return local
 
