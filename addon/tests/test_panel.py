@@ -628,6 +628,17 @@ async def test_provision_ui_has_ble_protocol():
         # reading only BLUFI's own Wi-Fi report is how a Pura Max that had
         # accepted everything was reported as never having answered (#5).
         assert "BLUFI_DATA_CUSTOM" in js.split("function blufiExplain(")[1][:1200]
+        # And provisioning a BLUFI device sends custom data and NOTHING else.
+        # Driving BLUFI's own Wi-Fi provisioning as well puts the device on the
+        # network without PetKit's firmware ever reading the server list, so it
+        # comes up online — on PetKit's cloud. Confirmed on a T4; PetKit's app
+        # sends no native Wi-Fi frames at all.
+        blufi = js.split("async function provisionBlufi(")[1]
+        blufi = blufi[: blufi.index("\n}\n")]
+        for never in ("BLUFI_CTRL_CONN_TO_AP", "BLUFI_DATA_STA_SSID",
+                      "BLUFI_DATA_STA_PASSWD", "BLUFI_CTRL_SET_WIFI_OPMODE"):
+            assert never not in blufi, never
+        assert blufi.count("blufiSend(") == 1
         # The self-signed HTTPS panel on 8098 is gone — it published this
         # whole unauthenticated API to the LAN. Nothing may hand out that port.
         info = await (await c.get("/api/info")).json()
@@ -1053,6 +1064,54 @@ async def test_assets_are_revalidated_not_heuristically_cached():
         await c.close()
 
 
+async def test_the_index_says_no_cache_whatever_its_path_looks_like():
+    """The header used to come from a path match — `endswith("/")` — and the
+    index is the one response that cannot afford to depend on that. It is what
+    names the asset URLs, so a stale copy of it re-requests the OLD ones and
+    the content hash never gets a chance to work. Behind Ingress the panel is
+    mounted under an opaque prefix, and how that request arrives is not ours to
+    decide, so `handle_index` sets it itself."""
+    from petkit_local.web import panel as panel_mod
+
+    app, _reg, _hub = _panel()
+    c = await _mk_client(app)
+    try:
+        r = await c.get("/")
+        assert r.headers.get("Cache-Control") == "no-cache"
+        body = await r.text()
+        # And the document says which build it is, stamped by the same value
+        # that versions the asset URLs.
+        assert f'window.PANEL_ASSET_V = "{panel_mod.ASSET_VERSION}"' in body
+        assert f"app.js?v={panel_mod.ASSET_VERSION}" in body
+    finally:
+        await c.close()
+
+
+async def test_a_stale_page_can_tell_that_it_is_stale():
+    """`/api/info`'s `version` reports the SERVER's build, which is a different
+    question and cannot see this: a fresh server behind a cached page reports
+    the new number while running the old code. `asset_version` is the same
+    value from two moments — one that arrived with the document, one answered
+    live — so a mismatch means the page is old and nothing else can cause it.
+    """
+    from petkit_local.web import panel as panel_mod
+
+    app, _reg, _hub = _panel()
+    c = await _mk_client(app)
+    try:
+        info = await (await c.get("/api/info")).json()
+        assert info["asset_version"] == panel_mod.ASSET_VERSION
+        js = await (await c.get("/static/app.js")).text()
+        # The comparison, and something visible when it fails — a check whose
+        # result goes nowhere is the same as no check.
+        assert "PANEL_ASSET_V" in js
+        assert "stale-banner" in js
+        css = await (await c.get("/static/styles.css")).text()
+        assert ".stale-banner" in css
+    finally:
+        await c.close()
+
+
 # --- proxy settings: validation and gating ---
 
 def _proxy_settings_app(tmp=None, store=None):
@@ -1418,9 +1477,10 @@ async def test_the_panel_can_set_an_accessory_control():
         assert (await r.json())["delivered"] == "ble"
         parent_id, ble_id, cmd, payload = bridge.sent[0]
         assert (parent_id, ble_id, cmd) == (10, 700, 220)
-        # Picking a mode means running in it: power on, and suspend follows
-        # from the mode rather than from whatever the last reading held.
-        assert payload == bytes([1, 0, 2])
+        # Picking a mode means running in it: power on and pump un-paused,
+        # which is what PetKit's app sends, rather than either being read back
+        # from whatever the last status held.
+        assert payload == bytes([1, 1, 2])
         # Optimistic, like a real device's.
         assert ble.get(700).state["states"]["mode"] == 2
     finally:

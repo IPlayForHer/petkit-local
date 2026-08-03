@@ -167,5 +167,10 @@
     </div>
   </div>
 </div>
+<!-- Which build this DOCUMENT is, as opposed to which one the server is running.
+     The two are answered from different places on purpose: this one arrived
+     with the page and may have come out of a cache, while /api/info answers
+     live. `app.js` compares them. -->
+<script>window.PANEL_ASSET_V = "{{ asset_version }}";</script>
 <script src="static/app.js?v={{ asset_version }}"></script>
 </body></html>

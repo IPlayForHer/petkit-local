@@ -208,12 +208,20 @@ async def _no_heuristic_caching(request: web.Request, response: web.StreamRespon
 
     `no-cache` does not mean "do not store": the file stays cached and the
     conditional request still answers 304 from the ETag, so this costs one
-    round trip per asset, not a re-download. Applied to the index too, since
-    the same reasoning holds for the markup that names the assets.
+    round trip per asset, not a re-download.
+
+    This covers the static files. The INDEX matters more and sets the same
+    header itself, in `handle_index`, rather than being matched on its path —
+    it used to be covered only when the path happened to end in a slash, which
+    depends on how Ingress routed the request. Cache-busting defends an asset
+    and never the document: `?v=<hash>` only reaches the browser if the markup
+    carrying it was fetched, so a stale index asks for the OLD asset URL and
+    any cache can answer it correctly. The document is where the whole
+    mechanism starts, so it does not get to depend on a path match.
     """
     # Substring, not prefix: behind HA Ingress the panel is mounted under an
     # opaque path, so "/static/" is not guaranteed to be at position 0.
-    if "/static/" in request.path or request.path.endswith("/"):
+    if "/static/" in request.path:
         response.headers.setdefault("Cache-Control", "no-cache")
 
 
@@ -649,6 +657,13 @@ async def api_info(request: web.Request) -> web.Response:
     cert = cfg.get("cert_path", "")
     ha_pub = request.app.get("ha_publisher")
     return web.json_response({
+        # The hash of the assets THIS process would serve, so the panel can
+        # compare it with the one baked into the page it is running from. They
+        # are the same value from two different moments: `asset_version` in the
+        # markup came with the document, possibly out of a cache, while this
+        # one is answered live. A mismatch is the one failure the `version`
+        # below cannot see — a fresh server running behind a stale page.
+        "asset_version": ASSET_VERSION,
         # The running version. First thing to check when a device reports the
         # entities of a release you thought you had replaced.
         "version": VERSION,
@@ -2805,6 +2820,13 @@ async def handle_index(request: web.Request) -> web.Response:
     and a relative asset resolves under whatever opaque
     `/api/hassio_ingress/<token>/` prefix Ingress happens to be using. An
     absolute `/static/...` would escape that prefix and 404.
+
+    `no-cache` is set here rather than left to `_no_heuristic_caching`'s path
+    match, because this is the one response that must never be reused without
+    asking: it is what names the asset URLs, so a stale copy of it re-requests
+    the old ones and defeats the content hash entirely.
     """
-    return aiohttp_jinja2.render_template("index.html", request,
-                                          {"asset_version": ASSET_VERSION})
+    response = aiohttp_jinja2.render_template("index.html", request,
+                                              {"asset_version": ASSET_VERSION})
+    response.headers["Cache-Control"] = "no-cache"
+    return response

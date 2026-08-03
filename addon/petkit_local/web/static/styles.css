@@ -183,6 +183,22 @@ main {
   color: inherit;
   text-decoration: underline;
 }
+/* "You are looking at an old copy of this page." Prepended to <body> rather
+   than rendered into a tab, because the tab someone is on when this matters is
+   whichever one is behaving oddly — and the whole point is that the panel is
+   not the one that was deployed. Same warning tint as `.card.notice`, but
+   full-bleed at the top: this is about the page itself, not about anything in
+   it. */
+.stale-banner {
+  border-bottom: 1px solid rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--fg);
+  padding: 10px 16px;
+  font-size: 14px;
+}
+.stale-banner .mini {
+  margin-left: 8px;
+}
 /* The form the notice above is talking about. Deliberately NOT
    `pointer-events: none`: the fields carry the `?` help buttons that explain
    what each one is for, and those stay useful — arguably more so — while the
