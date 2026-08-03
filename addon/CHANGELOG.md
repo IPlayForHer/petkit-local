@@ -1,5 +1,114 @@
 # Changelog
 
+## 1.7.0 — 2026-08-03
+
+### An ESP32 device was being provisioned onto PetKit's cloud
+
+A T4 came up online, visible in PetKit's own app, having never once called this
+add-on. The Bluetooth log said it had connected to a server, and it had — just
+not to ours.
+
+BLUFI can provision Wi-Fi by itself: set the mode, hand it the SSID and the
+password, tell it to connect. This did all of that, and sent PetKit's own
+document with the server address alongside as an extra. So the ESP's BLUFI
+layer joined the network on its own, the firmware's handler for that document
+never ran, and the device carried on with the server list it already had.
+
+PetKit's app sends no native Wi-Fi frames at all — `PetkitBLEManager` has one
+outbound call in it — and the SSID and password travel inside the same JSON as
+everything else, so the firmware does the joining itself *after* reading where
+to phone home. This now does the same. A device that ignores the document will
+fail to join, which is loud, rather than join somebody else, which is silent.
+
+### The log-upload guard also stops the device reporting what it recorded
+
+`dev_upload_file_info_v2` is how a device says what it just uploaded: the file
+id, the module type, the AES IV, the event it belongs to and the
+pet/clean/toilet flags. Proxied, that is a running account of what happened in
+somebody's home — every visit, every clip, timestamped — sent to PetKit by a
+device its owner has taken off PetKit. The media itself never gets there, which
+makes the metadata the whole of what they would learn.
+
+Redaction could not cover it: that rewrites response bodies, and by the time
+there is a body the request has been delivered. So it is withheld on the way
+out, the same way a log upload naming our own bucket already was. Switching the
+guard off proxies it again — it is a guard, not a permanent exemption.
+
+### PetKit's own app, as a source
+
+The provisioning payload and the CTW3 settings block were both settled by
+decompiling PetKit's Android app (13.8.1, `com.petkit.android`). Nothing from it
+is in this repo — only what the protocol is.
+
+- **`locale` is a time ZONE name, not a language.** The app fills it with
+  `TimeZone.getDefault().getID()` — `Europe/Amsterdam`, `America/New_York` —
+  right beside the numeric offset, and a captured D4 signup body echoes exactly
+  that back. This sent `navigator.language`, so devices were being told their
+  zone was called "en-US".
+- **The CTW3 settings block is twelve bytes, in the order this already read
+  it.** 1.6.0 reordered three of them for the write, following a third-party
+  capture, and that was wrong: the app writes lamp switch, brightness,
+  do-not-disturb, child lock at bytes 6-9, exactly as the status tail reads.
+  Bytes 10 and 11 are two more switches nobody had named — the smart and
+  battery inductive sensors — and they are decoded and restated now.
+- **Filter reset carries no payload.** The app sends cmd 222 empty; 1.6.1 sent
+  a single zero byte.
+- **Choosing a flow mode sends power on and pump un-paused**, both fixed at 1.
+  1.6.0 derived the pause byte from the mode, which the app does not do.
+- **The join report now names what went wrong.** Its ten states come from the
+  app's own per-state log lines, including the four failures it had none of:
+  a wrong Wi-Fi password used to render as "state 3" and the panel kept polling
+  for another twenty-four seconds. State **9 is "connecting to MQTT"** and
+  **10 is "online"** — an ESP32 device cannot reach either against this add-on,
+  because the TLS bypass it would need has no ESP32 patcher, so it settles on
+  the HTTP heartbeat. Stopping at 7 is therefore not a failure.
+- The transport split is confirmed to be by model, and it is the same list this
+  already calls next-gen: T5, D4SH, D4H, T6, T7, T7 Lite and W7H take PetKit's
+  own GATT profile, everything else BLUFI. The JSON document is identical on
+  both; only the framing differs.
+
+### Camera feeders had no stream URL, and no patchers either
+
+A D4H or D4SH reports its LAN address in the same free-form string a litter box
+does, and the feeder parser was the one that dropped it. Nothing downstream said
+so: go2rtc quietly skips a device with no address, and the Patchers tab reports
+the whole device as unsupported. Found and fixed by **@nklmilojevic** (PR #12),
+confirmed on a D4H.
+
+The extraction now lives in one place for all three parsers — the litter one
+knew only the flat key, the MQTT one only the string — and it checks what it
+matched. The old pattern accepted `....` as readily as an address, and this
+value becomes a go2rtc source and an SSH target.
+
+### A device is told back the timezone it reported
+
+Its signup body carries `timezone` and `locale`, and both were read off the wire
+and dropped, so the reply came back with the SERVER's offset and an empty
+locale. A device that had just said it was at -4.0 was answered 2.0. The device
+is the authority on where it is; a manual override still wins over both.
+
+### The panel can tell you when you are looking at an old copy of it
+
+A 1.6.1 install reported a Bluetooth failure whose log was, word for word, the
+output from before the fix — the browser was still running the previous
+`app.js`. The server was fine. Nothing anywhere said so, and the only way to
+establish it was to compare log strings against the source.
+
+Assets are already versioned by a hash of their content, which defeats a stale
+asset. It cannot defeat a stale *document*: `?v=<hash>` only reaches the
+browser inside the markup that carries it, so a cached index asks for the old
+asset URL and every cache answers it correctly. The index now says `no-cache`
+itself instead of getting the header from a match on its path — behind Home
+Assistant Ingress the panel is mounted under an opaque prefix, and how that
+request arrives was never ours to decide.
+
+And the page now knows which build it is. The stamp travels in the document,
+`/api/info` answers the same value live, and a difference between them can only
+mean the page is old — so the panel says so, at the top, with a reload button.
+The version in **Setup** does not answer this: it comes from the server, so a
+fresh server behind a stale page reports the new number while running the old
+code.
+
 ## 1.6.1 — 2026-08-03
 
 Bluetooth provisioning, from three device reports. The short version: the panel
