@@ -1,5 +1,84 @@
 # Changelog
 
+## 1.6.1 — 2026-08-03
+
+Bluetooth provisioning, from three device reports. The short version: the panel
+was writing in one dialect and reading in another, and where a device did
+answer, the answer was thrown away.
+
+### Which way a device wants to be written to is now asked
+
+A Purobot Ultra takes a framed envelope — `FA FC FD 46 | type | seq | len |
+json | crc16 | FB` — and ignores anything else. A YumShare Solo takes bare JSON
+with response, ignores a framed write in silence, and drops the first write
+after a connect. The two are mirror images, so no single hardcoded direction
+could ever serve both.
+
+The panel now probes with `key 110`, uses whichever framing the device answered
+in, and runs the real handshake: credentials, then the device's own join
+report, rather than a fixed wait. Contributed by **@nklmilojevic**, verified on
+a D4H (fw 867), on top of the protocol **@strxno** reverse-engineered and
+verified on a T6 (fw 951). Both models are confirmed working.
+
+Both join states count as joined: the T6 goes `0 → 1 → 6 → 10` and never
+reports 7, the D4H stops at 7. Waiting on either alone hangs on half the
+models.
+
+### A Pura Max was answering, and was told it had not
+
+A T4 replied three times, the log printed `type 1 subtype 0x13`, and the panel
+said the device never answered. `0x13` is BLUFI's **custom data** — the channel
+PetKit's own document travels on, the one this sends the credentials over — and
+the only replies being read were BLUFI's Wi-Fi report and its error report. The
+device was answering in PetKit's protocol, inside BLUFI, and it was discarded.
+
+Custom data is decoded now, reassembled across fragments (BLUFI splits anything
+past its chunk size, and a fragment is not JSON on its own), and provisioning
+counts as done on either protocol's confirmation.
+
+### Smaller
+
+- A device that accepts the credentials but does not report joining within 25
+  seconds says so, with its last known state. It used to return success with
+  nothing in the log at all — the one habit 1.5.0 set out to break.
+- The join report is logged as it changes, so the log shows progress rather
+  than one line at the end.
+- Notifications are read from their own offset within the underlying buffer.
+  Reading the buffer whole works in Chrome today and is the kind of thing that
+  stops working on one platform with nothing to see.
+- The credentials now carry `hide`, `ipServers` and the timezone as the
+  one-decimal string, matching the only payload confirmed to provision a
+  device.
+- The provisioning decoders have real tests: the frames from all three reports,
+  run through the actual panel code in node. Skipped where node is absent.
+
+### Two feeder details, from a capture of the real cloud
+
+Both from **@cipheredsyntax** (PR #10), taken off PetKit's own servers talking
+to a Fresh Element Solo:
+
+- **A feed's id carries its number twice** — `r_20260802_882_882-1` — where
+  this sent it once. That shape came from localkit's reimplementation; two
+  independent captures agreeing outrank it.
+- **A settings write carries no `type` key.** It is inert — the firmware reads
+  `payload` and nothing else — but a body shaped like the cloud's is one a
+  capture of ours can be compared against.
+
+The rest of that report — a feeder sending its identity in the POST body, and
+the heartbeat's `msgType` numbers being wrong — was found independently and
+fixed in 1.5.0 and earlier, in both cases more broadly than the report needed:
+identity is resolved from the body for every endpoint rather than signup alone,
+and the `msgType` values come from the firmware's own three-way branch, read in
+two different binaries, rather than being special-cased per family.
+
+### Still true, and worth saying plainly
+
+The bytes this sends an Ingenic device were never the regression. They are
+identical in 1.4.0 and 1.6.0 — same document, same chunking, same write. What
+1.4.0 did was print "provisioned" without looking at the reply; 1.5.0 started
+telling the truth and 1.5.1 fixed the model detection it had broken. This
+release is the first that reads what the device says back.
+
 ## 1.6.0 — 2026-08-02
 
 ### Every Bluetooth write this has ever sent was malformed

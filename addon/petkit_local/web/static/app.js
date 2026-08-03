@@ -2243,13 +2243,44 @@ async function blufiSend(write, ctr, pktType, subtype, data) {
   }
 }
 
-// Turn one notification from 0xFF02 into something worth putting in the log.
-function blufiExplain(view) {
-  const b = new Uint8Array(view.buffer || view);
+// Turn one notification from 0xFF02 into something worth putting in the log,
+// recording any PetKit document it carries into `ctx.replies`.
+//
+// The custom-data branch is the whole of issue #5. A Pura Max answered three
+// times with `type 1 subtype 0x13` and the panel printed exactly that and then
+// declared the device had said nothing back — because 0x13 is
+// `BLUFI_DATA_CUSTOM`, the channel we send PetKit's own document ON, and the
+// only subtypes read on the way in were the Wi-Fi report and the error report.
+// The device was answering in PetKit's protocol, inside BLUFI, and we threw it
+// away and told its owner the pairing had failed.
+function blufiExplain(view, ctx) {
+  const b = pkBytes(view);
   if (b.length < 4) return 'short frame (' + b.length + 'B)';
   const pktType = b[0] & 0x03;
   const subtype = b[0] >> 2;
-  const data = b.slice(4, 4 + b[3]);
+  const fc = b[1];
+  let data = b.slice(4, 4 + b[3]);
+
+  if (pktType === BLUFI_TYPE_DATA && subtype === BLUFI_DATA_CUSTOM) {
+    // BLUFI fragments anything past its negotiated chunk size, and a fragment
+    // is not JSON on its own. When the fragment bit is set the first two bytes
+    // of the data are how much content is still to come, not content.
+    if (fc & BLUFI_FC_FRAG) {
+      ctx.frag.push(data.slice(2));
+      return 'custom data, partial (' + (data.length - 2) + 'B)';
+    }
+    ctx.frag.push(data);
+    const whole = ctx.frag.reduce((all, part) => all.concat([...part]), []);
+    ctx.frag.length = 0;
+    data = new Uint8Array(whole);
+    const msg = pkParse(data);
+    if (!msg || msg.key === undefined) {
+      return 'custom data, not a PetKit document: ' + new TextDecoder().decode(data);
+    }
+    ctx.replies[msg.key] = msg.payload || {};
+    return 'key ' + msg.key + ' ' + JSON.stringify(msg.payload || {});
+  }
+
   if (pktType === BLUFI_TYPE_DATA && subtype === BLUFI_DATA_WIFI_REP) {
     // opmode, sta_conn_state, softap_conn_num, then TLVs
     return 'wifi status: ' + (data[1] === 0 ? 'CONNECTED' : 'not connected (' + data[1] + ')');
@@ -2266,9 +2297,10 @@ async function provisionBlufi(service, cfg) {
   const e2p = await service.getCharacteristic(BLUFI_E2P);
 
   let connected = false;
+  const ctx = { frag: [], replies: {} };
   await e2p.startNotifications();
   e2p.addEventListener('characteristicvaluechanged', ev => {
-    const text = blufiExplain(ev.target.value);
+    const text = blufiExplain(ev.target.value, ctx);
     plog('device: ' + text);
     if (text.startsWith('wifi status: CONNECTED')) connected = true;
   });
@@ -2293,9 +2325,25 @@ async function provisionBlufi(service, cfg) {
   await blufiSend(write, ctr, BLUFI_TYPE_DATA, BLUFI_DATA_CUSTOM, enc.encode(custom));
   plog('BLUFI: connect');
   await blufiSend(write, ctr, BLUFI_TYPE_CTRL, BLUFI_CTRL_CONN_TO_AP, []);
-  // Hold the link open: the device answers with a WiFi status report once it
-  // has tried to join, and that reply is the only real confirmation there is.
-  await new Promise(r => setTimeout(r, 8000));
+
+  // Hold the link open and take confirmation from either protocol. BLUFI's own
+  // Wi-Fi report is one answer; PetKit's `151 -> state 1` and the join states
+  // of `112` are the other, and a Pura Max sends the second without the first.
+  // Waiting only on the BLUFI report is how a device that had already accepted
+  // everything got reported as never having answered.
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    if (connected || pkJoined(ctx.replies[112])) return true;
+  }
+  if (ctx.replies[151] && ctx.replies[151].state === 1) {
+    plog(
+      'the device accepted the credentials but has not reported joining yet ' +
+        '(last status: ' +
+        pkJoinState(ctx.replies[112]) +
+        '). It may still get there — watch the device list.',
+    );
+    return true;
+  }
   return connected;
 }
 
@@ -2330,6 +2378,14 @@ function pkCrc16(bytes) {
 
 // Wrap one JSON object in the framed envelope (only used for the T6-style
 // fallback path; the D4H takes bare JSON).
+//
+// `len` here counts the JSON alone, which is NOT what `pkParse` reads on the
+// way in — a D4H's replies count the JSON plus its two CRC bytes. That is not
+// a mistake in either direction: outbound is what a T6 accepted (issue #9) and
+// inbound is what a D4H sends (#11), each measured on its own hardware, and
+// nobody has seen one device do both. The parser therefore tries both endings
+// rather than trusting the field, and this comment exists so that neither side
+// gets "corrected" to match the other by someone reading only one of them.
 function pkFrame(seq, obj) {
   const json = new TextEncoder().encode(JSON.stringify(obj));
   const crc = pkCrc16(json);
@@ -2346,10 +2402,45 @@ function pkFrame(seq, obj) {
   ]);
 }
 
-// Parse one inbound notification (a DataView from Web Bluetooth): framed reply,
-// where len counts json + the 2 CRC bytes, or a bare-JSON reply. Null otherwise.
+// Key 112 is the join report, and its states are the device's own progress
+// through provisioning. 7 and 10 both mean done: a T6 went 0 -> 1 -> 6 -> 10
+// and never reported 7 at all (issue #9), while a D4H stopped at 7 (#11), so
+// waiting for either one alone hangs on half the models.
+const PK_JOIN_STATES = {
+  0: 'starting',
+  1: 'looking for the network',
+  2: 'connecting to the network',
+  6: 'on Wi-Fi, reaching the server',
+  7: 'connected to the server',
+  10: 'joined',
+};
+const PK_JOIN_DONE = [7, 10];
+
+function pkJoined(payload) {
+  return !!payload && PK_JOIN_DONE.includes(payload.state);
+}
+
+function pkJoinState(payload) {
+  if (!payload || payload.state === undefined) return 'never reported';
+  return PK_JOIN_STATES[payload.state] || 'state ' + payload.state;
+}
+
+// A DataView's bytes, and only its own: `view.buffer` is the whole underlying
+// ArrayBuffer, which may be longer than the view and start before it. Chrome
+// hands Web Bluetooth notifications out on their own buffers today, so reading
+// it whole happens to work — which is exactly the kind of thing that stops
+// working on one browser, on one platform, with no way to see why.
+function pkBytes(view) {
+  return view.byteLength === undefined
+    ? new Uint8Array(view)
+    : new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+}
+
+// Parse one inbound PetKit reply: the framed envelope, or bare JSON. Null when
+// it is neither. Accepts raw bytes as well as a DataView, because the same
+// document arrives inside BLUFI custom data on the ESP32 models.
 function pkParse(view) {
-  const u = new Uint8Array(view.buffer);
+  const u = view instanceof Uint8Array ? view : pkBytes(view);
   if (u.length >= 11 && u[0] === 0xfa && u[1] === 0xfc && u[2] === 0xfd && u[3] === 0x46) {
     const len = u[6] | (u[7] << 8);
     // len includes the trailing CRC; try that first, then fall back to
@@ -2435,18 +2526,30 @@ async function provisionPetkit(service, cfg) {
     return false;
   }
 
-  // Poll join status (key 112): 0 start, 1 finding, 2 connecting, 6 reaching
-  // server, 7 connected, 10 joined. 7 or 10 is done.
   plog('credentials accepted — waiting for the device to join the network…');
+  let shown = null;
   for (let i = 0; i < 25; i++) {
     await send({ key: 112, payload: {} });
     await sleep(1000);
-    const st = (replies[112] || {}).state;
-    if (st === 7 || st === 10) {
-      plog('device joined the network');
-      break;
+    const state = (replies[112] || {}).state;
+    // Only on change: polling once a second would otherwise print the same
+    // line twenty-five times and bury the one that matters.
+    if (state !== shown) {
+      shown = state;
+      plog('device: ' + pkJoinState(replies[112]));
     }
+    if (pkJoined(replies[112])) return true;
   }
+  // Not "joined" and not a failure either: the device took the credentials and
+  // said so. Returning true without a word here reported a device that never
+  // got onto Wi-Fi as provisioned, which is the one thing 1.5.0 set out to stop
+  // doing.
+  plog(
+    'the credentials were accepted, but the device did not report joining within ' +
+      '25s (last status: ' +
+      pkJoinState(replies[112]) +
+      '). It may still get there on its own — watch the device list.',
+  );
   return true;
 }
 

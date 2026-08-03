@@ -616,6 +616,18 @@ async def test_provision_ui_has_ble_protocol():
         assert js.count("gatt.getPrimaryServices()") == 1
         # Quoted or bare, spaced or not — the payload key is what matters.
         assert re.search(r"""["']?key["']?\s*:\s*151""", js)
+        # Which way a device wants to be WRITTEN to is asked as well, because
+        # the two that have been tested disagree: a T6 takes the framed
+        # envelope (issue #9), a D4H takes bare JSON with response and ignores
+        # a framed write in silence (#11). Both writers have to exist, or one
+        # family provisions and the other reports nothing at all.
+        assert "bare:" in js and "framed:" in js
+        # The decoders themselves are exercised for real in test_provision_js.
+        assert "function pkParse(" in js and "function pkCrc16(" in js
+        # A BLUFI device answers in PetKit's protocol inside custom data, and
+        # reading only BLUFI's own Wi-Fi report is how a Pura Max that had
+        # accepted everything was reported as never having answered (#5).
+        assert "BLUFI_DATA_CUSTOM" in js.split("function blufiExplain(")[1][:1200]
         # The self-signed HTTPS panel on 8098 is gone — it published this
         # whole unauthenticated API to the LAN. Nothing may hand out that port.
         info = await (await c.get("/api/info")).json()

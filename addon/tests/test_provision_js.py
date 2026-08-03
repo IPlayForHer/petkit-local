@@ -1,0 +1,189 @@
+"""The provisioning decoders in `web/static/app.js`, run for real.
+
+Everything else about the panel's JavaScript is tested by asserting on its
+source text, which catches a deleted feature and nothing else. These functions
+are the exception worth the machinery: they decode a binary protocol off real
+hardware, three device reports disagree about the details, and a wrong offset
+here reads as "your device never answered" rather than as an error.
+
+So the pure helpers are lifted out of `app.js` — they touch no DOM — and
+exercised in node against the exact frames the reports describe. Skipped where
+node is absent; CI has it, because the prettier check runs through `npx`.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+APP_JS = Path(__file__).resolve().parent.parent / "petkit_local" / "web" / "static" / "app.js"
+
+pytestmark = pytest.mark.skipif(shutil.which("node") is None,
+                                reason="node is needed to run the panel's JavaScript")
+
+#: Lifted from app.js by name. All pure, all DOM-free.
+FUNCTIONS = ("pkCrc16", "pkFrame", "pkParse", "pkBytes", "pkJoined", "pkJoinState",
+             "blufiExplain")
+CONSTANTS = ("PK_MAGIC", "PK_TAIL", "PK_TYPE_OUT", "PK_JOIN_STATES", "PK_JOIN_DONE",
+             "BLUFI_TYPE_CTRL", "BLUFI_TYPE_DATA", "BLUFI_DATA_WIFI_REP",
+             "BLUFI_DATA_ERROR_INFO", "BLUFI_DATA_CUSTOM", "BLUFI_FC_FRAG")
+
+
+def _extract(src: str, name: str) -> str:
+    """One top-level `function name(...) {...}`, by matching its braces.
+
+    A regex cannot do this — the bodies contain braces — and importing app.js
+    whole is not an option, since the rest of it reaches for `document` on load.
+    """
+    start = src.index(f"function {name}(")
+    i = src.index("{", start)
+    depth = 0
+    while True:
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+        i += 1
+        if depth == 0:
+            return src[start:i]
+
+
+def _harness(body: str) -> str:
+    """The extracted helpers, plus a script that exercises them."""
+    src = APP_JS.read_text()
+    out = []
+    for const in CONSTANTS:
+        line = next(ln for ln in src.splitlines() if ln.startswith(f"const {const} = "))
+        # A multi-line constant (the join-state table) runs to its closing brace.
+        if line.rstrip().endswith(("{", "[")):
+            idx = src.index(line)
+            end = src.index("\n};\n" if line.rstrip().endswith("{") else "\n];\n", idx)
+            line = src[idx:end + 3]
+        out.append(line)
+    out += [_extract(src, fn) for fn in FUNCTIONS]
+    out.append(body)
+    return "\n".join(out)
+
+
+def _run(body: str) -> dict:
+    """Run `body` against the extracted helpers; it prints one JSON object."""
+    proc = subprocess.run(["node", "--input-type=module", "-e", _harness(body)],
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+#: `{"key":151,"payload":{"state":1}}` — the ack every model sends for the
+#: credentials, and the shortest document worth reassembling.
+ACK_JS = """
+const json = new TextEncoder().encode('{"key":151,"payload":{"state":1}}');
+const crc = pkCrc16(json);
+const framed = n => new Uint8Array([0xfa, 0xfc, 0xfd, 0x46, 0x13, 0,
+  n & 0xff, (n >> 8) & 0xff, ...json, crc & 0xff, (crc >> 8) & 0xff, 0xfb]);
+const blufiPkt = (sub, fc, data) =>
+  new Uint8Array([1 | (sub << 2), fc, 0, data.length, ...data]);
+"""
+
+
+def test_the_crc_is_the_one_the_devices_use():
+    """CRC-16/CCITT-FALSE, whose published check value over "123456789" is
+    0x29B1. A CRC that is merely plausible produces frames a device drops in
+    silence, which is indistinguishable from every other failure here."""
+    out = _run("""
+      console.log(JSON.stringify({check: pkCrc16(new TextEncoder().encode('123456789'))}));
+    """)
+    assert out["check"] == 0x29B1
+
+
+def test_both_readings_of_the_length_field_are_accepted():
+    """The two hardware reports disagree: a T6's framed replies count the JSON
+    alone (issue #9), a D4H's count the JSON plus its two CRC bytes (#11).
+    Neither can be assumed, so both endings are tried."""
+    out = _run(ACK_JS + """
+      console.log(JSON.stringify({
+        with_crc: pkParse(framed(json.length + 2)).payload.state,
+        without:  pkParse(framed(json.length)).payload.state,
+        bare:     pkParse(json).key,
+        garbage:  pkParse(new Uint8Array([1, 2, 3])),
+      }));
+    """)
+    assert out == {"with_crc": 1, "without": 1, "bare": 151, "garbage": None}
+
+
+def test_a_notification_is_read_from_its_own_offset():
+    """`view.buffer` is the whole underlying ArrayBuffer, which may be longer
+    than the view and start before it. Reading it whole works on Chrome today
+    and is the kind of thing that stops working on one platform with no way to
+    see why."""
+    out = _run(ACK_JS + """
+      const body = framed(json.length + 2);
+      const big = new Uint8Array(64);
+      big.set(body, 8);
+      const v = new DataView(big.buffer, 8, body.length);
+      console.log(JSON.stringify({state: pkParse(v).payload.state}));
+    """)
+    assert out["state"] == 1
+
+
+def test_an_outbound_frame_reads_back_as_itself():
+    out = _run("""
+      console.log(JSON.stringify({key: pkParse(pkFrame(3, {key: 110, payload: {}})).key}));
+    """)
+    assert out["key"] == 110
+
+
+def test_a_fragmented_custom_data_reply_is_reassembled():
+    """Issue #5, in one assertion. A Pura Max answered three times with
+    `type 1 subtype 0x13` — BLUFI custom data, the channel PetKit's own
+    document rides on — and the panel logged the subtype number, kept none of
+    it, and told the owner the device had never answered.
+
+    Each fragment carries two bytes of remaining-length before its content, so
+    a fragment is not JSON on its own and the pieces mean nothing apart.
+    """
+    out = _run(ACK_JS + """
+      const ctx = {frag: [], replies: {}};
+      const parts = [json.slice(0, 12), json.slice(12, 24), json.slice(24)];
+      let line;
+      parts.forEach((p, i) => {
+        const last = i === parts.length - 1;
+        const data = last
+          ? p
+          : new Uint8Array([json.length & 0xff, (json.length >> 8) & 0xff, ...p]);
+        line = blufiExplain(blufiPkt(0x13, last ? 0x00 : 0x10, data), ctx);
+      });
+      console.log(JSON.stringify({state: (ctx.replies[151] || {}).state, line}));
+    """)
+    assert out["state"] == 1
+    assert out["line"].startswith("key 151")
+
+
+def test_the_blufi_branches_that_already_worked_still_do():
+    out = _run(ACK_JS + """
+      const ctx = {frag: [], replies: {}};
+      console.log(JSON.stringify({
+        wifi: blufiExplain(blufiPkt(0x0f, 0, new Uint8Array([1, 0, 0])), ctx),
+        err:  blufiExplain(blufiPkt(0x12, 0, new Uint8Array([7])), ctx),
+      }));
+    """)
+    assert "CONNECTED" in out["wifi"]
+    assert "code 7" in out["err"]
+
+
+def test_both_join_states_count_as_joined():
+    """A T6 went 0 -> 1 -> 6 -> 10 and never reported 7 (issue #9); a D4H
+    stopped at 7 (#11). Waiting on either one alone hangs on half the models."""
+    out = _run("""
+      console.log(JSON.stringify({
+        s7: pkJoined({state: 7}), s10: pkJoined({state: 10}),
+        s6: pkJoined({state: 6}), none: pkJoined(undefined),
+        unreported: pkJoinState(undefined), named: pkJoinState({state: 6}),
+      }));
+    """)
+    assert out["s7"] and out["s10"]
+    assert not out["s6"] and not out["none"]
+    assert out["unreported"] == "never reported"
+    assert "reaching the server" in out["named"]
