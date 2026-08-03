@@ -70,19 +70,29 @@ shell commands or a log upload through it.
 
 ## 🐈 Supported devices
 
-**Confirmed working.** This is the whole list, and it is one box — the author's. Every other model
-below is inference until somebody reports back.
+**Confirmed working.** Somebody has run one of these against this and said what happened. Every
+other model below is inference until the same is true of it.
 
 | Product | Codename | Camera | On-device AI |
 |---|---|---|---|
 | Purobot Max Pro 2 | T5 | ✅ | ✅ |
+| Purobot Ultra | T6 | ✅ | ✅ |
+| EverSweet Ultra AI | W7H | ✅ | ✅ |
+| EverSweet Max Cordless | CTW3 † | — | — |
+
+Confirmed is not the same as complete, and the four differ in how far anyone has got. The T5 is the
+author's and is the one model where everything here has been exercised. The **T6** was provisioned
+over Bluetooth and went on to sign up and talk to the local server ([#9](https://github.com/alex-so-3/petkit-local/issues/9)).
+The **W7H** runs, reports and polls for pet faces; pushing a *locally* added pet to it is still
+missing ([#8](https://github.com/alex-so-3/petkit-local/issues/8)). The **CTW3** pairs to a feeder
+and its readings arrive and decode ([#4](https://github.com/alex-so-3/petkit-local/issues/4)) —
+nobody has yet confirmed that a setting written back to it takes effect.
 
 **Should work.** Same firmware family, and the protocol was verified against their firmware — but
 nobody has run one.
 
 | Product | Codename | Camera | On-device AI |
 |---|---|---|---|
-| Purobot Ultra | T6 | ✅ | ✅ |
 | Purobot Crystal Duo | T7 | ✅ | ✅ |
 
 **Supported, not tested.** Entity definitions exist and should be close, but most come from
@@ -101,18 +111,18 @@ to sit at "unknown".
 | Fresh Element Solo | D4 | — | — |
 | Feeder D3 / D4s | D3, D4S | — | — |
 | Feeder / Feeder Mini | feeder, feedermini ‡ | — | — |
-| EverSweet Ultra AI | W7H | ✅ | ✅ |
 | EverSweet 3 Pro | W5 † — also W5C, W5N | — | — |
 | EverSweet | W4 † — also W4X, W4X UVC | — | — |
 | EverSweet Solo 2 | CTW2 † | — | — |
-| EverSweet Max Cordless | CTW3 † | — | — |
 | Pura Air smart spray | K2, K3 † | — | — |
 
 **† No Wi-Fi — Bluetooth only.** A mains-powered litter box or feeder relays for them, so no parent
 nearby means no data. Pair them from the **Devices** tab, on the panel of the device that will
-relay — a parent discovers nothing, it asks the cloud what to scan for. That scan number is a guess
-for every fountain but the W5: if one never reports, change **Scan type** under Advanced and say
-which value worked. Variants sharing a row speak one protocol and pair as the row's codename.
+relay — a parent discovers nothing, it asks the cloud what to scan for. That scan number has been
+read off a real pairing for the W5 and the CTW3 only; for the rest it is borrowed from their product
+line. If one never reports, that number is the first thing to change — **Scan type** under Advanced
+— and please say which value worked. Variants sharing a row speak one protocol and pair as the row's
+codename.
 
 **Nothing to relay through?** Then this cannot reach a fountain at all — use
 **[aavdberg/ha-petkit](https://github.com/aavdberg/ha-petkit)** instead, which talks to these models
@@ -148,8 +158,8 @@ firmware, and where those two sources disagree the code says so rather than quie
 `events/codes.py` grades every protocol fact by what backs it: confirmed, inferred, unverified,
 conflicted.
 
-Where something is still a guess it says so. The device table above is one model I own and a longer
-list I cannot vouch for.
+Where something is still a guess it says so. The device tables above say which models somebody has
+actually run and how far they got, and the rest is a longer list I cannot vouch for.
 
 If the code is confidently wrong somewhere, that is a bug and I want the issue. Contributions are
 welcome however you write them, LLM-assisted or not. What counts is whether it is right about the
