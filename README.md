@@ -80,13 +80,7 @@ other model below is inference until the same is true of it.
 | EverSweet Ultra AI | W7H | ✅ | ✅ |
 | EverSweet Max Cordless | CTW3 † | — | — |
 
-Confirmed is not the same as complete, and the four differ in how far anyone has got. The T5 is the
-author's and is the one model where everything here has been exercised. The **T6** was provisioned
-over Bluetooth and went on to sign up and talk to the local server ([#9](https://github.com/alex-so-3/petkit-local/issues/9)).
-The **W7H** runs, reports and polls for pet faces; pushing a *locally* added pet to it is still
-missing ([#8](https://github.com/alex-so-3/petkit-local/issues/8)). The **CTW3** pairs to a feeder
-and its readings arrive and decode ([#4](https://github.com/alex-so-3/petkit-local/issues/4)) —
-nobody has yet confirmed that a setting written back to it takes effect.
+Confirmed is not the same as complete: there can still be bugs, and features that are missing.
 
 **Should work.** Same firmware family, and the protocol was verified against their firmware — but
 nobody has run one.
@@ -94,6 +88,9 @@ nobody has run one.
 | Product | Codename | Camera | On-device AI |
 |---|---|---|---|
 | Purobot Crystal Duo | T7 | ✅ | ✅ |
+| EverSweet 3 Pro | W5 † — also W5C, W5N | — | — |
+| EverSweet | W4 † — also W4X, W4X UVC | — | — |
+| EverSweet Solo 2 | CTW2 † | — | — |
 
 **Supported, not tested.** Entity definitions exist and should be close, but most come from
 [pypetkitapi](https://github.com/Jezza34000/py-petkit-api), a client of PetKit's *cloud* API — whose
@@ -111,9 +108,6 @@ to sit at "unknown".
 | Fresh Element Solo | D4 | — | — |
 | Feeder D3 / D4s | D3, D4S | — | — |
 | Feeder / Feeder Mini | feeder, feedermini ‡ | — | — |
-| EverSweet 3 Pro | W5 † — also W5C, W5N | — | — |
-| EverSweet | W4 † — also W4X, W4X UVC | — | — |
-| EverSweet Solo 2 | CTW2 † | — | — |
 | Pura Air smart spray | K2, K3 † | — | — |
 
 **† No Wi-Fi — Bluetooth only.** A mains-powered litter box or feeder relays for them, so no parent
