@@ -772,10 +772,20 @@ def parse_ctw3_ble_response(content: Any) -> dict[str, dict[str, Any]]:
     """
     result: dict[str, dict[str, Any]] = {"states": {}, "consumables": {}}
     for cmd, data in _iter_ble_frames(content):
-        if cmd in (CMD_DEVICE_STATUS, CMD_GET_STATE) and data:
+        if not data:
+            continue
+        if cmd in (CMD_DEVICE_STATUS, CMD_GET_STATE):
             dec = _decode_ctw3_status(data)
             result["states"].update(dec["states"])
             result["consumables"].update(dec["consumables"])
+        elif cmd == CMD_GET_CONFIG:
+            # A CTW3 DOES answer 211 — over the relay, at least. It is silent
+            # to a direct GATT client on firmware 111, which is why
+            # aavdberg/ha-petkit skips the command entirely, and why nothing
+            # here ever asked. The reply is the same 12-byte block as a 221
+            # write and the tail of a long 230, so it decodes with no new
+            # offsets: `03 03 00 78 04 b0 01 03 00 00 01 00` off a live one.
+            result["states"].update(decode_ctw3_config(data))
     return {k: v for k, v in result.items() if v}
 
 

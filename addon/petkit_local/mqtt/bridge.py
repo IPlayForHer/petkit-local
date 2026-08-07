@@ -521,11 +521,19 @@ class MQTTBridge:
         MQTT `cmd` alongside the same `FA FC FD ... FB` frame the accessory
         answers with. The parent forwards the bytes; it does not interpret them.
 
+        A write needs a session that is already open. Published on its own it is
+        accepted by the parent, forwarded, and does nothing — confirmed on a
+        CTW3 by @strxno, who saw the same frame acknowledged with a session held
+        and silently ignored without one. So the session is opened first, on
+        every write, and left for `_handle_ble_response` to close once a reading
+        comes back.
+
         Returns False when nothing could be sent, so a caller does not report
         success for a command that never left.
         """
         if not self._client:
             return False
+        await self._ble_connect(device, ble, action=1)
         seq = self._ble_seq.get(ble.petkit_id, 0)
         self._ble_seq[ble.petkit_id] = (seq + 1) & 0xFF
         data = ble_command_frame(cmd, seq, payload)

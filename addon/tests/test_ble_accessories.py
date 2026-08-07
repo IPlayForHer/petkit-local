@@ -1001,8 +1001,10 @@ async def test_the_sequence_number_advances_per_accessory():
     dev = ble.get(700)
     for _ in range(3):
         await bridge.publish_ble_command(reg.get(10), dev, 220, bytes([0, 1, 1, 1]))
+    # Every write is preceded by its own `connect`, so filter to the frames
+    # that actually carry a payload.
     seqs = [_decode_frame(json.loads(b)["params"]["payload"]["data"])[5]
-            for _, b in bridge._client.sent]
+            for t, b in bridge._client.sent if t.endswith("/thing/service/ble")]
     assert seqs == [0, 1, 2]
 
 
@@ -1186,3 +1188,41 @@ async def test_a_frame_that_is_not_a_reading_does_not_end_the_session():
                                "payload": [{"cmd": 230, "data": CTW3_CMD230}]}),
     })
     assert json.loads(bridge._client.sent[-1][1])["params"]["connect_action"] == 0
+
+
+async def test_a_write_opens_the_session_it_needs():
+    """Published on its own, a write is accepted by the parent, forwarded, and
+    does nothing. @strxno saw the same 221 frame acknowledged with a session
+    held open and ignored in silence without one — which from here is
+    indistinguishable from a frame the accessory refused."""
+    bridge, reg, ble = _bridge_with("d4sh")
+    assert await bridge.publish_ble_command(reg.get(10), ble.get(700), 222, b"")
+
+    topics = [t.rsplit("/", 1)[-1] for t, _ in bridge._client.sent]
+    assert topics == ["connect", "ble"], topics
+    opened = json.loads(bridge._client.sent[0][1])["params"]
+    assert opened["connect_action"] == 1 and "time" in opened
+
+
+def test_a_ctw3_settings_reply_decodes_with_no_new_offsets():
+    """A CTW3 answers cmd 211 over the relay, though it is silent to a direct
+    GATT client on firmware 111 — which is why nothing here ever asked. The
+    reply is the same 12-byte block as a 221 write and the tail of a long 230.
+
+    These bytes are off a live fountain, and they are also what settles the
+    byte order: writing "light off" moved byte 6 from 01 to 00 and left byte 7
+    at 03, which is only consistent with 6 being the light switch.
+    """
+    import base64
+
+    blob = bytes.fromhex("030300780" + "4b001030000" + "0100")
+    st = _ctw3(data=base64.b64encode(blob).decode(), cmd=211)["states"]
+    assert st["smartWorkingTime"] == 3
+    assert st["energyInterval"] == 120
+    assert st["sleepTime"] == 1200
+    assert st["lightSwitch"] == 1
+    assert st["brightness"] == 3
+    assert st["noDisturbingSwitch"] == 0
+    assert st["childLock"] == 0
+    assert st["smartInductiveSwitch"] == 1
+    assert st["batteryInductiveSwitch"] == 0
