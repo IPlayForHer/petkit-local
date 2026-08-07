@@ -1143,3 +1143,46 @@ async def test_a_refresh_that_could_not_be_sent_says_so():
     bridge, reg, ble = _bridge_with("d4sh")
     bridge._client = None
     assert await bridge.publish_relay_update(reg.get(10)) is False
+
+
+async def test_the_parent_is_asked_to_hold_the_session_open():
+    """`connect_action: 1` alone opens the radio and lets it go again before
+    the accessory has said anything useful. A CTW3 answers a bare open with a
+    short 251/252 and only then does its own run-info pass, so the status
+    arrives after the window. `time` is how long to hold it — confirmed at 30
+    on hardware by @strxno."""
+    from petkit_local.mqtt.bridge import BLE_SESSION_HOLD_SECONDS
+
+    bridge, reg, ble = _bridge_with("d4sh")
+    await bridge._poll_ble_accessories(reg.get(10))
+    params = json.loads(bridge._client.sent[-1][1])["params"]
+    assert params["connect_action"] == 1
+    assert params["time"] == BLE_SESSION_HOLD_SECONDS
+
+    # Closing carries no hold — there is nothing to hold open.
+    await bridge._ble_connect(reg.get(10), ble.get(700), action=0)
+    closing = json.loads(bridge._client.sent[-1][1])["params"]
+    assert closing["connect_action"] == 0
+    assert "time" not in closing
+
+
+async def test_a_frame_that_is_not_a_reading_does_not_end_the_session():
+    """Write acks and the short 251/252 share the channel with status frames.
+    Hanging up on those cut the radio before the accessory reached its
+    run-info pass, which is most of why a CTW3 was so hard to read."""
+    import base64
+
+    bridge, reg, ble = _bridge_with("d4sh")
+    ack = base64.b64encode(bytes([1])).decode()
+    await bridge._handle_ble_response(reg.get(10), {
+        "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
+                               "payload": [{"cmd": 252, "data": ack}]}),
+    })
+    assert bridge._client.sent == [], "hung up before the accessory had spoken"
+
+    # A real decode still closes it — the radio is not left on for ever.
+    await bridge._handle_ble_response(reg.get(10), {
+        "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
+                               "payload": [{"cmd": 230, "data": CTW3_CMD230}]}),
+    })
+    assert json.loads(bridge._client.sent[-1][1])["params"]["connect_action"] == 0

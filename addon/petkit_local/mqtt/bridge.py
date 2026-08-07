@@ -49,6 +49,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+#: Seconds to ask a parent to hold a BLE relay session open (`connect.time`).
+#: Confirmed working at 30 on a CTW3 behind a D4SH; the unit is inferred.
+BLE_SESSION_HOLD_SECONDS = 30
+
 # The embedded broker needs a moment to bind before the first connect attempt;
 # without it every startup wastes a full reconnect delay.
 STARTUP_DELAY_SECONDS = 2.0
@@ -612,6 +616,15 @@ class MQTTBridge:
             "id": str(now),
             "params": {
                 "connect_action": action,
+                # How long to HOLD the session open, in seconds. Without it the
+                # parent opens the radio and lets it go again before the
+                # accessory has said anything useful: a CTW3 answers a bare
+                # open with a short 251/252 and only then does its own run-info
+                # pass, so the status arrives after the window we were giving
+                # it. 30 is what @strxno confirmed on hardware; the unit is
+                # inferred from the value working, not from a capture of the
+                # field being varied.
+                **({"time": BLE_SESSION_HOLD_SECONDS} if action else {}),
                 "device": {"type": ble.ble_type_int, "mac": ble.wire_mac},
                 "timestamp": now,
             },
@@ -856,9 +869,14 @@ class MQTTBridge:
                          "panel (Setup -> Settings) to collect frames",
                          ble_dev.ble_type.upper(), ble_dev.petkit_id)
 
-        # The reading is in; let the parent close its radio rather than holding
-        # the session until something else happens to end it.
-        await self._ble_connect(device, ble_dev, action=0)
+        # Hang up only once a reading is actually in. A session is also
+        # answered with frames that are not status — a bare `01` write ack, a
+        # short 251/252 — and closing on those cut the radio before the
+        # accessory got to its run-info pass, which is most of why a CTW3 was so
+        # hard to get anything out of. The hold above bounds the session, so
+        # leaving it open costs a fixed number of seconds rather than for ever.
+        if fragment:
+            await self._ble_connect(device, ble_dev, action=0)
 
         if self._ha_publisher:
             await self._ha_publisher.publish_ble_discovery(ble_dev)
