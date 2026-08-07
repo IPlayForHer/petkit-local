@@ -1775,6 +1775,30 @@ async def _send_k3_link(request: web.Request, parent_id: int, k3_id: int) -> str
     return "heartbeat-queue"
 
 
+async def _nudge_relay_list(request: web.Request, parent_id: int) -> None:
+    """Tell a parent to refetch `dev_ble_device` now, after its list changed.
+
+    Without it a pairing takes effect on the parent's own schedule, and that
+    schedule is `nextTick: 3600` — an hour in which the accessory is in the
+    panel, in Home Assistant, and invisible to the device meant to scan for it.
+    The poll meanwhile pushes `connect` for a MAC the parent has never been
+    told about, which fails exactly like a wrong scan type does.
+
+    Best effort: a parent that is off MQTT picks the change up on its next
+    fetch, which is the behaviour we had for everything.
+    """
+    bridge = request.app.get("bridge")
+    reg = request.app["registry"]
+    parent = reg.get(parent_id) if parent_id else None
+    if bridge is None or parent is None:
+        return
+    try:
+        await bridge.publish_relay_update(parent)
+    except Exception as exc:  # a refresh is a convenience, never a failure
+        log.warning("Could not nudge parent %d to refresh its relay list: %s",
+                    parent_id, exc)
+
+
 async def api_ble_accessories(request: web.Request) -> web.Response:
     """List (GET) or pair/update (POST) a BLE accessory.
 
@@ -1855,6 +1879,8 @@ async def api_ble_accessories(request: web.Request) -> web.Response:
         # is not in that list at all and has to be named on the parent.
         if ble_type == "k3" and link_with:
             await _send_k3_link(request, link_with, petkit_id)
+        else:
+            await _nudge_relay_list(request, link_with)
 
     return web.json_response({"accessories": [_ble_view(d, reg) for d in ble.all()]})
 
@@ -2019,6 +2045,11 @@ async def api_ble_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     if was_k3 and parent_id:
         await _send_k3_link(request, parent_id, 0)
+    elif parent_id:
+        # Unpairing is the same event from the parent's side: its list is one
+        # shorter, and until it refetches it keeps scanning for a MAC we have
+        # stopped serving.
+        await _nudge_relay_list(request, parent_id)
     return web.json_response({
         "ok": True,
         "accessories": [_ble_view(d, request.app["registry"]) for d in ble.all()],

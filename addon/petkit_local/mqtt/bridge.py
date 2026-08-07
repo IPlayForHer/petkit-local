@@ -629,6 +629,42 @@ class MQTTBridge:
                  "connect" if action else "disconnect",
                  ble.ble_type, ble.mac, device.petkit_id)
 
+    async def publish_relay_update(self, device: Device) -> bool:
+        """Tell a parent its accessory list has changed, so it refetches now.
+
+        `dev_ble_device` answers with `nextTick: 3600`, and the parent honours
+        it: pair an accessory and it is an HOUR before that parent knows to scan
+        for the MAC. Everything downstream looks broken for that hour — the poll
+        pushes `thing/service/connect` for an accessory the parent was never
+        told about, and nothing comes back, which is indistinguishable from a
+        wrong scan type or a bad MAC.
+
+        `update_action: 1` is the trigger, and any other value (or no field at
+        all) is logged by the firmware and ignored. Confirmed on a T5: the
+        publish is followed immediately by a `GET /6/t5/dev_ble_device`.
+        Reported by @strxno.
+
+        Returns False when nothing could be sent, so a caller does not report a
+        refresh that never left.
+        """
+        if not self._client:
+            return False
+        now = int(time.time())
+        envelope = {
+            "method": "thing.service.ble_relay_update",
+            "id": str(now),
+            "params": {"update_action": 1},
+            "version": "1.0.0",
+        }
+        topic = service_topic(device.mqtt_product_key, device.mqtt_device_name,
+                              "ble_relay_update")
+        payload = _dumps(envelope)
+        await self._client.publish(topic, payload)
+        if self._hub:
+            self._hub.record_mqtt(device.petkit_id, topic, payload, outbound=True)
+        log.info("BLE relay list refresh -> parent %d", device.petkit_id)
+        return True
+
     async def _poll_ble_accessories(self, device: Device) -> None:
         """Ask the parent to open a BLE relay session for each linked accessory
         so it starts posting ble_response frames. Without this poll the parent

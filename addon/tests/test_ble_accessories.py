@@ -1112,3 +1112,34 @@ def test_switching_a_w5_back_on_returns_it_to_smart():
     assert ble_command_for(smart, "w5_power", 1) == (CMD_SET_MODE, bytes([2, 0]))
     # Never reported one: normal, rather than a fountain that will not start.
     assert ble_command_for(_paired_w5(), "w5_power", 1) == (CMD_SET_MODE, bytes([1, 0]))
+
+
+# --- telling the parent its list changed -------------------------------------
+
+async def test_pairing_tells_the_parent_to_refetch_its_relay_list():
+    """`dev_ble_device` answers `nextTick: 3600`, and the parent honours it —
+    so without this an accessory is paired, published to Home Assistant, and
+    invisible to the device meant to scan for it, for an hour. Worse than
+    invisible: `_poll_ble_accessories` pushes `connect` for a MAC the parent
+    was never told about, which fails exactly the way a wrong scan type does.
+
+    `update_action: 1` is the trigger; any other value is logged and ignored by
+    the firmware. Confirmed on a T5, where the publish is followed straight
+    away by `GET /6/t5/dev_ble_device` (reported by @strxno).
+    """
+    bridge, reg, ble = _bridge_with("d4sh")
+    assert await bridge.publish_relay_update(reg.get(10))
+
+    topic, body = bridge._client.sent[-1]
+    assert topic.endswith("/thing/service/ble_relay_update")
+    env = json.loads(body)
+    assert env["method"] == "thing.service.ble_relay_update"
+    assert env["params"] == {"update_action": 1}
+
+
+async def test_a_refresh_that_could_not_be_sent_says_so():
+    """It is a convenience, not a command — but a caller must not report a
+    refresh that never left."""
+    bridge, reg, ble = _bridge_with("d4sh")
+    bridge._client = None
+    assert await bridge.publish_relay_update(reg.get(10)) is False
