@@ -271,13 +271,17 @@ W5_ENTITIES = [
 #: `electricStatus` value meaning mains power rather than the battery.
 CTW3_ELECTRIC_AC = 2
 
-#: The mode values that are real. A CTW3 reports 0 in the sleep half of its
-#: smart cycle (aavdberg/ha-petkit issue #57) and it does NOT mean "off": the
-#: pump is idle between runs and the mode has not changed. Latching it would be
-#: harmless if `mode` were only ever displayed, but `ble_command_for` rebuilds
-#: cmd 220 from the last reading, so a stored 0 turns the next touch of the
-#: power switch into "off, in mode nothing".
-CTW3_MODES = (1, 2)
+#: The mode values that are real, on EVERY fountain. Anything else is the
+#: device saying "not running right now" in a field that has no way to say it,
+#: and it must not be stored — `ble_command_for` rebuilds the mode frame from
+#: the last reading, so a latched 0 is a command to switch off.
+#:
+#: A CTW3 reports 0 in the sleep half of its smart cycle (aavdberg/ha-petkit
+#: issue #57). A W5, W4, W4X or CTW2 reports 0 whenever it is powered off
+#: (their #106), which is a different cause with the same two consequences: the
+#: mode select renders blank, and switching the fountain back on silently puts
+#: it in normal mode because the smart it was in reads as nothing.
+FOUNTAIN_MODES = (1, 2)
 
 
 #: CTW3 (EverSweet Max Cordless). Named after the fields the decoder produces,
@@ -532,6 +536,11 @@ def _decode_w5_status(data: bytes) -> dict[str, dict[str, int]]:
         return {"states": {}, "consumables": {}}
 
     states = {name: data[off] for name, off in _W5_STATUS_STATE_OFFSETS.items()}
+    # Byte 1 is 0 on a fountain that is switched off, and `powerStatus` at byte
+    # 0 already says so — so the 0 carries nothing and costs the last real mode.
+    if states.get("mode") not in FOUNTAIN_MODES:
+        log.debug("W5 reported mode=%s - keeping the last real one", states.get("mode"))
+        states.pop("mode", None)
     states["pumpRuntime"] = int.from_bytes(data[6:10], "big")
     consumables = {"filterPercentage": data[_W5_STATUS_FILTER_OFFSET]}
 
@@ -733,7 +742,7 @@ def _decode_ctw3_status(data: bytes) -> dict[str, dict[str, int]]:
     # A mode outside 1/2 is the smart cycle's sleep half, not a new mode. Drop
     # the key rather than store it: the caller merges, so absence keeps what was
     # there, and what was there is the last mode the fountain really had.
-    if states.get("mode") not in CTW3_MODES:
+    if states.get("mode") not in FOUNTAIN_MODES:
         log.debug("CTW3 reported mode=%s - keeping the last real one",
                   states.get("mode"))
         states.pop("mode", None)
@@ -969,7 +978,10 @@ def _w5_command_for(ble_dev: BLEDevice, key: str, value: int) -> tuple[int, byte
             mode = value
         elif value:
             # One byte is both power and mode, so switching on means naming a
-            # mode. Normal is the fallback when none has been reported.
+            # mode — and the one to name is whichever it was last really in.
+            # The decoder never stores a 0 (see `_decode_w5_status`), so this
+            # reads the latched mode; normal is the fallback for a fountain
+            # that has never reported one at all.
             mode = states.get("mode") or 1
         else:
             mode = 0

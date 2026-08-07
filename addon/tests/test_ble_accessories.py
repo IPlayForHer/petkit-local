@@ -1082,3 +1082,33 @@ async def test_a_write_acknowledgement_is_named_rather_than_dropped(caplog):
                                    "payload": [{"cmd": 220, "data": ack}]}),
         })
     assert "cmd 220" in caplog.text
+
+
+def test_a_powered_off_w5_does_not_forget_which_mode_it_was_in():
+    """Byte 1 is 0 on a fountain that is switched off, and `powerStatus` at
+    byte 0 already says so — so storing the 0 costs the last real mode and
+    gains nothing. Two consequences, both reported on hardware against
+    aavdberg/ha-petkit (#106): the mode select renders blank, and switching the
+    fountain back on silently puts it in normal because the smart it was in
+    reads as nothing.
+    """
+    from petkit_local.devices.ble import _decode_w5_status
+
+    running = bytes([1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 90, 1])
+    assert _decode_w5_status(running)["states"]["mode"] == 2
+
+    off = bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 90, 0])
+    assert "mode" not in _decode_w5_status(off)["states"]
+
+
+def test_switching_a_w5_back_on_returns_it_to_smart():
+    """The whole point of latching. `w5_power` has no mode of its own — one
+    byte carries both — so turning the fountain on has to name the mode it was
+    last in, or a smart-mode fountain quietly becomes a normal-mode one every
+    time somebody uses the switch."""
+    from petkit_local.devices.ble import CMD_SET_MODE, ble_command_for
+
+    smart = _paired_w5(mode=2)
+    assert ble_command_for(smart, "w5_power", 1) == (CMD_SET_MODE, bytes([2, 0]))
+    # Never reported one: normal, rather than a fountain that will not start.
+    assert ble_command_for(_paired_w5(), "w5_power", 1) == (CMD_SET_MODE, bytes([1, 0]))
