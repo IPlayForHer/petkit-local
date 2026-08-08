@@ -1,5 +1,115 @@
 # Changelog
 
+## 1.8.0 — 2026-08-08
+
+### The API is published on port 80 now — read this before updating
+
+An ESP32 model provisioned with any other port gets onto Wi-Fi and then fails at
+the server connection, tested repeatedly across two devices by @strxno, and one
+pointed here by a DNS redirect dials 80 with nowhere to tell it otherwise. The
+add-on publishes on host 80, and the compose example maps `80:8080`. Inside the
+container nothing moved.
+
+The auto-detected `api_url` moves with it, which is the same change and not a
+second one: left at `:8080` the add-on would advertise a port it no longer
+publishes. An explicit `api_url` is still honoured verbatim, and Home Assistant
+keeps a port override set in Network across updates.
+
+**Anyone already provisioned on `:8080` has that port burnt into the device**
+and needs re-provisioning, or the old mapping set back by hand in Network.
+
+### Ask PetKit for what only PetKit knows
+
+An accessory's pairing secret and a pet's reference photos exist in one place —
+the account — and until now the only way to get either was to read it off the
+hardware or retype it from the app. Two buttons now ask for them directly: one
+on a device's BLE card, one on the AI / Pets tab.
+
+The request is signed the way the firmware signs its own. T4 firmware 1.652
+carries both halves of it as adjacent format strings —
+`id%snonce%stimestamp%utype%s%s` hashed, `id=%s&nonce=%s&timestamp=%u&type=%s&sign=%s`
+sent — so this reproduces the header rather than guessing at it. Confirmed
+against the real cloud: `dev_ble_device` and `dev_device_info` both answered
+200 to a request built here, eleven seconds before the device asked for the
+same two and got the same answer.
+
+Two details that are easy to get wrong. The `type` field is hashed, so `T5` and
+`t5` are different requests — the device's own spelling is recorded from live
+traffic and persisted, because a restart that lost it would sign the next fetch
+with our lowercase codename and be refused. And PetKit answers `704` when the
+credential is one we issued rather than one it knows, which the panel says in
+those words instead of reporting a generic failure.
+
+Nothing is fetched on a schedule. This runs when a button is pressed and at no
+other time — the add-on does not poll PetKit, and must not start.
+
+A pet imports under a new local id with PetKit's own id bound to it as an
+alias, because that foreign id is exactly what a box still matching against
+cloud-cached faces reports back. Binding it names the history already recorded
+under it, retroactively. Names are in no payload a device receives, so an
+imported pet arrives as `PetKit pet <id>` — click the name on its card to
+change it, which was not possible here before at all.
+
+### A litter box can finally be told about its spray
+
+`dev_k3_device_info` had no route: it fell through to the catch-all, and a T4
+asking what its Pura Air is configured as was answered `{}`, forever
+(issue #17). The reply now carries what we actually know, in the field set T4
+firmware 1.652 parses by name — identity, whatever readings the spray has
+reported, and its settings when a real value exists. Every key in that parser is
+looked up individually, so an absent one is skipped rather than read as zero;
+that is what makes it safe to send only what we have and invent nothing.
+
+`settings.k3Config` used to go out as an empty object against six keys the
+firmware reads by name. It now carries them.
+
+`relateT4` is deliberately still absent. Its name and its `%d` admit two
+readings — the parent's id, or a 0/1 flag — and the wrong one lands on the
+firmware's `diff ID` path.
+
+The reboot half of that issue is not addressed.
+
+### Bluetooth accessories, from @strxno's hardware
+
+- **A write opens the session it needs.** Published on its own,
+  `thing/service/ble` is accepted by the parent, forwarded, and does nothing.
+  The same 221 frame is acknowledged with a session held open and ignored in
+  silence without one, and from here those two look identical.
+- **The session is held open, and hung up only on a real reading.**
+  `thing/service/connect` carries a `time` field; without it the parent lets the
+  radio go before the accessory has said anything worth having. We also hung up
+  on ANY reply, including the short 251/252 that precedes a CTW3's run-info
+  pass — which is most of why a CTW3 was so hard to get anything out of.
+- **A parent is told its accessory list changed.** `dev_ble_device` answers
+  `nextTick: 3600` and the parent honours it, so pairing left the device that is
+  meant to scan knowing nothing for up to an hour — while the poll pushed
+  `connect` for a MAC it had never been told about, which fails looking exactly
+  like a wrong scan type. `ble_relay_update` is the trigger, confirmed on a T5.
+- **A CTW3 answers cmd 211 over the relay**, though it is silent to a direct
+  GATT client on firmware 111. The reply also settles the byte order by
+  write-and-read-back: "light off" moved byte 6 and left byte 7 alone.
+- **A fountain that is switched off no longer forgets its mode.** A W4, W5, W4X
+  or CTW2 reports mode 0 while powered off; that is not a mode, and storing it
+  cost the last real one — so switching the fountain back on silently made a
+  smart-mode fountain a normal-mode one.
+
+### Provisioning
+
+- The Bluetooth characteristics are found by property when the expected UUIDs
+  are not there, and a failure now lists what the device actually exposed
+  instead of giving up quietly.
+- BLUFI `0x0f` and `0x12` are decoded again, read-only. Neither decides
+  anything — the PetKit keys inside custom data drive provisioning — but a
+  device that fails at the BLUFI layer says so in one of them, and undecoded
+  that arrived as "ignored ESP32 packet subtype 0x12".
+
+### Also
+
+- The patchers work on Axera ARM boards, which keep the writable boot override
+  under `/opt` where Ingenic boards use `/system`. Probed rather than decided by
+  codename, because D4SH and D4H ship as both.
+- The bucket endpoint can be set for a standalone Docker run.
+
 ## 1.7.0 — 2026-08-03
 
 ### An ESP32 device was being provisioned onto PetKit's cloud
