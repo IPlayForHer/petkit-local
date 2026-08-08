@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.8.1 — 2026-08-08
+
+### `dev_ble_device` now answers exactly as PetKit does
+
+Comparing our reply against a capture of the real cloud (issue #6) turned up two
+differences.
+
+With nothing paired we sent `{"result": {}}`, where PetKit sends
+`{"result": {"list": [], "nextTick": 3600}}`. Omitting `list` rested on one
+firmware log line — an empty array producing `ERR:...parse item NULL`, read as a
+null dereference that aborts the boot chain — and that reading did not survive
+its own evidence: the same capture has PetKit answering the empty array 234
+times in one session, so every unaccessorised device receives it routinely.
+
+It was not free, either. The omission took `nextTick` with it, so a device with
+nothing paired was told neither what to scan for nor when to ask again. Nobody
+decided that half; it fell out of a shared empty-response helper.
+
+The accessory MAC is canonicalised where it is stored rather than by each
+caller. Both existing callers did normalise, so nothing was broken — but a third
+that forgot would have put `aa:bb:cc:dd:ee:01` on the wire where the cloud sends
+`aabbccddee01`, and every lookup here would have carried on working, because
+those compare canonical forms. The device would have been the only thing to
+notice, by never finding the accessory.
+
 ## 1.8.0 — 2026-08-08
 
 ### The API is published on port 80 now — read this before updating
