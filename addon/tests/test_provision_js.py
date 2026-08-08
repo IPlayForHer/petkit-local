@@ -28,7 +28,8 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None,
 FUNCTIONS = ("pkCrc16", "pkFrame", "pkParse", "pkBytes", "pkJoined", "pkJoinFailed", "pkJoinWarn",
              "pkJoinState", "blufiExplain", "provisionUrlWarning")
 CONSTANTS = ("PK_MAGIC", "PK_TAIL", "PK_TYPE_OUT", "PK_JOIN_STATES", "PK_JOIN_DONE", "PK_JOIN_FAILED",
-             "PK_JOIN_WARN", "BLUFI_TYPE_DATA", "BLUFI_DATA_CUSTOM", "BLUFI_FC_FRAG")
+             "PK_JOIN_WARN", "BLUFI_TYPE_DATA", "BLUFI_DATA_CUSTOM", "BLUFI_FC_FRAG",
+             "BLUFI_DATA_WIFI_REP", "BLUFI_DATA_ERROR_INFO")
 
 
 def _extract(src: str, name: str) -> str:
@@ -234,3 +235,22 @@ def test_esp32_provisioning_warns_when_api_url_is_not_port_80():
     assert out["port80"] == ""
     assert "port <b>80</b>" in out["port8080"]
     assert "port <b>80</b>" in out["https"]
+
+
+def test_a_blufi_level_failure_is_named_rather_than_numbered():
+    """Provisioning is driven by the PetKit keys inside custom data, so these
+    two decide nothing — but a device that fails at the BLUFI layer says so in
+    one of them, and undecoded it reads as "ignored ESP32 packet subtype 0x12".
+    """
+    out = _run("""
+      const ctx = {frag: [], replies: {}};
+      const pkt = (sub, data) => new Uint8Array([1 | (sub << 2), 0, 0, data.length, ...data]);
+      console.log(JSON.stringify({
+        up:   blufiExplain(pkt(0x0f, new Uint8Array([1, 0, 0])), ctx),
+        down: blufiExplain(pkt(0x0f, new Uint8Array([1, 2, 0])), ctx),
+        err:  blufiExplain(pkt(0x12, new Uint8Array([7])), ctx),
+      }));
+    """)
+    assert "CONNECTED" in out["up"]
+    assert "not connected (2)" in out["down"]
+    assert "error report, code 7" in out["err"]

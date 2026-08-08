@@ -36,7 +36,7 @@ PetKit device ──HTTP───► petkit-local ──MQTT discovery──► 
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `api_url` | *(empty = auto)* | URL the device is told to use for the HTTP API. **Leave empty to auto-detect the HA host's LAN IP** (recommended — embedded PetKit devices can't resolve mDNS `.local`). Override only for a specific address/port, e.g. `http://<ha-host-ip>:8080/6/`. A `.local` value is ignored in favour of the detected IP. |
+| `api_url` | *(empty = auto)* | URL the device is told to use for the HTTP API. **Leave empty to auto-detect the HA host's LAN IP** (recommended — embedded PetKit devices can't resolve mDNS `.local`). Override only for a specific address/port, e.g. `http://<ha-host-ip>/6/`. A `.local` value is ignored in favour of the detected IP. |
 | `mqtt_host` | *(ignored)* | Accepted by the schema but not used: the broker address handed to a device is derived per request from the address that device reached it on, so one instance can serve devices that see it under different addresses. |
 | `ha_mqtt_host` | *(empty)* | **Your Home Assistant MQTT broker**, so entities can be published to HA. Auto-detected if you run the Mosquitto app; otherwise set it (an external broker's hostname or IP). Leave empty to skip HA publishing entirely — the device side still works. |
 | `ha_mqtt_port` | `1883` | HA MQTT broker port. |
@@ -55,7 +55,7 @@ effect immediately, and persist to `/data/settings_overrides.json`.
 
 | Container port | Default host port | Purpose |
 |------|------|---------|
-| `80` | `8080` | Device HTTP API. ESP32 models redirected by DNS need this on host port 80. |
+| `80` | `80` | Device HTTP API. ESP32 models want it here: a T4 provisioned with `:8080` reaches Wi-Fi and then fails to connect to the server, and one redirected by DNS dials 80 with nowhere to tell it otherwise. |
 | `443` | `443` | Device MQTT over TLS. |
 | `1883` | *(unmapped)* | Plain MQTT listener, internal to this app. Map it only if a device connects in plaintext. |
 | `9000` | `9000` | Media upload bucket the device PUTs photos and videos to. |

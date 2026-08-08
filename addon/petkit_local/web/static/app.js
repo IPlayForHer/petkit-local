@@ -2052,6 +2052,13 @@ const BLUFI_E2P = '0000ff02-0000-1000-8000-00805f9b34fb'; // device -> app, noti
 const BLUFI_TYPE_DATA = 0x01;
 const BLUFI_DATA_CUSTOM = 0x13;
 const BLUFI_FC_FRAG = 0x10;
+// Read, never sent. Provisioning is driven entirely by the PetKit keys inside
+// custom data, so nothing here decides anything — but a device that fails at
+// the BLUFI layer says so in one of these two, and without them that arrives
+// as "ignored ESP32 packet subtype 0x12". Values from ESP-IDF's own
+// `btc_blufi_prf.h`.
+const BLUFI_DATA_WIFI_REP = 0x0f;
+const BLUFI_DATA_ERROR_INFO = 0x12;
 // PetKit's ESP32 firmware receives custom data in 12-byte JSON chunks.
 const BLUFI_FRAG_LEN = 12;
 // Timeouts from real captures. Observed worst cases:
@@ -2276,6 +2283,13 @@ function blufiExplain(view, ctx) {
     }
     ctx.replies[msg.key] = msg.payload || {};
     return 'key ' + msg.key + ' ' + JSON.stringify(msg.payload || {});
+  }
+  if (pktType === BLUFI_TYPE_DATA && subtype === BLUFI_DATA_WIFI_REP) {
+    // opmode, sta_conn_state, softap_conn_num, then TLVs
+    return 'wifi status: ' + (data[1] === 0 ? 'CONNECTED' : 'not connected (' + data[1] + ')');
+  }
+  if (pktType === BLUFI_TYPE_DATA && subtype === BLUFI_DATA_ERROR_INFO) {
+    return 'BLUFI error report, code ' + data[0];
   }
   return 'ignored ESP32 packet type ' + pktType + ' subtype 0x' + subtype.toString(16);
 }

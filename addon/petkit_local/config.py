@@ -409,7 +409,7 @@ class Config:
 
         api_opt = (opts.get("api_url") or "").strip()
         if not api_opt or ".local" in api_opt:
-            c.api_url = f"http://{host_ip}:8080/6/" if host_ip else (api_opt or c.api_url)
+            c.api_url = f"http://{host_ip}/6/" if host_ip else (api_opt or c.api_url)
         else:
             c.api_url = api_opt
 

@@ -22,12 +22,14 @@ services:
     ports:
       # Device HTTP API.
       #
-      # Use "80:8080" instead if you redirect ESP32 models with DNS: those dial
-      # port 80 and there is nowhere to tell them otherwise, so the API has to
-      # answer there. Devices provisioned over Bluetooth are given a URL with
-      # the port in it, so for those any host port works as long as --api-url
-      # below matches.
-      - "8080:8080"
+      # Host 80, and worth keeping there. An ESP32 model (T4, D4) provisioned
+      # with any other port gets onto Wi-Fi and then fails at the server
+      # connection — tested repeatedly on two devices — and one pointed here by
+      # a DNS redirect dials 80 with nowhere to tell it otherwise. The
+      # container still listens on 8080; only the host side moved. Ingenic
+      # models take the port from the URL they are provisioned with, so for
+      # those any host port works as long as --api-url below matches.
+      - "80:8080"
 
       # Device MQTT over TLS. Not a choice: 443 is where the firmware looks.
       - "443:443"
@@ -88,7 +90,7 @@ services:
       # connect to, and the bucket it uploads photos and video to. Leave the
       # host out and there is nothing to derive them from — media uploads in
       # particular then have nowhere to go, and the add-on says so at startup.
-      - --api-url=http://CHANGE-ME:8080/6/
+      - --api-url=http://CHANGE-ME/6/
       # Optional: override the derived https://<api-host>:9000 media upload URL.
       # Use this when devices must upload through a different hostname, port or
       # TLS-terminating proxy than the API host.

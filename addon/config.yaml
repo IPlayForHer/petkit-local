@@ -25,14 +25,14 @@ arch:
 # and is intentionally NOT mapped to the host, so it never clashes with the
 # Mosquitto add-on. 443 must be free on the host (HA usually runs on 8123).
 ports:
-  80/tcp: 8080
+  80/tcp: 80
   443/tcp: 443
   1883/tcp: null
   8099/tcp: null
   8554/tcp: null
   9000/tcp: 9000
 ports_description:
-  80/tcp: "PetKit device API (plain HTTP). ESP32 needs this on host :80 via DNS redirect; Ingenic can use any port via BLE apiServers."
+  80/tcp: "PetKit device API (plain HTTP). Keep it on host 80: an ESP32 model provisioned with another port reaches Wi-Fi and then fails to reach the server, and one redirected by DNS dials 80 with nowhere to tell it otherwise."
   443/tcp: "PetKit device MQTT over TLS. Port is inferred from localkit; change mqtt_tls_port + this mapping if your device dials a different one (e.g. 1883)."
   1883/tcp: "Optional: expose the plain MQTT listener (internal by default; map a host port only if a device connects plaintext)."
   8099/tcp: "Optional: expose the web panel directly on the LAN (no HA auth) for debugging/curl. Leave unmapped to use auth-only Ingress."
