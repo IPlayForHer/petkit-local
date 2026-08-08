@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.8.2 — 2026-08-08
+
+### The empty `dev_ble_device` answer goes back to omitting `list`
+
+1.8.1 started sending `list: []` to a device with no accessories paired, on the
+grounds that PetKit's own cloud does. Owners have since reported that empty
+array crashing devices, so it is out again: with nothing paired the reply
+carries `nextTick` and no `list` key, which is the shape that ran for months
+without the complaint.
+
+The argument 1.8.1 made was from analogy — the cloud sends the empty array 234
+times in one capture, therefore it cannot be what breaks a device — and the
+field beat it. What is still not known is which models are affected or why the
+cloud gets away with it; that needs a capture from someone it happens to, and
+until then the code says so rather than claiming more.
+
+`nextTick` stays in both shapes and is not implicated in any of this. It is the
+half of 1.8.1 that fixed something real: without it, a parent with nothing
+paired was told neither what to scan for nor when to ask again.
+
+Both transports changed together. The HTTP handler and the MQTT `data_get`
+answer the same question and have drifted apart once already.
+
 ## 1.8.1 — 2026-08-08
 
 ### `dev_ble_device` now answers exactly as PetKit does
