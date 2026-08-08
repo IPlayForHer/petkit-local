@@ -194,9 +194,17 @@ async def test_the_device_is_told_to_scan_for_a_paired_accessory():
         await c.close()
 
 
-async def test_nothing_paired_still_answers_like_the_cloud_does():
-    """`{"list": [], "nextTick": 3600}` is what PetKit sends a device with no
-    accessories — captured from it doing exactly that 234 times in one session.
+async def test_nothing_paired_omits_the_list_key_entirely():
+    """No accessories means NO `list` key — not `list: []`.
+
+    1.8.1 sent the empty array, because PetKit's own cloud does (captured 234
+    times in one session). Owners then reported it crashing devices, so 1.8.2
+    put the omission back; the analogy lost to the field. See
+    `http/handlers/ble_device.py` for what those reports do and do not pin down.
+
+    `nextTick` is sent either way and is not implicated: with no `list` there
+    used to be no `nextTick` either, which left a parent with nothing paired
+    holding neither a list nor a time to ask again.
 
     Both transports must agree, and they have drifted apart once already."""
     reg = DeviceRegistry()
@@ -206,10 +214,7 @@ async def test_nothing_paired_still_answers_like_the_cloud_does():
     c = await _client(app)
     try:
         http_body = await (await c.get("/6/t5/dev_ble_device", headers=HDR)).json()
-        assert http_body["result"]["list"] == []
-        # The part the old omission quietly took with it: with no `list` there
-        # was no `nextTick` either, so a parent with nothing paired was told
-        # neither what to scan for nor when to ask again.
+        assert "list" not in http_body["result"]
         assert http_body["result"]["nextTick"] == 3600
     finally:
         await c.close()
@@ -221,7 +226,13 @@ async def test_nothing_paired_still_answers_like_the_cloud_does():
 
 async def test_a_k3_is_never_put_in_the_relay_list():
     """It is attached by naming it on the parent instead; listing it as well
-    makes the firmware treat it as a second, unpaired device."""
+    makes the firmware treat it as a second, unpaired device.
+
+    A W5 is paired to the same parent so the exclusion is proven by what the
+    list CONTAINS, not only by its being absent — with the K3 alone, an answer
+    that wrongly listed it and an answer that correctly omitted the key would
+    both have to be told apart by the key's presence, and only one of those two
+    bugs is the one this test is for."""
     reg = DeviceRegistry()
     reg.get_or_create(petkit_id=10, device_type="t5", serial_number="SN10")
     ble = BLERegistry()
@@ -231,7 +242,12 @@ async def test_a_k3_is_never_put_in_the_relay_list():
     c = await _client(app)
     try:
         body = await (await c.get("/6/t5/dev_ble_device", headers=HDR)).json()
-        assert body["result"]["list"] == []
+        assert "list" not in body["result"], "the K3 was listed"
+
+        ble.register(ble_type="w5", petkit_id=700, mac="AABBCCDDEEFF",
+                     secret="s3cret", interval=240, link_with=10)
+        body = await (await c.get("/6/t5/dev_ble_device", headers=HDR)).json()
+        assert [e["id"] for e in body["result"]["list"]] == [700]
     finally:
         await c.close()
 

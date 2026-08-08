@@ -23,19 +23,22 @@ async def handle_ble_device(request: web.Request) -> web.Response:
         from `BLEDevice.to_ble_list_entry()`, or the standard empty result when
         the device cannot be identified at all.
 
-        With nothing paired the answer is `list: []` and the same `nextTick`,
-        which is what PetKit's own cloud sends — captured from it answering a
-        device with no accessories 234 times in one session. This used to omit
-        `list`, on a reading of one firmware log line
-        (`ERR:...parse item NULL`) as a null dereference that aborts the boot
-        chain. That reading did not survive: every unaccessorised PetKit device
-        in the world receives the empty array routinely, so it cannot be
-        breaking them, and a logged parse error is not an aborted boot.
+        WITH NOTHING PAIRED THE `list` KEY IS OMITTED ENTIRELY, and only
+        `nextTick` is sent. 1.8.1 changed this to send `list: []`, on the
+        grounds that PetKit's own cloud does — captured from it answering an
+        unaccessorised device 234 times in one session — and that the firmware's
+        `ERR:...parse item NULL` was therefore a logged parse error rather than
+        a fatal one. That argument was from analogy, and owners reported the
+        empty array crashing devices in the field, so 1.8.2 put the omission
+        back. We do not have a model or a firmware build for those reports, and
+        so cannot say WHICH devices or why the cloud gets away with it; what we
+        do have is a shape that ran for months without the complaint. When a
+        report arrives with a capture, this is the comment to correct.
 
-        `nextTick` is the part that was actually costing something. It tells the
-        parent when to come back for the list, the cloud sends it whether or not
-        the list has anything in it, and omitting it left the device with no
-        schedule at exactly the moment it had nothing else to go on.
+        `nextTick` stays either way, and is not implicated in any of it. It
+        tells the parent when to come back for the list, and omitting it left a
+        device with nothing paired holding no schedule at exactly the moment it
+        had nothing else to go on.
     """
     device = request_device(request)
     if not device:
@@ -48,9 +51,7 @@ async def handle_ble_device(request: web.Request) -> web.Response:
         for ble_dev in ble_registry.non_k3_for_parent(device.petkit_id):
             ble_list.append(ble_dev.to_ble_list_entry())
 
-    return web.json_response({
-        "result": {
-            "list": ble_list,
-            "nextTick": 3600,
-        }
-    })
+    result: dict = {"nextTick": 3600}
+    if ble_list:
+        result["list"] = ble_list
+    return web.json_response({"result": result})

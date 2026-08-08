@@ -868,9 +868,11 @@ async def test_the_ble_list_is_always_ours():
     """The cloud's list is PetKit's, and for a taken-over device it is empty —
     serving it would tell the device to forget every accessory paired here.
 
-    We answer the same SHAPE the cloud does (`list: []`, `nextTick`), so this is
-    about whose list it is, not what it looks like. The upstream reply is still
-    forwarded and recorded, which is the point of proxy mode."""
+    This is about WHOSE list it is. Ours omits the key entirely when nothing is
+    paired (see `http/handlers/ble_device.py`), so the assertion below is that
+    the cloud's populated list did not reach the device — not that the shapes
+    match. The upstream reply is still forwarded and recorded, which is the
+    point of proxy mode."""
     hits = []
 
     # Deliberately NON-empty, and different from ours. Both sides used to answer
@@ -893,8 +895,9 @@ async def test_the_ble_list_is_always_ours():
         r = await client.get("/6/t5/dev_ble_device", headers=HDR)
         body = await r.json()
 
-        # Nothing is paired here, so ours is empty — and the device gets ours.
-        assert body["result"]["list"] == [], "the cloud's list was served"
+        # Nothing is paired here, so ours has no list at all — and the device
+        # gets ours.
+        assert "list" not in body["result"], "the cloud's list was served"
         assert body["result"]["nextTick"] == 3600
         # Still observed — proxy mode's whole purpose.
         assert hits == ["/6/t5/dev_ble_device"]

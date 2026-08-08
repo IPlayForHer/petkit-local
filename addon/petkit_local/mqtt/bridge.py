@@ -779,14 +779,18 @@ class MQTTBridge:
         if data_type == "dev_ble_device":
             # Deliberately identical to `http/handlers/ble_device.py` — the two
             # answer the same question over different transports and have
-            # drifted apart once already. Both send `list` even when it is
-            # empty, which is what PetKit's own cloud does; see that handler for
-            # why the earlier omission did not survive its own evidence.
+            # drifted apart once already. Neither sends `list` when it would be
+            # empty: 1.8.1 sent `[]` on both, matching PetKit's own cloud, and
+            # owners reported it crashing devices. See that handler for what is
+            # and is not known about those reports.
             lst = []
             if self._ble_registry:
                 for b in self._ble_registry.non_k3_for_parent(device.petkit_id):
                     lst.append(b.to_ble_list_entry())
-            return {"result": {"list": lst, "nextTick": 3600}}
+            result: dict = {"nextTick": 3600}
+            if lst:
+                result["list"] = lst
+            return {"result": result}
         return None
 
     def _update_linked_k3(self, device: Device, params: dict) -> BLEDevice | None:
