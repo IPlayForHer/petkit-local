@@ -100,6 +100,27 @@ petkit_local/
   | `SHIT_PICTURE` | wasteCheck | eventImage | Waste — the "check waste" gallery |
   | `HEALTH_PRED` | healthPic | eventImage | Health — stool analysis |
 
+- **A K3 is in three payloads and in none of them is it a relay entry.** It is excluded from
+  `dev_ble_device` on purpose — listing it there makes the parent treat it as a second, unpaired
+  device. Its binding is `dev_device_info`'s `k3Device`, its parameters are `settings.k3Config`
+  (six keys, each named in T4 `_pk_WAN_parse_item_k3_info`), and its own detail is
+  `dev_k3_device_info`. That parser looks every key up individually, so an absent one is skipped
+  rather than read as zero — which is what makes it safe to send only what we know. `relateT4`
+  stays out until somebody reads the branch consuming it: parent id and 0/1 flag are both
+  plausible, and the wrong one lands on the firmware's `diff ID` path.
+- **We ask PetKit only when a button is pressed, and we sign as the device to do it.** The account
+  holds things nothing else does — an accessory's pairing `secret`, a pet's reference photos — and
+  `http/cloud_fetch.py` asks for them directly rather than waiting to overhear a proxied reply. The
+  `X-Device` signature is T4 firmware 1.652's own two format strings, `id%snonce%stimestamp%utype%s%s`
+  hashed and `id=%s&nonce=%s&timestamp=%u&type=%s&sign=%s` sent; PetKit answers `704` to anything
+  else. Two inputs must come from the device, never from us: `signing_secret` (ours is accepted only
+  by us) and `Device.wire_type`, the `type` spelling the firmware itself uses — it is hashed, so
+  `T5` and `t5` are different requests. It is recorded from live traffic and persisted, because a
+  restart that lost it would sign the next fetch with our lowercase codename and be refused.
+  **This must never become a poller**: nothing in the add-on may reach PetKit on a schedule of its
+  own. A pet imports under a NEW local id with PetKit's id bound as a `device_pet_ids_json` alias,
+  because that foreign id is what a box matching against cloud-cached faces actually reports
+  (`resolve_pet_ref`); `bind_pet_ref` then names the history retroactively.
 - **Never 404 a device.** Unhandled endpoints fall through to `handle_catchall`; firmware reads 4xx
   as a server fault and retries forever. The `/{path:.*}` route stays registered last. Proxy mode
   holds the same line from the far side: an upstream that is unreachable, slow, or that REFUSES

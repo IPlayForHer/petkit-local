@@ -21,8 +21,10 @@ import logging
 import os
 import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 from petkit_local.media.transcode import normalize_face_photo
+from petkit_local.utils.coerce import to_int
 from petkit_local.utils.paths import UnsafePathError, safe_join, sanitize_filename
 
 if TYPE_CHECKING:
@@ -74,6 +76,65 @@ def _safe_photo_filename(pet_id: int, face_id: str | int, ext: str = "jpg") -> s
         max_length=_MAX_EXT_LENGTH,
     )
     return f"pet_{pet_id}_face_{safe_face_id}.{safe_ext}"
+
+
+#: How many reference photos one imported pet may bring across. The same cap
+#: `add_face` enforces, applied before the download rather than after, so a
+#: reply claiming a hundred faces costs a hundred fetches to discover that.
+MAX_CLOUD_FACES = 10
+
+
+def cloud_pets(payload: Any, device_id: int) -> list[dict[str, Any]]:
+    """The pets a proxied `dev_discern_pic` reply describes.
+
+    That reply is the account's recognition set for one device: which animals
+    it should match against, and where their reference photos are. It already
+    passes through us untouched — the cloud's pets reaching the device is what
+    proxy mode MEANS — and we read it for the same reason the device does.
+
+    Args:
+        payload: The decoded upstream JSON body.
+        device_id: The device whose request this answered.
+
+    Returns:
+        `[{"pet_ref", "link_with", "faces": [{"id", "url"}]}]`. `pet_ref` is
+        PetKit's OWN pet id, deliberately not called `pet_id`: it is a foreign
+        identity until somebody binds it (`resolve_pet_ref`), and a box still
+        matching against cloud-cached faces is already reporting it.
+
+        There is no name here. The device-facing payload carries ids and URLs
+        and nothing else — a pet's name lives in the account API, which no
+        device ever asks for — so an imported pet arrives unnamed rather than
+        with one invented for it.
+    """
+    if not isinstance(payload, dict):
+        return []
+    entries = (payload.get("result") or {}).get("list") \
+        if isinstance(payload.get("result"), dict) else None
+    if not isinstance(entries, list):
+        return []
+
+    found = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        pet_ref = to_int(entry.get("id"), 0) or 0
+        if pet_ref <= 0:
+            continue
+        faces = []
+        for face in (entry.get("discern") or [])[:MAX_CLOUD_FACES]:
+            if not isinstance(face, dict):
+                continue
+            url = str(face.get("url", ""))
+            # http/https only. The bytes end up on disk as a JPEG and are never
+            # echoed back, so the exposure is narrow — but `file:` and friends
+            # have no business being followed from a network-supplied field.
+            if urlparse(url).scheme not in ("http", "https"):
+                continue
+            faces.append({"id": to_int(face.get("id"), 0) or 0, "url": url})
+        if faces:
+            found.append({"pet_ref": pet_ref, "link_with": device_id, "faces": faces})
+    return found
 
 
 class PetRegistry:

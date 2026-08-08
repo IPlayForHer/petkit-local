@@ -549,6 +549,32 @@ onAction('ble-pair', async el => {
   loadDevices();
 });
 
+onAction('ble-cloud-import', async el => {
+  el.disabled = true;
+  toast('Asking PetKit…');
+  const r = await api('ble/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_id: Number(el.dataset.id) }),
+  });
+  el.disabled = false;
+  if (r.error) return toast('Error: ' + r.error);
+  // Every refusal is named rather than swallowed: an import that quietly
+  // covers four of five accessories is worse than one that says so.
+  const refused = (r.results || []).filter(
+    x => !['imported', 'updated', 'unchanged'].includes(x.outcome),
+  );
+  toast(
+    (r.imported
+      ? `Imported ${r.imported} accessor${r.imported === 1 ? 'y' : 'ies'}`
+      : 'Nothing new to import') +
+      (refused.length
+        ? ` — ${refused.length} skipped: ${refused.map(x => x.outcome).join('; ')}`
+        : ''),
+  );
+  loadDevices();
+});
+
 onAction('ble-unpair', async el => {
   if (
     !confirm(
@@ -605,6 +631,25 @@ const ENTITY_SECTION = {
   camera: 'camera',
   image: 'camera',
 };
+
+// One button, one request, one answer. PetKit's account knows which
+// accessories are bound to this device and with which pairing secret — a value
+// that exists nowhere else and that a person otherwise has to find and retype.
+//
+// Asked only when pressed. The add-on never polls PetKit on a schedule of its
+// own; see `http/cloud_fetch.py`.
+function importFromCloudBlock(id) {
+  // `.act`, not `.mini`: a device panel has no filled backgrounds anywhere
+  // else (see styles.css), and this is a peer of the "Pair accessory" button
+  // below it, not something louder. The explanation goes in the same `?` chip
+  // the rest of this card uses rather than trailing off to the right.
+  return `<div style="margin:0 0 4px">
+    <button class="act" data-action="ble-cloud-import" data-id="${esc(id)}">Import from PetKit</button>
+    ${help(
+      'Asks PetKit which accessories this device owns, and copies each one’s Bluetooth address and pairing secret across. The secret exists nowhere else — it cannot be worked out here — so this is the one way to get it without reading it off the accessory. Nothing is sent to PetKit until you press this.',
+    )}
+  </div>`;
+}
 
 function renderPanelBody(d) {
   const ents = d.entities || [];
@@ -723,6 +768,7 @@ function renderPanelBody(d) {
             .join('')}</tbody></table>`
         : '<p class="mut" style="margin:0 0 10px">Nothing paired.</p>'
     }
+    ${importFromCloudBlock(d.id)}
     <details class="adv" data-toggle="dev-sec" data-id="${esc(d.id)}" data-sec="blepair" ${secOpen(d.id, 'blepair', false) ? 'open' : ''}>
       <summary>Pair an accessory</summary>
       <p class="sub">You need two things off the accessory: its <b>Bluetooth address</b> and its <b>pairing secret</b>. Both come from the accessory itself or from PetKit's app — there is no way to work them out here, and the accessory will refuse the connection without the right secret.</p>
@@ -3674,11 +3720,33 @@ async function loadPets() {
     ${aiDevices.length ? '' : noAiDeviceCard(info.ai_device_names || [])}
     ${aiDevices.length && !recognising ? recognitionOffCard() : ''}
     ${recognising ? petsSection(pets, ds, aiDevices, recognisingIds) : ''}
+    ${aiDevices.length ? importPetsCard(aiDevices) : ''}
     ${recognising && unbound.length ? unboundCard(unbound, pets) : ''}`;
 }
 
-// The pets themselves — header, add form, and one card each. Rendered only when
-// something is there to recognise them; see `loadPets`.
+// One button per recognising device. PetKit's account holds the reference
+// photos its NPU matches against, and the pet id it reports them under.
+//
+// Asked only when pressed — this reaches out to PetKit and downloads
+// photographs, which is not something a page load gets to do.
+function importPetsCard(aiDevices) {
+  return `<div class="card">
+    <h3>Import from PetKit${help(
+      'Asks PetKit which pets this device recognises and downloads their reference photos. Each pet arrives under a new local id with PetKit’s own id bound to it, so events the box already recorded under that id get named too. Nothing is sent until you press the button.',
+    )}</h3>
+    <p class="sub">Brings the mugshots across and names the history already recorded under PetKit's pet ids. Imported pets are called <code>PetKit pet &lt;id&gt;</code> — the name is not in the data a device receives, so rename them afterwards.</p>
+    ${aiDevices
+      .map(
+        d => `<div class="unbound">
+      <b>${esc(d.name || '#' + d.id)}</b>
+      <span class="grow"></span>
+      <button class="mini" data-action="pets-cloud-import" data-id="${esc(d.id)}">Import from PetKit</button>
+    </div>`,
+      )
+      .join('')}
+  </div>`;
+}
+
 function petsSection(pets, ds, aiDevices, recognisingIds) {
   return `
     <div class="card">
@@ -3782,7 +3850,8 @@ function petCard(p, ds, recognisingIds) {
 
   return `<div class="card petcard">
     <div class="pet-head">
-      <b class="pet-name">${esc(p.name)}</b>
+      <b class="pet-name" data-action="rename-pet" data-id="${esc(p.id)}"
+         title="Click to rename">${esc(p.name)}</b>
       <span class="pet-devs">${chips || '<span class="mut">no devices assigned</span>'}</span>
       <button class="ghost act" data-action="delete-pet" data-id="${esc(p.id)}">Delete</button>
     </div>
@@ -3840,6 +3909,47 @@ function unboundCard(unbound, pets) {
   </div>`;
 }
 
+// Rename in place. An input rather than a dialog because this panel has no
+// prompt() anywhere and a text field is what it uses for every other edit —
+// and because a pet imported from PetKit arrives as "PetKit pet 101392625",
+// which is a name nobody wants to keep and the payload gave us nothing better.
+onAction('rename-pet', el => {
+  const id = el.dataset.id;
+  const before = el.textContent;
+  const input = document.createElement('input');
+  input.className = 'pet-name-edit';
+  input.value = before;
+
+  // Enter, Escape and blur can all arrive for one edit — blur fires again when
+  // the input is removed — so the first one to finish wins and the rest are
+  // no-ops. Without the latch a rename saves twice and Escape saves anyway.
+  let done = false;
+  const finish = async save => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    input.replaceWith(el);
+    if (!save || !name || name === before) return;
+    const r = await api('pets/' + encodeURIComponent(id), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (r.error) return toast('Error: ' + r.error);
+    toast('Renamed');
+    loadPets();
+  };
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(true));
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+});
+
 onAction('add-pet', () => addPet());
 onAction('delete-pet', el => deletePet(el.dataset.id));
 onAction('delete-face', el => deleteFace(el.dataset.id, el.dataset.face));
@@ -3847,6 +3957,33 @@ onAction('crop-open', el => openCropper(el.dataset.id, el.dataset.name));
 onAction('bind-pet-ref', el =>
   bindPetRef(el.dataset.ref, el.closest('.unbound').querySelector('[data-role=bind-pet]').value),
 );
+
+onAction('pets-cloud-import', async el => {
+  el.disabled = true;
+  toast('Asking PetKit and fetching the photos…');
+  const r = await api('pets/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_id: Number(el.dataset.id) }),
+  });
+  el.disabled = false;
+  if (r.error) return toast('Error: ' + r.error);
+  const imported = (r.results || []).filter(x => x.outcome === 'imported');
+  // Both numbers matter and neither is obvious: a photo can be refused after
+  // it downloads (it has to be a real JPEG), and the bound count is history
+  // that just got named.
+  const photos = imported.reduce((n, x) => n + x.faces_imported, 0);
+  const offered = imported.reduce((n, x) => n + x.faces_offered, 0);
+  const named = imported.reduce((n, x) => n + x.bound_events, 0);
+  toast(
+    imported.length
+      ? `Imported ${imported.length} pet${imported.length === 1 ? '' : 's'}, ` +
+          `${photos} of ${offered} photo${offered === 1 ? '' : 's'}` +
+          (named ? `, named ${named} past event${named === 1 ? '' : 's'}` : '')
+      : 'Nothing new — PetKit lists no pets this device does not already have',
+  );
+  loadPets();
+});
 
 async function addPet() {
   const name = document.getElementById('newPetName').value.trim();

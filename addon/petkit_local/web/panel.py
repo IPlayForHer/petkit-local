@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+import aiohttp
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
@@ -98,8 +99,11 @@ from petkit_local.utils.const import (
 from petkit_local.utils.dicts import dig_path
 from petkit_local.utils.jsonio import atomic_write_json, read_json
 from petkit_local.devices.ble import (
-    BLE_TYPES, ble_command_for, get_ble_entities, normalize_mac,
+    BLE_TYPES, CLOUD_BINDING_ENDPOINTS, ble_command_for, cloud_bindings,
+    get_ble_entities, normalize_mac,
 )
+from petkit_local.ai.pets import cloud_pets
+from petkit_local.http.cloud_fetch import CLOUD_TIMEOUT, CloudRefused, fetch_as_device
 from petkit_local.utils.paths import UnsafePathError, safe_join
 from petkit_local.utils.timeutil import local_day_bounds, local_offset_hours
 
@@ -298,6 +302,7 @@ def create_panel_app(registry: DeviceRegistry, ble_registry: BLERegistry | None,
     # has any way to report a newly-found accessory upward. We are the cloud.
     app.router.add_get("/api/ble", api_ble_accessories)
     app.router.add_post("/api/ble", api_ble_accessories)
+    app.router.add_post("/api/ble/import", api_ble_import)
     app.router.add_delete("/api/ble/{id}", api_ble_delete)
     app.router.add_post("/api/ble/{id}/command", api_ble_command)
     app.router.add_post("/api/ble/{id}/poll", api_ble_poll)
@@ -343,6 +348,7 @@ def create_panel_app(registry: DeviceRegistry, ble_registry: BLERegistry | None,
     # Before "/api/pets/{id}", or the literal segment is swallowed by the
     # dynamic one and every request lands in api_pet_detail with id="unbound".
     app.router.add_get("/api/pets/unbound", api_pets_unbound)
+    app.router.add_post("/api/pets/import", api_pets_import)
     app.router.add_get("/api/pets/{id}", api_pet_detail)
     app.router.add_post("/api/pets/{id}", api_pet_detail)
     app.router.add_delete("/api/pets/{id}", api_pet_detail)
@@ -1646,6 +1652,132 @@ async def api_pets_unbound(request: web.Request) -> web.Response:
     return web.json_response({"unbound": await store.unbound_pet_refs()})
 
 
+#: Cap on one downloaded reference photo. PetKit's are 224x224 face crops of a
+#: few KB; the cap is loose enough not to matter and tight enough that a reply
+#: pointing at something enormous cannot fill the disk before it is rejected.
+MAX_FACE_DOWNLOAD_BYTES = 4 * 1024 * 1024
+
+#: Per-photo, not per-import: one unreachable URL must not hold up the rest.
+FACE_DOWNLOAD_TIMEOUT = 20
+
+
+async def _fetch_cloud_face(session: aiohttp.ClientSession, url: str) -> bytes | None:
+    """Download one reference photo, or None if it could not be had.
+
+    No new trust is extended by this. These are the exact URLs we hand the
+    device in the same reply — `dev_discern_pic` is passed through untouched in
+    proxy mode — so the device is already fetching them, from the same host,
+    on its own. What is new is only that the owner asked for a copy.
+
+    Read in chunks against a cap rather than with `read()`: the size is
+    whatever the far end claims, and a `Content-Length` is not a promise.
+    `add_face` then does the real validation, since JPEG magic bytes are the
+    only thing that makes these bytes a face photo.
+    """
+    try:
+        async with session.get(url) as resp:
+            if resp.status != 200:
+                log.info("Face photo %s answered %d", url, resp.status)
+                return None
+            data = bytearray()
+            async for chunk in resp.content.iter_chunked(64 * 1024):
+                data.extend(chunk)
+                if len(data) > MAX_FACE_DOWNLOAD_BYTES:
+                    log.warning("Face photo %s is over %d bytes - refused",
+                                url, MAX_FACE_DOWNLOAD_BYTES)
+                    return None
+            return bytes(data)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.info("Could not fetch the face photo at %s", url, exc_info=True)
+        return None
+
+
+async def api_pets_import(request: web.Request) -> web.Response:
+    """Ask PetKit which pets this device recognises, and bring them across.
+
+    POST body: `{device_id}`.
+
+    `dev_discern_pic` is the account's recognition set for one device: which
+    animals it matches against, and where their reference photos live. This
+    asks for it once, on a button, and then downloads those photos.
+
+    Each pet arrives under a NEW local id with PetKit's own id bound to it as a
+    `device_pet_ids_json` alias. That binding is worth as much as the photos: a
+    box still matching against cloud-cached faces reports THAT id, so the alias
+    is what makes its events resolve — and `bind_pet_ref` applies it to the
+    history retroactively, naming events already recorded.
+
+    Names are not in that payload — a pet's name lives in the account API,
+    which no device ever asks for — so an imported pet is called
+    `PetKit pet <id>` until somebody renames it. Nothing is invented.
+    """
+    pet_registry = request.app.get("pet_registry")
+    if pet_registry is None:
+        return web.json_response({"error": "pet registry not available"}, status=503)
+    reg = request.app["registry"]
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "expected an object"}, status=400)
+
+    device = reg.get(to_int(body.get("device_id"), 0) or 0)
+    if device is None:
+        return web.json_response({"error": "no such device"}, status=404)
+
+    async with aiohttp.ClientSession(timeout=CLOUD_TIMEOUT) as session:
+        try:
+            payload = await fetch_as_device(
+                session, _cloud_upstream(request), device, "dev_discern_pic")
+        except CloudRefused as e:
+            return web.json_response({"error": str(e)}, status=502)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            return web.json_response(
+                {"error": f"could not reach PetKit: {e}"}, status=502)
+
+        store = request.app.get("event_store")
+        results = []
+        for entry in cloud_pets(payload, device.petkit_id):
+            pet_ref = entry["pet_ref"]
+            if await pet_registry.resolve_pet_ref(pet_ref) is not None:
+                results.append({"pet_ref": pet_ref, "outcome": "already yours"})
+                continue
+
+            pet = await pet_registry.create(f"PetKit pet {pet_ref}",
+                                            device_ids=[device.petkit_id])
+            await pet_registry.update(pet["id"],
+                                      device_pet_ids_json=json.dumps([pet_ref]))
+            bound = await store.bind_pet_ref(pet_ref, pet["id"]) if store else 0
+
+            faces = 0
+            for face in entry["faces"]:
+                data = await _fetch_cloud_face(session, face.get("url", ""))
+                if data and await pet_registry.add_face(pet["id"], data):
+                    faces += 1
+
+            pet = await pet_registry.get(pet["id"])
+            ha_publisher = request.app.get("ha_publisher")
+            if ha_publisher is not None:
+                await ha_publisher.publish_pet_discovery(pet)
+
+            results.append({
+                "pet_ref": pet_ref, "pet_id": pet["id"], "name": pet["name"],
+                "faces_imported": faces, "faces_offered": len(entry["faces"]),
+                "bound_events": bound, "outcome": "imported",
+            })
+
+    return web.json_response({
+        "imported": sum(1 for r in results if r.get("outcome") == "imported"),
+        "results": results,
+    })
+
+
 # --- Patchers -----------------------------------------------------------------
 
 #: One lock per device id, so patcher runs on the same device serialise. They
@@ -1867,22 +1999,134 @@ async def api_ble_accessories(request: web.Request) -> web.Response:
             # is the field that turns a guess into something a user can correct.
             scan_type=max(to_int(body.get("scan_type"), 0) or 0, 0),
         )
-        # Publish immediately rather than waiting for the next HA reconnect:
-        # an accessory that appears in the panel but not in HA reads as broken.
-        publisher = request.app.get("ha_publisher")
-        dev = ble.get(petkit_id)
-        if publisher is not None and dev is not None:
-            await publisher.publish_ble_discovery(dev)
-            await publisher.publish_ble_state(dev)
-
-        # A W5 is picked up from the relay list the parent already polls; a K3
-        # is not in that list at all and has to be named on the parent.
-        if ble_type == "k3" and link_with:
-            await _send_k3_link(request, link_with, petkit_id)
-        else:
-            await _nudge_relay_list(request, link_with)
+        await _announce_pairing(request, ble.get(petkit_id))
 
     return web.json_response({"accessories": [_ble_view(d, reg) for d in ble.all()]})
+
+
+async def _announce_pairing(request: web.Request, dev: BLEDevice | None) -> None:
+    """Make a just-paired accessory real to Home Assistant and to its parent.
+
+    Shared by hand-pairing and by cloud import so the two cannot drift: an
+    accessory that reaches the registry through one path and not the other is
+    the kind of difference nobody notices until a device is silent.
+    """
+    if dev is None:
+        return
+
+    # Publish immediately rather than waiting for the next HA reconnect:
+    # an accessory that appears in the panel but not in HA reads as broken.
+    publisher = request.app.get("ha_publisher")
+    if publisher is not None:
+        await publisher.publish_ble_discovery(dev)
+        await publisher.publish_ble_state(dev)
+
+    # A W5 is picked up from the relay list the parent already polls; a K3
+    # is not in that list at all and has to be named on the parent.
+    if dev.ble_type == "k3" and dev.link_with:
+        await _send_k3_link(request, dev.link_with, dev.petkit_id)
+    else:
+        await _nudge_relay_list(request, dev.link_with)
+
+
+def _cloud_upstream(request: web.Request) -> str:
+    """Where to ask PetKit: the same `proxy_upstream` the device traffic uses.
+
+    Read from `live_config` — the dict the device-facing handlers share — so
+    changing the upstream in Setup moves this too, and there is never a second
+    place that has to be kept in step.
+    """
+    from petkit_local.http.proxy import resolve_upstream
+    return resolve_upstream(_live(request).get("proxy_upstream", ""))
+
+
+async def api_ble_import(request: web.Request) -> web.Response:
+    """Ask PetKit which accessories this device owns, and pair them here.
+
+    POST body: `{device_id}`.
+
+    One request out and one answer back, on a button — nothing runs in the
+    background and nothing is staged. That is the whole design: the account is
+    asked when somebody wants to know, not on a schedule of ours.
+
+    Three endpoints are read, because a K3 is in none of the same places a
+    fountain is: `dev_ble_device` lists the relayed accessories, and the spray's
+    binding and parameters live in `dev_device_info` and `dev_k3_device_info`
+    (issue #6, and the half of #17 that needs the account's `secret`).
+
+    Answers `{imported, results, accessories}` where `results` names every
+    accessory and what happened to it, refusals included — an import that
+    quietly covers four of five is worse than one that says so.
+    """
+    ble = request.app["ble_registry"]
+    reg = request.app["registry"]
+    if ble is None:
+        return web.json_response({"error": "no BLE registry"}, status=503)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "bad json"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "expected an object"}, status=400)
+
+    device = reg.get(to_int(body.get("device_id"), 0) or 0)
+    if device is None:
+        return web.json_response({"error": "no such device"}, status=404)
+
+    # `dev_k3_device_info` is a litter box's endpoint — PetKit answers 404 to a
+    # feeder or a camera asking, and the firmware string behind it is
+    # `t4/dev_k3_device_info`. Skipped rather than asked-and-reported, so the
+    # answer for a device that can never have a spray is not a line of noise.
+    endpoints = sorted(
+        e for e in CLOUD_BINDING_ENDPOINTS
+        if e != "dev_k3_device_info" or device.is_litter)
+
+    results: list[dict[str, Any]] = []
+    paired: list[Any] = []
+    async with aiohttp.ClientSession(timeout=CLOUD_TIMEOUT) as session:
+        for endpoint in endpoints:
+            try:
+                payload = await fetch_as_device(
+                    session, _cloud_upstream(request), device, endpoint)
+            except CloudRefused as e:
+                # Not fatal on its own: one endpoint refusing must not cost the
+                # others. A 404 is not even reported — confirmed against the
+                # real cloud on a T5, PetKit answers 404 to
+                # `dev_k3_device_info`, so that endpoint is a T4's (its firmware
+                # string is `t4/dev_k3_device_info`) and its absence elsewhere
+                # is normal rather than a problem somebody should read about.
+                if e.status == 404:
+                    log.debug("PetKit has no %s for a %s", endpoint, device.device_type)
+                else:
+                    results.append({"endpoint": endpoint, "outcome": str(e)})
+                continue
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                return web.json_response(
+                    {"error": f"could not reach PetKit: {e}"}, status=502)
+
+            for fields in cloud_bindings(endpoint, payload, device.petkit_id):
+                if reg.get(fields["petkit_id"]) is not None:
+                    results.append({"petkit_id": fields["petkit_id"],
+                                    "outcome": "that id is already a real device"})
+                    continue
+                dev, outcome = ble.apply_cloud_binding(fields)
+                results.append({"petkit_id": fields["petkit_id"],
+                                "ble_type": fields.get("ble_type"),
+                                "mac": fields.get("mac"), "outcome": outcome})
+                if dev is not None and outcome != "unchanged":
+                    paired.append(dev)
+
+    for dev in paired:
+        await _announce_pairing(request, dev)
+
+    return web.json_response({
+        "imported": len(paired),
+        "results": results,
+        "accessories": [_ble_view(d, reg) for d in ble.all()],
+    })
 
 
 def _ble_entity_value(entity: Any, payload: str) -> int | None:

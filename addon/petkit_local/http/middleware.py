@@ -679,6 +679,15 @@ async def logging_middleware(request: web.Request, handler: Handler) -> web.Stre
         device = request_device(request)
         if device is not None:
             device.last_seen = time.time()
+            # The `type` spelling the firmware itself puts in `X-Device`, kept
+            # verbatim. It is one of the five fields hashed into that header's
+            # `sign`, so signing a request AS this device needs the device's own
+            # spelling and not our lowercase codename — see `http/cloud_fetch.py`.
+            # Recorded from live traffic rather than assumed, because a guess
+            # here fails as an authentication error and nothing else.
+            wire_type = (request.get("x_device") or {}).get("type") or ""
+            if wire_type and device.wire_type != wire_type:
+                device.wire_type = wire_type
             if not device.online:
                 device.online = True
                 cb = request.app.get("on_device_seen")

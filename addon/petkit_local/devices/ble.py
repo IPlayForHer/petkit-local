@@ -23,6 +23,8 @@ from typing import Any
 from petkit_local.devices.base import Refused
 from petkit_local.devices.registry import PersistedRegistry
 from petkit_local.ha.discovery import EntityDef
+from petkit_local.utils.coerce import to_int
+from petkit_local.utils.dicts import dig
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +58,17 @@ BLE_TYPE_MAP = {"w5": 14, "w4": 14, "ctw3": 24, "ctw2": 24, "k3": 0}
 #: Which of those values is evidence and which is a working assumption.
 #: Read by the panel so the guess is visible where somebody can act on it.
 BLE_TYPE_CONFIRMED = frozenset({"w5", "ctw3"})
+
+#: The reverse of `BLE_TYPE_MAP`, for reading a PetKit account's OWN pairing
+#: list back out of a proxied reply.
+#:
+#: Deliberately only the two confirmed numbers. Inverting the whole table would
+#: have to pick one of the two names sharing each value, and the wrong pick is
+#: not a cosmetic error: `ble_type` selects the frame parser, so a CTW2 imported
+#: as a CTW3 would have its status block read at the wrong offsets and produce
+#: confident nonsense. An unrecognised number imports with no type at all and
+#: waits for the owner to name it, which is the same position `scan_type` takes.
+CLOUD_BLE_TYPES = {14: "w5", 24: "ctw3"}
 
 #: The accessory kinds that produce HA entities. Anything else registers fine
 #: and then appears nowhere, so callers validate against this rather than
@@ -131,7 +144,14 @@ class BLEDevice:
     #: `scan_type` that may be a guess, "never" is the symptom to look for.
     last_seen: float = 0.0
     state: dict[str, Any] = field(default_factory=dict)
+    #: The K3's operating parameters, served as the parent's
+    #: `settings.k3Config.config` (see `K3_DEFAULT_CONFIG`). Unused by the
+    #: fountains, which carry their settings in their own status frames.
     config: dict[str, Any] = field(default_factory=dict)
+    #: The K3's own settings block (`K3_SETTING_KEYS`), served by
+    #: `dev_k3_device_info`. Separate from `config` because the firmware parses
+    #: the two in different places for different things.
+    settings: dict[str, Any] = field(default_factory=dict)
 
     @property
     def wire_mac(self) -> str:
@@ -187,6 +207,7 @@ class BLEDevice:
             "last_seen": self.last_seen,
             "state": self.state,
             "config": self.config,
+            "settings": self.settings,
         }
 
     @classmethod
@@ -194,6 +215,36 @@ class BLEDevice:
         """Rebuild from `to_dict`, ignoring keys this version no longer has."""
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
+
+#: The K3's operating parameters, as the parent's `settings.k3Config.config`.
+#:
+#: Every key here is one the T4 parses by name: firmware 1.652's
+#: `parse item k3 config w` branch reads `standard`, `lightness`,
+#: `singleLightTime`, `singleRefreshTime`, `refreshTotalTime` and `lowVoltage`,
+#: each with its own `=%d` log line — except `standard`, which has none because
+#: it arrives as a two-element array. The values are a real PetKit reply to a
+#: real T4, not an invention.
+#:
+#: Seeded when a K3 is paired because the alternative is what we served before:
+#: `{"config": {}}`, which parses to nothing and leaves the spray on whatever
+#: its flash happens to hold. Only applied to a K3 whose config is still empty,
+#: so a value that arrived from the cloud or from the owner is never overwritten.
+K3_DEFAULT_CONFIG: dict[str, Any] = {
+    "standard": [5, 30],
+    "lightness": 100,
+    "lowVoltage": 5,
+    "refreshTotalTime": 11500,
+    "singleRefreshTime": 25,
+    "singleLightTime": 120,
+}
+
+#: The two keys of `dev_k3_device_info`'s `settings` block, in the order the
+#: parent's single `liquidLackSwitch,fixedTimeRefresh:%d_%d` log line prints
+#: them. No default: nothing has ever shown us what PetKit sends here, so the
+#: block is served only once a real value exists (imported, or set by the
+#: owner) and omitted entirely until then — every key in that parser is looked
+#: up individually, so an absent one is skipped rather than read as zero.
+K3_SETTING_KEYS = ("liquidLackSwitch", "fixedTimeRefresh")
 
 K3_ENTITIES = [
     EntityDef(component="sensor", key="k3_liquid", name="K3 Liquid",
@@ -1039,6 +1090,105 @@ def parser_for(ble_type: str):
     return BLE_PARSERS.get(ble_type)
 
 
+#: The cloud replies that name a BLE accessory, and nothing else is read.
+#:
+#: `dev_ble_device` carries the relayed fountains; the K3 is not in it — it
+#: travels inside `dev_device_info` (`k3Device`) with its parameters in
+#: `settings.k3Config`, and answers a dedicated `dev_k3_device_info` of its own.
+#: Which is why importing bindings and serving a K3 are the same problem: both
+#: need a `secret` that only the account has ever held.
+CLOUD_BINDING_ENDPOINTS = frozenset({
+    "dev_ble_device", "dev_device_info", "dev_k3_device_info",
+})
+
+
+def _cloud_binding(entry: Any, parent_id: int, ble_type: str = "") -> dict[str, Any] | None:
+    """One cloud list entry as `BLERegistry.register` kwargs, or None if unusable.
+
+    The MAC is the test, not the id: an entry without one cannot be matched
+    against a relayed frame later (`get_by_mac`), so importing it would create
+    an accessory nothing can ever reach.
+    """
+    if not isinstance(entry, dict):
+        return None
+    mac = normalize_mac(str(entry.get("mac", "")))
+    petkit_id = to_int(entry.get("id"), 0) or 0
+    if not mac or petkit_id <= 0:
+        return None
+
+    cloud_type = to_int(entry.get("type"), 0) or 0
+    fields: dict[str, Any] = {
+        "ble_type": ble_type or CLOUD_BLE_TYPES.get(cloud_type, ""),
+        "petkit_id": petkit_id,
+        "mac": mac,
+        "secret": str(entry.get("secret", "")),
+        "link_with": parent_id,
+        "interval": to_int(entry.get("interval"), 240) or 240,
+    }
+    sn = entry.get("sn")
+    if isinstance(sn, str) and sn:
+        fields["serial_number"] = sn
+    # Kept verbatim even when it maps to a known name, so an unrecognised
+    # number survives the round trip and the parent is later told to scan for
+    # exactly what the account said — the one field we must not "improve".
+    if cloud_type:
+        fields["scan_type"] = cloud_type
+    return fields
+
+
+def cloud_bindings(endpoint: str, payload: Any, parent_id: int) -> list[dict[str, Any]]:
+    """Every BLE accessory a proxied cloud reply describes, as register kwargs.
+
+    Args:
+        endpoint: The last path segment of the request that produced `payload`.
+        payload: The decoded upstream JSON body.
+        parent_id: The device whose request this answered — the `link_with` for
+            everything found. The same account list is returned to EVERY online
+            parent, so the requester is the only sound attribution available.
+
+    Returns:
+        Zero or more kwargs dicts. K3 entries carry `ble_type="k3"` because the
+        payloads that describe one never carry a scan `type` — it is not a
+        relayed accessory and is never scanned for.
+    """
+    if not isinstance(payload, dict):
+        return []
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        return []
+
+    if endpoint == "dev_ble_device":
+        entries = result.get("list")
+        if not isinstance(entries, list):
+            return []
+        found = (_cloud_binding(e, parent_id) for e in entries)
+        return [f for f in found if f]
+
+    # Both remaining shapes describe one K3. `dev_device_info` nests it under
+    # `k3Device` beside the parent's own fields; `dev_k3_device_info` is the K3
+    # itself, so its fields sit at the top of `result`.
+    node = result.get("k3Device") if endpoint == "dev_device_info" else result
+    binding = _cloud_binding(node, parent_id, ble_type="k3")
+    if not binding:
+        return []
+    binding.pop("scan_type", None)
+
+    config = dig(result, "settings", "k3Config", "config")
+    if isinstance(config, dict) and config:
+        binding["config"] = dict(config)
+
+    # Kept apart from `config` on purpose: these two are the K3's OWN settings
+    # block, and the six keys of `k3Config.config` are the parent's copy of its
+    # operating parameters. Merging them would put `liquidLackSwitch` inside a
+    # `k3Config` the firmware parses key by key for something else.
+    settings = result.get("settings") if endpoint == "dev_k3_device_info" else None
+    if isinstance(settings, dict):
+        held = {k: settings[k] for k in K3_SETTING_KEYS if k in settings}
+        if held:
+            binding["settings"] = held
+    return [binding]
+
+
 class BLERegistry(PersistedRegistry):
     """Every BLE accessory, keyed by its PetKit id, persisted to ble_devices.json.
 
@@ -1132,6 +1282,8 @@ class BLERegistry(PersistedRegistry):
                 self.mark_dirty()
             return dev
         dev = BLEDevice(**kwargs)
+        if dev.ble_type == "k3" and not dev.config:
+            dev.config = dict(K3_DEFAULT_CONFIG)
         self._devices[pid] = dev
         log.info("BLE device registered: %s id=%d mac=%s linked=%d",
                  dev.ble_type, pid, dev.mac, dev.link_with)
@@ -1141,6 +1293,48 @@ class BLERegistry(PersistedRegistry):
     def all(self) -> list[BLEDevice]:
         """A snapshot list of every accessory, safe to iterate while mutating."""
         return list(self._devices.values())
+
+    def apply_cloud_binding(self, fields: dict[str, Any]) -> tuple[BLEDevice | None, str]:
+        """Register (or update) one accessory the account reported.
+
+        Args:
+            fields: One `cloud_bindings` entry.
+
+        Returns:
+            `(device, outcome)` where outcome is `imported`, `updated`,
+            `unchanged`, or a reason it was refused. The caller reports the
+            reason rather than silently dropping it — an import that quietly
+            covers four of five accessories is worse than one that says so.
+
+        A `secret` the account disagrees with overwrites ours, and that is the
+        point of asking: a hand-typed one produces an accessory that pairs,
+        relays nothing, and looks perfectly healthy in the panel.
+        """
+        pid = to_int(fields.get("petkit_id"), 0) or 0
+        if pid <= 0:
+            return None, "no usable id"
+        if not fields.get("ble_type"):
+            return None, f"type {fields.get('scan_type') or '?'} has no parser here"
+
+        existing = self._devices.get(pid)
+        clash = self.get_by_mac(fields.get("mac", ""))
+        if clash is not None and clash.petkit_id != pid:
+            return None, f"MAC already paired to id {clash.petkit_id}"
+
+        before = existing.to_dict() if existing else None
+        dev = self.register(**fields)
+        # `register` only overwrites truthy values, which is right for a parent
+        # re-reporting an accessory but not for parameters the account is
+        # authoritative on — those are replaced wholesale when they arrive.
+        for key in ("config", "settings"):
+            value = fields.get(key)
+            if isinstance(value, dict) and value and getattr(dev, key) != value:
+                setattr(dev, key, dict(value))
+                self.mark_dirty()
+
+        if before is None:
+            return dev, "imported"
+        return dev, "unchanged" if before == dev.to_dict() else "updated"
 
     def non_k3_for_parent(self, parent_id: int) -> list[BLEDevice]:
         """The accessories that belong in this device's `dev_ble_device` list.

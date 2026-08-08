@@ -576,6 +576,25 @@ a:hover {
 }
 .pet-name {
   font-size: 16px;
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+}
+/* The only hint that the name is editable. A button next to Delete would read
+   as equally weighty as deleting the pet, which it is not. */
+.pet-name:hover {
+  border-bottom-color: var(--mut);
+}
+/* Sized to sit exactly where the name was, so the card does not jump when it
+   turns into a field. */
+.pet-name-edit {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  min-width: 140px;
 }
 .pet-devs {
   flex: 1;

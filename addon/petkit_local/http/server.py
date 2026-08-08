@@ -39,6 +39,7 @@ from petkit_local.http.handlers.serverinfo import handle_serverinfo
 from petkit_local.http.handlers.state_report import handle_state_report
 from petkit_local.http.handlers.heartbeat import handle_heartbeat
 from petkit_local.http.handlers.ble_device import handle_ble_device
+from petkit_local.http.handlers.k3_device_info import handle_k3_device_info
 from petkit_local.http.handlers.schedule import handle_schedule_get
 from petkit_local.http.handlers.feed import handle_feed_get
 from petkit_local.http.handlers.upload_file_info import (
@@ -114,6 +115,7 @@ def create_app(registry: DeviceRegistry, config: dict) -> web.Application:
         app.router.add_route("*", f"{p}/dev_device_info", handle_device_info)
         app.router.add_route("*", f"{p}/dev_multi_config", handle_multi_config)
         app.router.add_route("*", f"{p}/dev_ble_device", handle_ble_device)
+        app.router.add_route("*", f"{p}/dev_k3_device_info", handle_k3_device_info)
         app.router.add_route("*", f"{p}/dev_schedule_get", handle_schedule_get)
         app.router.add_route("*", f"{p}/dev_sound_get", handle_empty_list)
         app.router.add_route("*", f"{p}/dev_attire_over", handle_attire_over)

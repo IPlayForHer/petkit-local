@@ -127,6 +127,12 @@ class Device:
     serial_number: str = ""
     mac: str = ""
     firmware: str = ""
+    #: The `type` value this device puts in its own `X-Device` header, recorded
+    #: verbatim from live traffic. Not the same thing as `device_type`, which is
+    #: our lowercase codename taken from the URL: the header's spelling is one
+    #: of the five fields hashed into that header's `sign`, so asking PetKit a
+    #: question AS this device needs the device's own (`http/cloud_fetch.py`).
+    wire_type: str = ""
 
     mqtt_product_key: str = field(default_factory=generate_product_key)
     mqtt_device_name: str = ""
@@ -822,6 +828,10 @@ class Device:
             "serial_number": self.serial_number,
             "mac": self.mac,
             "firmware": self.firmware,
+            # Signing input, so it has to survive a restart like any credential:
+            # without it, the first cloud fetch after a reboot signs with our
+            # lowercase codename and is refused (`http/cloud_fetch.py`).
+            "wire_type": self.wire_type,
             "mqtt_product_key": self.mqtt_product_key,
             "mqtt_device_name": self.mqtt_device_name,
             "mqtt_device_secret": self.mqtt_device_secret,
@@ -847,6 +857,7 @@ class Device:
             serial_number=data.get("serial_number", ""),
             mac=data.get("mac", ""),
             firmware=data.get("firmware", ""),
+            wire_type=data.get("wire_type", ""),
         )
         d.mqtt_product_key = data.get("mqtt_product_key", d.mqtt_product_key)
         d.mqtt_device_name = data.get("mqtt_device_name", d.mqtt_device_name)

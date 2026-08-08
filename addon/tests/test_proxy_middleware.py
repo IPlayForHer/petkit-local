@@ -895,3 +895,4 @@ async def test_the_ble_list_is_always_ours():
         await close_proxy_session(client.app)
         await client.close()
         await up.close()
+
