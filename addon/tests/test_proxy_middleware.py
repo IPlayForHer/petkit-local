@@ -865,16 +865,23 @@ async def test_the_real_api_secret_is_adopted_and_then_served_locally():
 
 
 async def test_the_ble_list_is_always_ours():
-    """An empty `list: []` from the cloud is fatal on real hardware: the
-    firmware's `pk_schmg_parse_ble_dev_list` dereferences null on it and aborts
-    the boot chain, so the device never starts heartbeating while `ctrl` keeps
-    running. Our reply omits `list` entirely when nothing is paired, which skips
-    that parser. The upstream reply is still forwarded and recorded."""
+    """The cloud's list is PetKit's, and for a taken-over device it is empty —
+    serving it would tell the device to forget every accessory paired here.
+
+    We answer the same SHAPE the cloud does (`list: []`, `nextTick`), so this is
+    about whose list it is, not what it looks like. The upstream reply is still
+    forwarded and recorded, which is the point of proxy mode."""
     hits = []
 
+    # Deliberately NON-empty, and different from ours. Both sides used to answer
+    # `list: []` here, which made this test unable to fail: it would have passed
+    # just as happily if the cloud's list were served verbatim.
     async def cloud(request):
         hits.append(request.path)
-        return web.json_response({"result": {"list": [], "nextTick": 3600}})
+        return web.json_response({"result": {"list": [
+            {"id": 400000009, "mac": "ffeeddccbbaa", "secret": "theirs",
+             "interval": 240, "type": 14},
+        ], "nextTick": 3600}})
 
     hub = EventHub()
     up, base = await _cloud(cloud)
@@ -886,11 +893,13 @@ async def test_the_ble_list_is_always_ours():
         r = await client.get("/6/t5/dev_ble_device", headers=HDR)
         body = await r.json()
 
-        assert "list" not in body["result"], "an empty list bricks the boot chain"
+        # Nothing is paired here, so ours is empty — and the device gets ours.
+        assert body["result"]["list"] == [], "the cloud's list was served"
+        assert body["result"]["nextTick"] == 3600
         # Still observed — proxy mode's whole purpose.
         assert hits == ["/6/t5/dev_ble_device"]
         entry = [e for e in hub.recent() if e["kind"] == "http"][-1]
-        assert '"list": []' in entry["detail"]["proxy"]["upstream_body"]
+        assert "400000009" in entry["detail"]["proxy"]["upstream_body"]
     finally:
         await close_proxy_session(client.app)
         await client.close()

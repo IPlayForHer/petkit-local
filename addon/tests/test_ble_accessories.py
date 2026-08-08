@@ -194,9 +194,11 @@ async def test_the_device_is_told_to_scan_for_a_paired_accessory():
         await c.close()
 
 
-async def test_nothing_paired_omits_the_list_key_entirely():
-    """Both transports must agree on this, and they had drifted — the MQTT twin
-    always sent `list`, empty or not."""
+async def test_nothing_paired_still_answers_like_the_cloud_does():
+    """`{"list": [], "nextTick": 3600}` is what PetKit sends a device with no
+    accessories — captured from it doing exactly that 234 times in one session.
+
+    Both transports must agree, and they have drifted apart once already."""
     reg = DeviceRegistry()
     reg.get_or_create(petkit_id=10, device_type="t5", serial_number="SN10")
     app = create_app(reg, dict(DEVICE_CONFIG))
@@ -204,7 +206,11 @@ async def test_nothing_paired_omits_the_list_key_entirely():
     c = await _client(app)
     try:
         http_body = await (await c.get("/6/t5/dev_ble_device", headers=HDR)).json()
-        assert "list" not in http_body["result"]
+        assert http_body["result"]["list"] == []
+        # The part the old omission quietly took with it: with no `list` there
+        # was no `nextTick` either, so a parent with nothing paired was told
+        # neither what to scan for nor when to ask again.
+        assert http_body["result"]["nextTick"] == 3600
     finally:
         await c.close()
 
@@ -225,7 +231,7 @@ async def test_a_k3_is_never_put_in_the_relay_list():
     c = await _client(app)
     try:
         body = await (await c.get("/6/t5/dev_ble_device", headers=HDR)).json()
-        assert "list" not in body["result"]
+        assert body["result"]["list"] == []
     finally:
         await c.close()
 
@@ -1226,3 +1232,25 @@ def test_a_ctw3_settings_reply_decodes_with_no_new_offsets():
     assert st["childLock"] == 0
     assert st["smartInductiveSwitch"] == 1
     assert st["batteryInductiveSwitch"] == 0
+
+
+@pytest.mark.parametrize("typed", [
+    "AA:BB:CC:DD:EE:01", "aa-bb-cc-dd-ee-01", "aabbccddee01", "AABBCCDDEE01",
+])
+def test_the_wire_mac_is_canonical_however_it_was_stored(typed):
+    """The cloud sends `aabbccddee01` and so must we. Enforced where the value
+    is stored rather than at each caller: two normalised before handing one
+    over, and a third that forgot would put a malformed MAC on the wire while
+    every lookup here kept working — `get_by_mac` normalises both sides, so the
+    only thing that would ever notice is the device, silently."""
+    reg = BLERegistry()
+    reg.register(ble_type="w5", petkit_id=700, mac=typed, link_with=10)
+    assert reg.get(700).to_ble_list_entry()["mac"] == "aabbccddee01"
+
+
+def test_a_mac_that_cannot_be_parsed_is_kept_not_blanked():
+    """It is already unmatchable; keeping it is what lets the panel show the
+    owner what they actually typed."""
+    reg = BLERegistry()
+    reg.register(ble_type="w5", petkit_id=700, mac="nonsense", link_with=10)
+    assert reg.get(700).mac == "nonsense"

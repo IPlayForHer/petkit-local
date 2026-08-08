@@ -21,7 +21,21 @@ async def handle_ble_device(request: web.Request) -> web.Response:
     Returns:
         ``{"result": {"list": [...], "nextTick": 3600}}`` where each entry comes
         from `BLEDevice.to_ble_list_entry()`, or the standard empty result when
-        the device is unknown or has no non-K3 accessories linked to it.
+        the device cannot be identified at all.
+
+        With nothing paired the answer is `list: []` and the same `nextTick`,
+        which is what PetKit's own cloud sends — captured from it answering a
+        device with no accessories 234 times in one session. This used to omit
+        `list`, on a reading of one firmware log line
+        (`ERR:...parse item NULL`) as a null dereference that aborts the boot
+        chain. That reading did not survive: every unaccessorised PetKit device
+        in the world receives the empty array routinely, so it cannot be
+        breaking them, and a logged parse error is not an aborted boot.
+
+        `nextTick` is the part that was actually costing something. It tells the
+        parent when to come back for the list, the cloud sends it whether or not
+        the list has anything in it, and omitting it left the device with no
+        schedule at exactly the moment it had nothing else to go on.
     """
     device = request_device(request)
     if not device:
@@ -33,9 +47,6 @@ async def handle_ble_device(request: web.Request) -> web.Response:
     if ble_registry:
         for ble_dev in ble_registry.non_k3_for_parent(device.petkit_id):
             ble_list.append(ble_dev.to_ble_list_entry())
-
-    if not ble_list:
-        return no_device_response()
 
     return web.json_response({
         "result": {

@@ -66,9 +66,12 @@ API_PREFIX = "/6/"
 #: cloud answers `{"result":{"list":[],"nextTick":3600}}` to a device with no
 #: accessories — 234 times in one session — so every unaccessorised PetKit
 #: device in the world receives that payload routinely. The ERR line is real,
-#: but a logged parse error is not the same as an aborted boot. Both our
-#: handlers still omit `list` when nothing is paired, because it costs nothing
-#: and the firmware demonstrably skips the parser entirely that way.
+#: but a logged parse error is not the same as an aborted boot.
+#:
+#: Both handlers send the empty array now, matching that capture byte for byte.
+#: They used to omit `list`, which outlived the reasoning behind it — and the
+#: omission was not free: it took `nextTick` with it, so a parent with nothing
+#: paired was told neither what to scan for nor when to ask again.
 #:
 #: This set is for answers that would BREAK the device, not for answers that
 #: are merely inconvenient to us. `dev_discern_pic` is deliberately absent: the

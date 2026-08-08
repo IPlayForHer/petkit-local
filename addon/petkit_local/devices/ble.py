@@ -153,6 +153,25 @@ class BLEDevice:
     #: the two in different places for different things.
     settings: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Canonicalise the MAC at the point it is stored, not at each caller.
+
+        Two call sites normalise before handing one over, and that was the whole
+        guarantee: a third that forgot would put `aa:bb:cc:dd:ee:01` on the wire
+        where the cloud sends `aabbccddee01`, and nothing here would notice.
+        `get_by_mac` normalises both sides, so every lookup would keep working
+        and the only thing that ever saw the malformed value would be the device
+        — which would simply never find the accessory. That is the exact failure
+        this class already warns about elsewhere, one layer further out.
+
+        A value that does not parse is LEFT ALONE rather than blanked: it is
+        already unmatchable, and keeping it is what lets the panel show the
+        owner the MAC they actually typed instead of an empty box.
+        """
+        canonical = normalize_mac(self.mac)
+        if canonical:
+            self.mac = canonical
+
     @property
     def wire_mac(self) -> str:
         """The MAC as the cloud puts it on the wire: lowercase, no separators.

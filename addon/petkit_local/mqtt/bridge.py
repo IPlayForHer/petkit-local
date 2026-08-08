@@ -777,18 +777,15 @@ class MQTTBridge:
             feed = device.config.get("feed_schedule")
             return {"result": feed} if feed is not None else None
         if data_type == "dev_ble_device":
-            # Deliberately identical to `http/handlers/ble_device.py`, including
-            # OMITTING `list` when nothing is paired rather than sending an
-            # empty array. The two answer the same question and had drifted:
-            # this one always sent `list`, its HTTP twin never does. See the
-            # note in `http/middleware.py` for what the firmware makes of an
-            # empty array.
+            # Deliberately identical to `http/handlers/ble_device.py` — the two
+            # answer the same question over different transports and have
+            # drifted apart once already. Both send `list` even when it is
+            # empty, which is what PetKit's own cloud does; see that handler for
+            # why the earlier omission did not survive its own evidence.
             lst = []
             if self._ble_registry:
                 for b in self._ble_registry.non_k3_for_parent(device.petkit_id):
                     lst.append(b.to_ble_list_entry())
-            if not lst:
-                return {"result": {}}
             return {"result": {"list": lst, "nextTick": 3600}}
         return None
 
