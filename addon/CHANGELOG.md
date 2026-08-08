@@ -1,5 +1,72 @@
 # Changelog
 
+## 1.9.0 — 2026-08-08
+
+### A YumShare Dual-Hopper is asked for food in the field it actually reads
+
+Pressing Feed on a D4SH ran a feed cycle and dispensed nothing. The command was
+well formed and asked for nothing: its firmware compares its own model string
+against `D4SH` and, in that branch, reads only `amount1` and `amount2` — one per
+hopper. The plain `amount` we sent is not looked at on that model, so both
+hoppers were asked for zero and the device reported exactly that.
+
+Two per-hopper controls come with it. **Hopper 1 Portions** and **Hopper 2
+Portions** set how much each dispenses, defaulting to 1 and 1 because that is
+what PetKit's own app sends for its default manual feed. **Feed Hopper 1** and
+**Feed Hopper 2** dispense from one and not the other, which is what the app
+does by asking the other hopper for zero rather than by calling anything
+different. Plain **Feed** still uses both.
+
+Single-hopper feeders are deliberately untouched. A D4H divides `amount` by a
+constant held in its own configuration before using it, so the 10 that path has
+always sent is not ten portions and is not ours to reinterpret. Nothing in the
+report speaks to it — the reporter has a Dual-Hopper, which never reads that
+field.
+
+**Cancel Manual Feed** now uses `feed_realtime_cancel`, the service the firmware
+has for it, naming the feed being cancelled. It used to send a zero `amount`,
+which on a Dual-Hopper lands in a field the device does not read. The ESP32
+feeders keep the old form: that service was read out of the embedded-Linux
+binary, and the D4, D3 and Feeder Mini run different firmware.
+
+### The Dual-Hopper's state stops disappearing on its own main channel
+
+A D4SH publishes its state over MQTT as `property/post`, and that path went
+through a normaliser carrying not one feeder field — so every hopper level, the
+bowl reading and the feeding flags were dropped there while working fine inside
+events. Both transports now read the same report the same way, which a test
+asserts directly against the payload from the report.
+
+Device Status no longer shows a made-up `0`. The device sends no work state at
+all, and the parser was defaulting one, so the entity displayed a value that had
+never been reported. The fault block reaches both paths too; it was wired into
+one.
+
+New on both D4H and D4SH, and each named for how well it is understood:
+
+- **Hopper 1** / **Hopper 2** — has food or empty. Not a percentage: the owner
+  saw 2 and 0 and never anything between them, so an unexpected value shows as
+  the raw number rather than being rounded into a story.
+- **Bowl Surplus** — leftover food, with no unit, because nobody can yet say
+  whether its one observed reading was grams, a percentage or a count. `-1` is
+  the firmware's "not measured", which it sets as a feed begins.
+- **DC Voltage**, four hall switches, three infrared readings and `door`, all
+  diagnostic. The last four carry the device's own words: `door` read the same
+  value through the lid being opened, both hoppers pulled and the battery cover
+  removed, so whatever it is, it is not the lid — and calling it one would have
+  been a confident lie about somebody's hardware.
+
+Four controls are withdrawn from these two models: Food Low, Food in Bowl, Food
+Bowl Level and Battery Installed. Each reads a field this hardware does not send
+— it says `food1`/`food2` where they expect `food`, and `batV` where they expect
+`batteryPower` — so all four could only ever read unknown. The backup-battery
+voltage is deliberately not published either: it reads 0 with no batteries
+fitted, which looks like a flat battery rather than an absent one.
+
+Reported by @dscarr10, who also captured the official app driving the feeder
+through proxy mode. That capture is what made the fix a reading rather than a
+guess.
+
 ## 1.8.2 — 2026-08-08
 
 ### The empty `dev_ble_device` answer goes back to omitting `list`
