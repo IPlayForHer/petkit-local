@@ -23,10 +23,34 @@ predicates the rest of the code actually reads.
 #: the old entities, and there was no way — for them or for us — to tell whether
 #: the new code was running. The entity COUNT eventually gave it away. A version
 #: on the screen answers in one glance what took a screenshot and an inference.
-VERSION = "1.8.2"
+VERSION = "1.9.0"
 
 DEVICE_TYPES_LITTER = {"t3", "t4", "t5", "t6", "t7"}
 DEVICE_TYPES_FEEDER = {"feeder", "feedermini", "d3", "d4", "d4s", "d4h", "d4sh"}
+
+# Feeders with two hoppers, which dispense from each one separately.
+#
+# This is not cosmetic: the D4SH firmware (867, `ctrl`,
+# `parse_service_invoke_msg`) compares its own model string against "D4SH" and
+# in that branch reads ONLY `amount1`/`amount2` from a `feed_realtime`. The
+# plain `amount` every other feeder takes is not looked at, so a dual-hopper
+# sent one runs a feed cycle and dispenses nothing -- issue #2, where both
+# hoppers reported `real_amount: 0` for a command that was well formed and
+# asked for nothing.
+#
+# Membership is by codename because that IS the test the firmware makes: the
+# string it compares is its own model, and `d4sh` is the codename for the
+# YumShare Dual-Hopper. The neighbouring branch compares "D4H" and reads
+# `amount`, which is why the single-hopper path below must stay exactly as it
+# was -- see `ha/commands.py::_feed`.
+DEVICE_TYPES_FEEDER_DUAL = {"d4sh"}
+
+# Feeders running the embedded-Linux `ctrl` we have read (the D4SH 867 image
+# serves both D4SH and D4H). Everything taken from that disassembly is gated on
+# this set rather than applied to every feeder: the ESP32 models (D4, D3,
+# Feeder Mini) run different firmware entirely, and extending a finding to them
+# would be extrapolation, not evidence.
+DEVICE_TYPES_FEEDER_NEXT_GEN = {"d4h", "d4sh"}
 DEVICE_TYPES_WATER_FOUNTAIN = {"w4", "w5", "ctw2", "ctw3", "w7h"}
 DEVICE_TYPES_PURIFIER = {"k2", "k3"}
 DEVICE_TYPES_ALL = DEVICE_TYPES_LITTER | DEVICE_TYPES_FEEDER | DEVICE_TYPES_WATER_FOUNTAIN | DEVICE_TYPES_PURIFIER

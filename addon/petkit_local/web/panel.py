@@ -877,7 +877,7 @@ async def api_send_command(request: web.Request) -> web.Response:
         fn = ALL_ACTIONS.get(action)
         if not fn:
             return web.json_response({"error": f"unknown action {action}"}, status=400)
-        suffix, envelope = fn()
+        suffix, envelope = fn(d)
     elif entity_key is not None:
         # Route through the same handler as HA so coercion (switch/number/select
         # option_values) and optimistic settings update stay identical.

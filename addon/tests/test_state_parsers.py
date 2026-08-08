@@ -312,3 +312,83 @@ def test_advertised_spray_days_matches_the_countdown_total():
     # rounds up, so 34.5 remaining reads 35.
     used = normalize_property_params("t5", {"sprayResetTime": time.time() - 10.5 * 86400})
     assert used["sprayLeftDays"] == SPRAY_TOTAL_DAYS - 10
+
+
+# --- D4SH (YumShare Dual-Hopper), issue #2 ----------------------------------
+
+#: The state a real D4SH on firmware 867 reports, verbatim from issue #2. It
+#: arrived twice, once inside an event's `state` and once as an HTTP report, and
+#: both copies carry these keys.
+D4SH_STATE = {
+    "wifi": {"ssid": "HomeWIFI", "rsq": -48, "bssid": "60d8a4e83040"},
+    "hardware": 1, "firmware": "867", "locale": "",
+    "ir_b_1": 1, "ir_b_2": 1, "ir_c": 0,
+    "batV": 0, "DCV": 6234, "runtime": 659, "mem": 34448, "cpu": 100, "ubat": 0,
+    "cameraStatus": 1, "door": 1, "food1": 2, "food2": 2, "bowl": -1,
+    "feeding": 0, "eating": 0, "ota": 0, "ultra_sta": 0,
+    "ready": [0, 0, 0, 0, 0],
+    "err": {"DC": 0, "sys": 0, "rtc_c": 0, "moto": 0,
+            "blk_f": 0, "blk_d": 0, "camera": 0, "serial": 0},
+    "sensor": {"left_hall": 1, "home_hall": 1, "right_hall": 1, "left_sub_hall": 0},
+    "other": ("PowerSRC:0,CloudUseAcceDomain:0,DnsList:[192.168.1.254]"
+              "[114.114.114.114][114.114.115.115],Ip:192.168.1.204,"
+              "feed_recoed[0-0-0-0-0]"),
+}
+
+
+def test_both_transports_read_the_same_d4sh_report_the_same_way():
+    """A D4SH publishes `thing/event/property/post` — the topic is in its own
+    firmware — and that path reaches `normalize_property_params` ALONE, while
+    the snapshot inside an event goes through both parsers.
+
+    So a feeder mapping added to one of them works on whichever frames happen
+    to carry it and silently does nothing on the other. That is what happened
+    here: `normalize_property_params` carried not one feeder field, so the
+    device's main state channel dropped every hopper level, the bowl and the
+    feeding flags."""
+    http_side = parse_state_report("d4sh", D4SH_STATE)
+    mqtt_side = normalize_property_params("d4sh", D4SH_STATE)
+
+    for key in ("food1", "food2", "bowl", "door", "feeding", "eating",
+                "ir_b_1", "ir_b_2", "ir_c", "DCV", "left_hall", "right_hall"):
+        assert key in http_side, f"{key} missing on the HTTP path"
+        assert key in mqtt_side, f"{key} missing on the MQTT path"
+        assert http_side[key] == mqtt_side[key], key
+
+
+def test_a_feeder_that_reports_no_work_state_is_not_given_one():
+    """The payload has no `workState` at all, and the parser used to default it
+    to 0 — so Device Status displayed a value the device never sent. Same
+    mistake the W7H's parser was fixed for, and the same one that had an idle
+    litter box calling itself "cleaning"."""
+    assert "workState" not in D4SH_STATE
+    assert "workingState" not in parse_state_report("d4sh", D4SH_STATE)
+    assert "workingState" not in normalize_property_params("d4sh", D4SH_STATE)
+
+
+def test_the_feeder_fault_block_reaches_both_paths():
+    """`_extract_error_flags` was wired into the MQTT path only, so the Error
+    sensor said whatever the last transport to arrive had to say."""
+    faulted = {**D4SH_STATE, "err": {**D4SH_STATE["err"], "blk_f": 1}}
+    assert parse_state_report("d4sh", faulted)["errorMsg"] == "blk_f"
+    assert normalize_property_params("d4sh", faulted)["errorMsg"] == "blk_f"
+    # No feeder table exists, so the raw firmware name is what shows. Naming
+    # these bits would be a guess: not one of them has a descriptive string
+    # anywhere in the image.
+    assert parse_state_report("d4sh", D4SH_STATE)["errorMsg"] == ""
+
+
+def test_an_esp32_feeder_is_not_given_fields_its_hardware_never_sends():
+    """The next-gen keys are gated on the models whose firmware was read. A D4
+    runs something else entirely, and inventing a hopper level for it would be
+    extrapolation dressed as support."""
+    flat = parse_state_report("d4", D4SH_STATE)
+    for key in ("food1", "food2", "ir_b_1", "DCV", "left_hall"):
+        assert key not in flat, key
+
+
+def test_the_device_ip_still_comes_out_of_the_other_string():
+    """Everything downstream of the camera needs it — the stream URL and the
+    whole Patchers tab go quiet without one."""
+    assert parse_state_report("d4sh", D4SH_STATE)["ip"] == "192.168.1.204"
+    assert normalize_property_params("d4sh", D4SH_STATE)["ip"] == "192.168.1.204"

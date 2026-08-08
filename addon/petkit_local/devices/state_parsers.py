@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from petkit_local.events import codes
 from petkit_local.utils.coerce import to_float
+from petkit_local.utils.const import DEVICE_TYPES_FEEDER_NEXT_GEN
 from petkit_local.utils.dicts import dig
 
 if TYPE_CHECKING:  # import-cycle-free: base.py imports SPRAY_TOTAL_DAYS from here
@@ -292,6 +293,67 @@ def _extract_fountain_w7h(body: dict[str, Any], state: dict[str, Any],
             state["sw"] = device_block["sw"]
 
 
+#: The hall switches a next-gen feeder reports in its `sensor{}` block, in the
+#: device's own wording. Named rather than copied wholesale for the same reason
+#: as the litter box's: a blanket copy would also drag in raw ADC readings whose
+#: scale nobody here knows.
+FEEDER_HALLS = ("left_hall", "home_hall", "right_hall", "left_sub_hall")
+
+#: Flat keys a D4H/D4SH report carries that no other feeder does. Every one is
+#: present in the two real D4SH 867 reports in issue #2 (one per transport) and
+#: is a JSON key in the state builder of that firmware's `ctrl`.
+#:
+#: What each MEANS is a separate question from whether it is there, and most of
+#: these are only the second. `door` read 1 through the lid being opened, the
+#: hoppers being pulled and the battery cover coming off, so it is not the lid;
+#: `ir_b_1`/`ir_b_2`/`ir_c` never moved, though blocking a sensor did raise a
+#: "feed chute blocked" fault. They are carried so the values are visible in the
+#: panel and in diagnostics -- an entity that names them is a different decision,
+#: made per key in `ha/entities/sensors.py`.
+FEEDER_NEXT_GEN_FIELDS = (
+    # Hopper contents, one per hopper. 2 = has food and 0 = empty, reported by
+    # the owner in #2; 1 was never observed and is deliberately not guessed at.
+    "food1", "food2",
+    # Leftover food in the bowl. -1 is "not measured", not a level: the firmware
+    # logs `recv feed start leftover set(-1)` as it begins a feed, and the one
+    # real reading seen (46) appeared while surplus control was being changed.
+    # Related to `surplusControl`/`surplusStandard`, both strings in `ctrl`.
+    "bowl",
+    "door", "feeding", "eating",
+    "ir_b_1", "ir_b_2", "ir_c",
+    # Backup batteries and the DC line. `batV` reads 0 with no batteries fitted
+    # (confirmed by the owner), which is why it must not be read as a fault.
+    "batV", "ubat", "DCV",
+    "ultra_sta",
+    # Five slots of sound readiness, NOT the feeding schedule -- the firmware
+    # logs `clean sound_list[%d], id = %d, ready[%d]=%d` and takes a `soundId`
+    # in its `play_sound` service. The owner confirmed the list does not track
+    # how many meals are scheduled.
+    "ready",
+)
+
+
+def _extract_feeder_next_gen(body: dict[str, Any], state: dict[str, Any],
+                             device_type: str = "") -> None:
+    """Flatten the D4H/D4SH-specific parts of a feeder report into `state`.
+
+    ONE helper called from BOTH transports, for the reason spelled out on
+    `_extract_fountain_w7h`: a mapping added to only one of them works on
+    whichever frames happen to carry it and silently does nothing on the other.
+    A D4SH publishes `thing/event/property/post` (the topic is in its firmware),
+    and that path reaches `normalize_property_params` alone -- which used to
+    carry not one feeder field, so the device's main state channel dropped every
+    hopper level, the bowl and the feeding flags.
+
+    Gated on the models whose firmware was actually read. The ESP32 feeders
+    report none of these keys, and absence is skipped rather than defaulted.
+    """
+    if device_type.lower() not in DEVICE_TYPES_FEEDER_NEXT_GEN:
+        return
+    _extract_camel(body, list(FEEDER_NEXT_GEN_FIELDS), state)
+    _extract_sensor_block(body, state, FEEDER_HALLS)
+
+
 def _extract_presence_flags(body: dict[str, Any], state: dict[str, Any]) -> None:
     """Turn the presence-signalled fields into 0/1 in `state`.
 
@@ -390,7 +452,7 @@ def parse_state_report(device_type: str, body: dict[str, Any]) -> dict[str, Any]
     if device_type in ("t3", "t4"):
         return _parse_litter_esp32(body)
     if device_type in ("d4h", "d4sh", "d4", "d3", "d4s", "feeder", "feedermini"):
-        return _parse_feeder(body)
+        return _parse_feeder(body, device_type)
     if device_type in ("w4", "w5", "ctw2", "ctw3", "w7h"):
         return _parse_water_fountain(body, device_type)
     if device_type in ("k2", "k3"):
@@ -673,7 +735,7 @@ def _parse_litter_esp32(body: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
-def _parse_feeder(body: dict[str, Any]) -> dict[str, Any]:
+def _parse_feeder(body: dict[str, Any], device_type: str = "") -> dict[str, Any]:
     """State for every feeder, camera or not.
 
     One parser for both: the camera models add camera fields to the same
@@ -682,13 +744,34 @@ def _parse_feeder(body: dict[str, Any]) -> dict[str, Any]:
     the feeder entities address it as `feedState.<key>`.
     """
     state: dict[str, Any] = {}
-    state["workingState"] = body.get("workState", body.get("work_state", 0))
+    # Only when the device actually said so. A real D4SH report (issue #2, both
+    # transports) carries no `workState` at all, and the old `, 0)` default
+    # published a Device Status of 0 that the device never sent -- the same
+    # mistake the W7H's parser was fixed for, and the same one that had an idle
+    # litter box calling itself "cleaning".
+    if "workState" in body or "work_state" in body:
+        state["workingState"] = body.get("workState", body.get("work_state"))
+    # The family's shared names, which come from the reference integration's
+    # CLOUD model. `food1`/`food2` were on this list and are not: they are the
+    # dual-hopper hardware's, they are in no single-hopper cloud model, and they
+    # now have a real source of their own below.
     _extract_camel(body, [
         "errorMsg", "rssi", "desiccantLeftDays",
         "batteryPower", "batteryStatus",
-        "door", "bowl", "weight", "food", "food1", "food2",
+        "door", "bowl", "weight", "food",
         "cameraStatus", "feeding", "eating",
     ], state)
+    # Deliberately overlaps the list above on `door`, `bowl`, `feeding` and
+    # `eating`. `_extract_camel` copying a key twice is a no-op, and the
+    # alternative is worse: this helper is the ONLY one the MQTT path runs, so
+    # a key left solely to the list above would reach a next-gen feeder over
+    # HTTP and vanish on the transport it actually reports state on.
+    _extract_feeder_next_gen(body, state, device_type)
+    # The `err{}` fault block. The MQTT path has always had this and the HTTP
+    # one never did, so the Error sensor read whatever the last transport to
+    # arrive had to say -- exactly the asymmetry this module's docstring calls
+    # the standard bug.
+    _extract_error_flags(body, state, device_type)
 
     feed_state = dig(body, "feedState", default=dig(body, "feed_state", default={}))
     if isinstance(feed_state, dict) and feed_state:
@@ -824,6 +907,7 @@ def normalize_property_params(device_type: str, params: dict[str, Any]) -> dict[
             flat["petInTime"] = dev["pet_in_time"]
 
     _extract_fountain_w7h(params, flat, device_type)
+    _extract_feeder_next_gen(params, flat, device_type)
     if device_type.lower() in LITTER_CAMERA_MODELS:
         _extract_sensor_block(params, flat, LITTER_CAMERA_HALLS)
 

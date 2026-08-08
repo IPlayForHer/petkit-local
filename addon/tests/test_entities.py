@@ -37,9 +37,18 @@ EXPECTED_ENTITY_COUNTS = {
     # 61 -> 67 on 2026-08-02: the three water-treatment buttons its `ctrl`
     # accepts as `start_action`, plus the three `event` entities its kinds fire
     # — which until then published to discovery topics it had never announced.
+    #
+    # The embedded-Linux feeders moved on 2026-08-08, from the two real D4SH
+    # reports in issue #2 and that firmware's own state builder. Both lose four
+    # controls nothing on this hardware fills (`food_low`, `food_in_bowl`,
+    # `food_bowl_pct`, `battery_installed` — the device says `food1`/`food2`,
+    # and `batV` rather than `batteryPower`) and gain the fields it does send.
+    # 42 -> 50 on the D4H, which reports one hopper; the D4SH keeps its second
+    # hopper sensor and adds the two per-hopper feed buttons and their portion
+    # numbers, for 54.
     "t3": 45, "t4": 45, "t5": 73, "t6": 73, "t7": 73,
     "feeder": 25, "feedermini": 25, "d3": 25, "d4": 25, "d4s": 25,
-    "d4h": 42, "d4sh": 42,
+    "d4h": 50, "d4sh": 54,
     "w4": 24, "w5": 24, "ctw2": 24, "ctw3": 24, "w7h": 67,
     "k2": 12, "k3": 12,
 }

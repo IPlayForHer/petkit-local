@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import time
 from typing import Any
 
@@ -28,7 +27,9 @@ from petkit_local.devices.base import Device, Refused
 from petkit_local.devices.state_parsers import record_consumable_reset
 from petkit_local.events import codes
 from petkit_local.ha.discovery import EntityDef
-from petkit_local.utils.coerce import to_bool, to_float
+from petkit_local.utils.coerce import to_bool, to_float, to_int
+from petkit_local.utils.const import DEVICE_TYPES_FEEDER_DUAL, DEVICE_TYPES_FEEDER_NEXT_GEN
+from petkit_local.utils.timeutil import local_day_start
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,23 @@ PROPERTY_SET_SUFFIX = "property/set"
 # anything to the device — the STS response (dev_oss_sts_info_new_v2) is the
 # control point, and the device picks the change up on its next poll.
 CAPABILITY_VALUE_PREFIX = "capabilities."
+
+# Controls that exist only here. `local.<field>` is stored in
+# `device.config["local"]` and NEVER sent anywhere: the per-hopper portion
+# counts a dual-hopper feed reads are our intent, not a device setting.
+#
+# The distinction is load-bearing rather than tidy. `Device.to_device_info`
+# serves `config["settings"]` straight back to the device, so a value parked
+# there is not a local default — it is pushed to hardware as a setting the
+# feeder never had and cannot be talked out of.
+LOCAL_VALUE_PREFIX = "local."
+
+#: Starting values for the `local.` controls, so their entities render a number
+#: instead of "unknown" before anyone touches them. Both are 1 because that is
+#: what PetKit's app sends for its own default manual feed on a Dual-Hopper,
+#: captured through proxy mode in issue #2 as
+#: `{"amount1": 1, "amount2": 1, "id": "r_20260801_72849_72849-1"}`.
+LOCAL_DEFAULTS: dict[str, Any] = {"feedAmount1": 1, "feedAmount2": 1}
 
 
 def _envelope(method: str, params: dict, ms_id: bool = False) -> dict[str, Any]:
@@ -134,44 +152,167 @@ def _litter_ctrl(action_key: str, code: int) -> Command:
 
 LITTER_ACTIONS = {
     # reference-confirmed (localkit PetkitPuraMax dispatchSync codes)
-    "cleaning_start": lambda: _litter_start(0),
-    "dump_litter": lambda: _litter_start(1),
-    "deodorize": lambda: _litter_start(2),
-    "maintenance_start": lambda: _litter_start(9),
-    "maintenance_stop": lambda: _litter_end(9),
+    "cleaning_start": lambda device: _litter_start(0),
+    "dump_litter": lambda device: _litter_start(1),
+    "deodorize": lambda device: _litter_start(2),
+    "maintenance_start": lambda device: _litter_start(9),
+    "maintenance_stop": lambda device: _litter_end(9),
     # enum-consistent (pypetkitapi codes; delivery via start, best-effort)
-    "level_litter": lambda: _litter_start(4),
-    "reset_n50": lambda: _litter_start(8),
-    "reset_n60": lambda: _litter_start(10),
+    "level_litter": lambda device: _litter_start(4),
+    "reset_n50": lambda device: _litter_start(8),
+    "reset_n60": lambda device: _litter_start(10),
     # no localkit reference; best-effort control verbs
-    "pause": lambda: _litter_ctrl("stop_action", 0),
-    "resume": lambda: _litter_ctrl("continue_action", 0),
-    "reset": lambda: _litter_end(0),
+    "pause": lambda device: _litter_ctrl("stop_action", 0),
+    "resume": lambda device: _litter_ctrl("continue_action", 0),
+    "reset": lambda device: _litter_end(0),
 }
 
 
-def _feed(amount: int = 10) -> Command:
-    """Dispense `amount` portions now; amount=0 cancels a pending manual feed.
+def _feed_id(now: float | None = None) -> str:
+    """The feed's own identifier, which is not the envelope id.
 
-    The `id` is the feed's own identifier, not the envelope id, and the number
-    in it appears TWICE: `r_20260802_882_882-1`, `r_20260802_4057_4057-1`, both
-    captured off PetKit's own cloud talking to a D4 (PR #10). This was written
-    from localkit's `FeedRealtime`, which has the number once — two independent
-    captures agreeing on the doubling settles it against a reimplementation.
+    Shape `r_{yyyymmdd}_{n}_{n}-1`, and the number appears TWICE:
+    `r_20260802_882_882-1` and `r_20260802_4057_4057-1` off PetKit's cloud
+    talking to a D4 (PR #10), `r_20260801_72849_72849-1` and
+    `r_20260801_72906_72906-1` off it talking to a D4SH (issue #2). localkit's
+    `FeedRealtime` has the number once; four captures across two models settle
+    the doubling against a reimplementation.
+
+    `n` is SECONDS SINCE LOCAL MIDNIGHT, which those same captures give away:
+    72849 s is 20:14:09 and the log line beside it is timestamped 8:14:09 PM,
+    72906 s is 20:15:06 against 8:15:06 PM. It is the same clock the device
+    puts in its own `feed_over` content as `time`, next to a `day` of
+    `20260801` — so both halves of the id are local, and a UTC one would
+    disagree with the device's own reading of the same feed for most of the
+    world. This used to be `random.randint(1000, 9999)`, which is the right
+    shape and the wrong number.
     """
-    n = random.randint(1000, 9999)
+    now = time.time() if now is None else now
+    n = int(now - local_day_start(now))
+    return f"r_{time.strftime('%Y%m%d', time.localtime(now))}_{n}_{n}-1"
+
+
+def _feed(device: Device, amount1: int, amount2: int = 0) -> Command:
+    """Dispense now, from one hopper or from both.
+
+    Which field carries the portion is per model, and getting it wrong is
+    silent — the device accepts the command, runs a feed cycle and dispenses
+    nothing. From `parse_service_invoke_msg` in a D4SH 867 `ctrl`:
+
+    - it compares its own model string against `"D4SH"`, and that branch reads
+      `amount1` and `amount2` verbatim, one per hopper, no scaling. PetKit's
+      app sends `1` for a single portion, so the unit here is PORTIONS;
+    - the next branch compares `"D4H"` and reads `amount`, then DIVIDES it by a
+      constant held in the device's own configuration. So `amount` is not in
+      portions, and the 10 the single-hopper path has always sent is a value
+      that path is entitled to — it stays untouched;
+    - a model matching neither reads no portion field at all.
+
+    Both are stored with `sb`, a single byte, so anything above 255 wraps on
+    the device. `amount1`/`amount2` are clamped here rather than sent as-is:
+    the panel and HA bound their own controls, but neither binds a raw API
+    call, and a wrapped byte would dispense a quantity nobody asked for.
+    """
+    if device.device_type.lower() in DEVICE_TYPES_FEEDER_DUAL:
+        params = {"amount1": _clamp_byte(amount1), "amount2": _clamp_byte(amount2)}
+    else:
+        params = {"amount": _clamp_byte(amount1)}
+    feed_id = _feed_id()
+    # Remembered so `feed_realtime_cancel` has something to name. Nothing else
+    # knows it: the device echoes it back in `feed_start`/`feed_over`, but a
+    # cancel is wanted precisely when neither has arrived yet.
+    device.config.setdefault("local", {})["lastFeedId"] = feed_id
     return ("feed_realtime", _envelope("thing.service.feed_realtime", {
-        "amount": amount,
-        "id": f"r_{time.strftime('%Y%m%d')}_{n}_{n}-1",
+        **params,
+        "id": feed_id,
     }))
 
 
+def _clamp_byte(value: int) -> int:
+    """0..255, the range the device's own `sb` store can hold."""
+    return max(0, min(255, int(value)))
+
+
+def _feed_amounts(device: Device) -> tuple[int, int]:
+    """The per-hopper portion counts the two `number` entities hold.
+
+    Defaults are 1 and 1 because that is what PetKit's app sends for its own
+    default manual feed (issue #2, captured through proxy mode). They live in
+    `config["local"]`, NOT in `config["settings"]` — `to_device_info` serves
+    settings straight back to the device, so a value parked there would be
+    pushed to hardware as a setting the feeder never had.
+    """
+    local = device.config.get("local") or {}
+    return (to_int(local.get("feedAmount1"), LOCAL_DEFAULTS["feedAmount1"]),
+            to_int(local.get("feedAmount2"), LOCAL_DEFAULTS["feedAmount2"]))
+
+
+def _cancel_feed(device: Device) -> Command:
+    """Cancel a manual feed.
+
+    `feed_realtime_cancel` is its own service in the same dispatch that handles
+    `feed_realtime`, and it reads `id`, `amount1` and `amount2` with NO model
+    check — so it is the cancel on both hoppered shapes. We send the id of the
+    last feed we issued, which is the only one we could be cancelling.
+
+    Gated on the models whose firmware we have actually read. The ESP32 feeders
+    run something else entirely, and for them this stays what it always was:
+    `feed_realtime` with a zero amount, which is localkit's cancel and the only
+    evidence covering those models.
+    """
+    if device.device_type.lower() not in DEVICE_TYPES_FEEDER_NEXT_GEN:
+        return ("feed_realtime", _envelope("thing.service.feed_realtime", {
+            "amount": 0,
+            "id": _feed_id(),
+        }))
+    last = (device.config.get("local") or {}).get("lastFeedId") or _feed_id()
+    return ("feed_realtime_cancel", _envelope("thing.service.feed_realtime_cancel", {
+        "id": last,
+        "amount1": 0,
+        "amount2": 0,
+    }))
+
+
+#: What the single-hopper path has always sent, and must keep sending.
+#:
+#: NOT one portion. A D4H divides `amount` by a constant held in its own
+#: configuration before using it, so the unit here is whatever that constant is
+#: denominated in -- unknown to us, and not the portions a Dual-Hopper counts.
+#: The value comes from localkit, whose feeders fall back to 10 when the
+#: device's own settings carry no amount. Nothing in issue #2 speaks to it: the
+#: reporter has a Dual-Hopper, which never reads this field at all. Changing it
+#: would silently change the meal size on somebody's working feeder.
+SINGLE_HOPPER_AMOUNT = 10
+
+
+def _feed_both(device: Device) -> Command:
+    """The plain Feed button: every hopper this feeder has."""
+    if device.device_type.lower() in DEVICE_TYPES_FEEDER_DUAL:
+        n1, n2 = _feed_amounts(device)
+        return _feed(device, n1, n2)
+    return _feed(device, SINGLE_HOPPER_AMOUNT)
+
+
+def _feed_hopper(device: Device, which: int) -> Command:
+    """Dispense from one hopper by asking the other for zero.
+
+    Exactly what PetKit's app does: its single-hopper feed was captured as
+    `{"amount1": 0, "amount2": 1}` (issue #2), not as a different service.
+    """
+    n1, n2 = _feed_amounts(device)
+    return _feed(device, n1, 0) if which == 1 else _feed(device, 0, n2)
+
+
 FEEDER_ACTIONS = {
-    "feed": lambda: _feed(10),
-    "cancel_manual_feed": lambda: _feed(0),
+    "feed": _feed_both,
+    "feed_hopper_1": lambda device: _feed_hopper(device, 1),
+    "feed_hopper_2": lambda device: _feed_hopper(device, 2),
+    "cancel_manual_feed": _cancel_feed,
     # HTTP endpoints in the cloud API; delivered as property.set locally (best-effort)
-    "reset_desiccant": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"desiccantTime": 0})),
-    "food_replenished": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"food": 1})),
+    "reset_desiccant": lambda device: (
+        PROPERTY_SET_SUFFIX, make_mqtt_property_set({"desiccantTime": 0})),
+    "food_replenished": lambda device: (
+        PROPERTY_SET_SUFFIX, make_mqtt_property_set({"food": 1})),
 }
 
 def _fountain_start(code: int) -> Command:
@@ -188,13 +329,13 @@ def _fountain_start(code: int) -> Command:
 
 
 FOUNTAIN_ACTIONS = {
-    "reset_filter": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"filterPercent": 100})),
-    "pause_fountain": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"power": 0})),
-    "resume_fountain": lambda: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"power": 1})),
+    "reset_filter": lambda device: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"filterPercent": 100})),
+    "pause_fountain": lambda device: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"power": 0})),
+    "resume_fountain": lambda device: (PROPERTY_SET_SUFFIX, make_mqtt_property_set({"power": 1})),
     # W7H only; no other fountain publishes these buttons.
-    "fountain_flush": lambda: _fountain_start(1),
-    "fountain_refill": lambda: _fountain_start(2),
-    "fountain_water_change": lambda: _fountain_start(5),
+    "fountain_flush": lambda device: _fountain_start(1),
+    "fountain_refill": lambda device: _fountain_start(2),
+    "fountain_water_change": lambda device: _fountain_start(5),
 }
 
 ALL_ACTIONS = {**LITTER_ACTIONS, **FEEDER_ACTIONS, **FOUNTAIN_ACTIONS}
@@ -300,7 +441,10 @@ def handle_ha_command(device: Device, entity: EntityDef, payload: str) -> Comman
             log.warning("Unknown button action '%s' for device %d", entity.key, device.petkit_id)
             return None
         log.info("Action '%s' for device %d", entity.key, device.petkit_id)
-        return action()
+        # Every action takes the device, whether or not it reads it: which
+        # field a feed puts its portion in is per model, and a table of
+        # zero-argument lambdas is exactly what made that impossible to express.
+        return action(device)
 
     if comp == "text":
         key = entity.value_path
@@ -321,6 +465,20 @@ def handle_ha_command(device: Device, entity: EntityDef, payload: str) -> Comman
     field = entity.setting_field
     if not field:
         log.warning("Entity '%s' has no settings field (value_path=%r)", entity.key, entity.value_path)
+        return None
+
+    if entity.value_path.startswith(LOCAL_VALUE_PREFIX):
+        value = _coerce_number(payload) if comp != "switch" else _coerce_switch(payload)
+        if value is None:
+            log.warning("Could not coerce payload %r for entity '%s'", payload, entity.key)
+            return None
+        if comp == "number" and not (entity.min_value <= value <= entity.max_value):
+            raise Refused(
+                f"{entity.name} must be between "
+                f"{entity.min_value} and {entity.max_value}")
+        device.config.setdefault("local", {})[field] = value
+        log.info("Local %s=%s for device %d (no device command)",
+                 field, value, device.petkit_id)
         return None
 
     if comp == "switch":

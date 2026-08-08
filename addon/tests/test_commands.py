@@ -4,6 +4,7 @@ import pytest
 from petkit_local.devices.registry import get_entities_for_device
 from petkit_local.ha.commands import (
     ALL_ACTIONS,
+    Refused,
     _coerce_number,
     _coerce_switch,
     handle_ha_command,
@@ -154,6 +155,132 @@ def test_the_feed_id_carries_its_number_twice():
         assert m.group(2) == m.group(3)
 
 
+def test_the_feed_id_counts_seconds_since_local_midnight():
+    """`r_20260801_72849_72849-1` was logged at 8:14:09 PM and 72849 s is
+    20:14:09; `r_20260801_72906_72906-1` at 8:15:06 PM against 72906 s (issue
+    #2). It is the same clock the device puts in its own `feed_over` content as
+    `time`, beside a local `day`, so a UTC count would disagree with the
+    device's own reading of the feed it just ran."""
+    import time
+
+    from petkit_local.utils.timeutil import local_day_start
+
+    d = Device(device_type="d4sh", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+    before = int(time.time() - local_day_start())
+    _, env = handle_ha_command(d, idx["feed"], "")
+    after = int(time.time() - local_day_start())
+
+    seconds = int(env["params"]["id"].split("_")[2])
+    assert before <= seconds <= after
+    assert env["params"]["id"].startswith(time.strftime("r_%Y%m%d_"))
+
+
+# --- dual hopper (issue #2) --------------------------------------------------
+
+def test_a_dual_hopper_is_asked_per_hopper_and_never_with_plain_amount():
+    """The bug in issue #2. A D4SH's firmware compares its own model string
+    against "D4SH" and that branch reads ONLY `amount1`/`amount2`; the plain
+    `amount` we sent is not looked at, so the device ran a feed cycle and
+    dispensed nothing."""
+    d = Device(device_type="d4sh", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+    suffix, env = handle_ha_command(d, idx["feed"], "")
+
+    assert suffix == "feed_realtime"
+    assert "amount" not in env["params"], "the field a Dual-Hopper ignores"
+    # 1 and 1 is what PetKit's app sends for its own default manual feed.
+    assert env["params"]["amount1"] == 1
+    assert env["params"]["amount2"] == 1
+
+
+def test_a_single_hopper_feeder_is_unchanged():
+    """The other half of the same fix, and the one with a live blast radius.
+
+    A D4H DIVIDES `amount` by a constant from its own configuration, so 10 is
+    not ten portions and the number is not ours to reinterpret. Nothing in
+    issue #2 speaks to it — the reporter has a Dual-Hopper, which never reads
+    this field. Changing it would silently resize the meal on working
+    hardware."""
+    for codename in ("d4h", "d4", "d3", "feedermini"):
+        d = Device(device_type=codename, petkit_id=2, serial_number="F")
+        idx = _settable_index(d)
+        _, env = handle_ha_command(d, idx["feed"], "")
+        assert env["params"]["amount"] == 10, codename
+        assert "amount1" not in env["params"], codename
+
+
+def test_the_portion_numbers_drive_the_feed_and_are_never_sent_as_settings():
+    """They are our intent, not a device setting. `to_device_info` serves
+    `config["settings"]` straight back to the device, so a value parked there
+    would be pushed to the feeder as a setting it never had."""
+    d = Device(device_type="d4sh", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+
+    assert handle_ha_command(d, idx["hopper1_portions"], "3") is None
+    assert handle_ha_command(d, idx["hopper2_portions"], "2") is None
+    assert d.config["local"] == {"feedAmount1": 3, "feedAmount2": 2}
+    assert "feedAmount1" not in d.config.get("settings", {})
+
+    _, env = handle_ha_command(d, idx["feed"], "")
+    assert (env["params"]["amount1"], env["params"]["amount2"]) == (3, 2)
+
+
+def test_feeding_one_hopper_asks_the_other_for_zero():
+    """What PetKit's app does, and through the same service rather than a
+    different one: its single-hopper feed was captured as
+    `{"amount1": 0, "amount2": 1}` (issue #2)."""
+    d = Device(device_type="d4sh", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+    handle_ha_command(d, idx["hopper1_portions"], "4")
+    handle_ha_command(d, idx["hopper2_portions"], "5")
+
+    _, one = handle_ha_command(d, idx["feed_hopper_1"], "")
+    assert (one["params"]["amount1"], one["params"]["amount2"]) == (4, 0)
+
+    _, two = handle_ha_command(d, idx["feed_hopper_2"], "")
+    assert (two["params"]["amount1"], two["params"]["amount2"]) == (0, 5)
+
+
+def test_a_portion_count_above_the_byte_the_device_stores_is_refused():
+    """The firmware stores the amount with `sb`, a single byte, so 256 would
+    wrap to 0 on the device — a feed that asks for a lot and delivers
+    nothing."""
+    d = Device(device_type="d4sh", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+    with pytest.raises(Refused):
+        handle_ha_command(d, idx["hopper1_portions"], "300")
+    assert d.config.get("local", {}).get("feedAmount1") is None
+
+
+def test_cancel_uses_the_service_the_firmware_has_for_it():
+    """`feed_realtime_cancel` is its own service in the same dispatch, reading
+    `id`/`amount1`/`amount2` with no model check. We used to send
+    `feed_realtime` with `amount: 0`, which on a Dual-Hopper lands in a field
+    the device does not read at all."""
+    d = Device(device_type="d4sh", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+    _, fed = handle_ha_command(d, idx["feed"], "")
+
+    suffix, env = handle_ha_command(d, idx["cancel_manual_feed"], "")
+    assert suffix == "feed_realtime_cancel"
+    assert env["method"] == "thing.service.feed_realtime_cancel"
+    # The feed it is cancelling, which nothing else knows: the device echoes
+    # the id back, but a cancel is wanted before either echo has arrived.
+    assert env["params"]["id"] == fed["params"]["id"]
+
+
+def test_cancel_on_an_esp32_feeder_is_left_alone():
+    """That service was read out of the embedded-Linux `ctrl`. The D4, D3 and
+    Feeder Mini run different firmware entirely, so for them this stays
+    localkit's zero-amount cancel — the only evidence covering them."""
+    d = Device(device_type="d4", petkit_id=2, serial_number="F")
+    idx = _settable_index(d)
+    suffix, env = handle_ha_command(d, idx["cancel_manual_feed"], "")
+    assert suffix == "feed_realtime"
+    assert env["params"]["amount"] == 0
+
+
 def test_every_button_maps_to_an_action():
     # Coherence: every button entity across all device types must resolve to a
     # known action, else pressing it silently does nothing.
@@ -180,11 +307,14 @@ def test_every_settable_control_has_settings_path():
     # EXCEPT capability toggles — those write to config["capabilities"] and
     # are never pushed to the device (the STS response is the control point,
     # see ha/commands.py::CAPABILITY_VALUE_PREFIX), so they're exempt.
-    for dtype in ("t5", "t4", "d4h", "d4", "w7h", "w5", "k3"):
+    for dtype in ("t5", "t4", "d4h", "d4sh", "d4", "w7h", "w5", "k3"):
         d = Device(device_type=dtype, petkit_id=99, serial_number="X")
         for e in get_entities_for_device(d):
             if e.component in ("switch", "number", "select"):
-                if e.value_path.startswith("capabilities."):
+                # `local.` is the same kind of exemption for the same kind of
+                # reason: the per-hopper portion counts are our intent, not a
+                # device setting, and nothing pushes them anywhere.
+                if e.value_path.startswith(("capabilities.", "local.")):
                     continue
                 assert e.value_path.startswith("settings."), \
                     f"{dtype}: {e.component} '{e.key}' value_path={e.value_path!r}"
@@ -197,8 +327,9 @@ def test_a_command_id_stays_within_signed_int32():
     timestamp overflows it — so the envelope wraps into the signed range so a
     firmware signed-atoi never reads it negative."""
     from petkit_local.ha.commands import ALL_ACTIONS
+    device = Device(device_type="d4sh", petkit_id=1, serial_number="F")
     for name, make in ALL_ACTIONS.items():
-        result = make()
+        result = make(device)
         if result is None:
             continue
         _suffix, envelope = result

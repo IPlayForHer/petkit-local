@@ -30,7 +30,7 @@ from petkit_local.devices.registry import DeviceRegistry, get_entities_for_devic
 from petkit_local.devices.ble import get_ble_entities
 from petkit_local.ha.discovery import build_discovery_payload, discovery_topic
 from petkit_local.devices.state_parsers import apply_consumable_state
-from petkit_local.ha.commands import Refused, handle_ha_command
+from petkit_local.ha.commands import LOCAL_DEFAULTS, Refused, handle_ha_command
 from petkit_local.utils.coerce import to_int
 
 if TYPE_CHECKING:
@@ -563,10 +563,16 @@ class HAPublisher:
         Returns:
             ``{"state": {...device telemetry...}, "settings": {...},
             "schedule": "<json string>", "feed_schedule": "<json string>",
-            "capabilities": {name: bool}}``. The two schedules are JSON
-            *strings* on purpose: they back `text` entities, whose value is a
-            string. The top-level keys are exactly the first segment of every
-            EntityDef.value_path.
+            "capabilities": {name: bool}, "local": {...}}``. The two schedules
+            are JSON *strings* on purpose: they back `text` entities, whose
+            value is a string. The top-level keys are exactly the first segment
+            of every EntityDef.value_path.
+
+    `local` holds the controls that never leave this add-on -- today the
+    per-hopper portion counts a dual-hopper feed reads
+    (`ha/commands.py::LOCAL_VALUE_PREFIX`). It is published like anything else
+    because an HA `number` has to read its own value back; what makes it
+    different is only that nothing writes it to the device.
 
     A consumable countdown is recomputed HERE rather than only when a report
     arrives, for two reasons: it decrements with the calendar, so a device that
@@ -604,6 +610,7 @@ class HAPublisher:
             "schedule": json.dumps(device.config.get("schedule", [])),
             "feed_schedule": json.dumps(device.config.get("feed_schedule", {})),
             "capabilities": {ct: (ct in enabled) for ct in Device.CAPABILITY_TYPES},
+            "local": {**LOCAL_DEFAULTS, **(device.config.get("local") or {})},
         }
 
     async def _handle_ble_command(self, ble_id: int, entity: Any, message: Any) -> None:

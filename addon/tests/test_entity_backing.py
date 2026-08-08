@@ -116,6 +116,28 @@ PASSTHROUGH_ATTESTED = {
     "addWaterState": "W7H property/post 2026-07-31; ctrl map params_work_states",
     "flushState": "W7H property/post 2026-07-31; ctrl map params_work_states",
     "disinfectState": "W7H property/post 2026-07-31; ctrl map params_work_states",
+    # D4SH (YumShare Dual-Hopper). Two independent sources, same as the W7H
+    # rows: each is a JSON key in the state builder of a real D4SH 867 `ctrl`,
+    # and each is present in BOTH real reports an owner posted in issue #2 —
+    # one per transport, so neither is a quirk of one frame type.
+    "food1": "D4SH 867 ctrl state builder; both reports in issue #2",
+    "food2": "D4SH 867 ctrl state builder; both reports in issue #2",
+    "door": "D4SH 867 ctrl state builder; both reports in issue #2",
+    "bowl": "D4SH 867 ctrl 'recv feed start leftover set(-1)'; both reports in issue #2",
+    "feeding": "D4SH 867 ctrl state builder; both reports in issue #2",
+    "eating": "D4SH 867 ctrl state builder; both reports in issue #2",
+    # Values whose PRESENCE is settled and whose meaning is not. That is a fine
+    # reason to publish -- an owner can watch a number move -- and no reason at
+    # all to name it something, which is why each of these entities carries the
+    # device's own word for it. See ha/entities/sensors.py.
+    "ir_b_1": "D4SH 867 ctrl state builder; both reports in issue #2",
+    "ir_b_2": "D4SH 867 ctrl state builder; both reports in issue #2",
+    "ir_c": "D4SH 867 ctrl state builder; both reports in issue #2",
+    "DCV": "D4SH 867 ctrl state builder; both reports in issue #2 (6228, 6234)",
+    "left_hall": "D4SH 867 ctrl sensor{} block; both reports in issue #2",
+    "home_hall": "D4SH 867 ctrl sensor{} block; both reports in issue #2",
+    "right_hall": "D4SH 867 ctrl sensor{} block; both reports in issue #2",
+    "left_sub_hall": "D4SH 867 ctrl sensor{} block; both reports in issue #2",
 }
 
 #: Pre-existing passthrough-only keys that were already published when the
@@ -135,7 +157,12 @@ PASSTHROUGH_UNVERIFIED = {
     # for a counter nobody here has seen on the wire.
     "filterLeftDays", "lackWarning", "heatRealTemp", "drinkTime",
     "desiccantLeftDays", "batteryPower",
-    "bowl", "food", "weight", "feeding", "eating",
+    # `bowl`, `feeding` and `eating` graduated to PASSTHROUGH_ATTESTED once a
+    # real D4SH sent all three. `food` and `weight` did not, and they are the
+    # interesting half: the same two reports carry `food1`/`food2` and no
+    # `food`, no `weight`. So these stay the reference integration's cloud-model
+    # names, and both are now excluded on the models we can actually check.
+    "food", "weight",
     "liquid", "battery", "temp",
 }
 
@@ -174,6 +201,8 @@ def _keys_a_parser_can_emit(fn) -> set[str]:
     keys |= set(state_parsers.W7H_HALLS)
     keys |= set(state_parsers.W7H_DEVICE_TIMESTAMPS.values())
     keys |= set(state_parsers.LITTER_CAMERA_HALLS)
+    keys |= set(state_parsers.FEEDER_NEXT_GEN_FIELDS)
+    keys |= set(state_parsers.FEEDER_HALLS)
     return keys
 
 
@@ -219,6 +248,13 @@ def _passthrough_only_keys(fn) -> set[str]:
                             and isinstance(t.slice, ast.Constant)
                             and isinstance(t.slice.value, str)):
                         assigned.add(t.slice.value)
+    # Passthrough tables that live at module level rather than inside the
+    # function body, so the walk above cannot see them. They are handed
+    # straight to `_extract_camel`/`_extract_sensor_block`, which makes every
+    # name in them exactly what this function is looking for: listed, never
+    # assigned.
+    listed |= set(state_parsers.FEEDER_NEXT_GEN_FIELDS)
+    listed |= set(state_parsers.FEEDER_HALLS)
     return listed - assigned
 
 

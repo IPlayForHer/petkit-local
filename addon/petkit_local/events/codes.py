@@ -817,8 +817,17 @@ FEED_SRC: dict[int, str] = {
 }
 
 #: Keyed by `err_code`; the parallel `result` values are 0, 8 and "other".
+#:
+#: 8 is INFERRED and rests on a single observation, so it is worded for what was
+#: seen rather than for what it might mean. A D4SH answered a `feed_realtime`
+#: carrying `amount` — a field that model does not read — with a completed feed
+#: cycle, `real_amount1: 0`, `real_amount2: 0` and `err_code: 8` (issue #2).
+#: The owner then watched every later feed and never saw 8 again, including the
+#: ones that dispensed normally. So it accompanies a feed that put out nothing;
+#: whether it names the cause or only the outcome is not settled.
 FEED_RESULT: dict[int, str] = {
     0: "dispensed",
+    8: "nothing dispensed",
     10: "skipped",
 }
 

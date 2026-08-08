@@ -10,6 +10,7 @@ import time
 
 from aiohttp.test_utils import TestClient, TestServer
 
+from petkit_local.devices.base import Device
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.http.handlers.heartbeat import IOT_STATUS_GRACE
 from petkit_local.http.server import create_app
@@ -259,8 +260,9 @@ def test_a_command_is_labelled_with_a_msg_type_the_device_dispatches():
     from petkit_local.ha.commands import ALL_ACTIONS
     from petkit_local.http.handlers.heartbeat import _to_heartbeat_content
 
+    device = Device(device_type="d4sh", petkit_id=1, serial_number="F")
     for key, build in ALL_ACTIONS.items():
-        suffix, envelope = build()
+        suffix, envelope = build(device)
         content = json.loads(_to_heartbeat_content(
             {**envelope, "_service_suffix": suffix}))
         assert content["msgType"] in (0, 1, 2), f"{key} -> {content['msgType']}"

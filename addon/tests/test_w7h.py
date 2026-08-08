@@ -426,10 +426,11 @@ def test_the_job_buttons_send_actions_the_firmware_accepts():
     no reply, no error and no log — indistinguishable from a lost command."""
     from petkit_local.ha.commands import ALL_ACTIONS
 
+    device = Device(device_type="w7h", petkit_id=1, serial_number="W")
     for key, expected in [("fountain_flush", 1),
                           ("fountain_refill", 2),
                           ("fountain_water_change", 5)]:
-        suffix, envelope = ALL_ACTIONS[key]()
+        suffix, envelope = ALL_ACTIONS[key](device)
         assert suffix == "start"
         assert envelope["method"] == "thing.service.start"
         assert envelope["params"] == {"start_action": expected}
@@ -441,8 +442,9 @@ def test_no_button_sends_an_action_that_is_not_a_job():
     in/out handler, and 7 leaves the dispatcher onto a different queue."""
     from petkit_local.ha.commands import ALL_ACTIONS
 
+    device = Device(device_type="w7h", petkit_id=1, serial_number="W")
     for key in ("fountain_flush", "fountain_refill", "fountain_water_change"):
-        _, envelope = ALL_ACTIONS[key]()
+        _, envelope = ALL_ACTIONS[key](device)
         assert envelope["params"]["start_action"] \
             not in codes.FOUNTAIN_W7H_START_ACTIONS_NOT_WORK
 

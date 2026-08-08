@@ -31,6 +31,19 @@ FEEDER_BUTTONS = [
     EntityDef(component="button", key="food_replenished", name="Food Replenished", icon="mdi:food-apple"),
 ]
 
+#: A Dual-Hopper only. `feed` above already dispenses from both, so these are
+#: the one thing it cannot express: food from one hopper and not the other.
+#: PetKit's app does exactly this, and does it through the same service rather
+#: than a different one — its single-hopper feed was captured as
+#: `{"amount1": 0, "amount2": 1}` (issue #2). How much each dispenses is the
+#: matching `number` in `numbers.py::FEEDER_DUAL_NUMBERS`.
+FEEDER_DUAL_BUTTONS = [
+    EntityDef(component="button", key="feed_hopper_1", name="Feed Hopper 1",
+              icon="mdi:food"),
+    EntityDef(component="button", key="feed_hopper_2", name="Feed Hopper 2",
+              icon="mdi:food"),
+]
+
 FOUNTAIN_BUTTONS = [
     EntityDef(component="button", key="reset_filter", name="Reset Filter", icon="mdi:filter-remove"),
     EntityDef(component="button", key="pause_fountain", name="Pause", icon="mdi:pause"),

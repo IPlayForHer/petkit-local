@@ -197,6 +197,80 @@ FEEDER_BINARY_SENSORS = [
               value_path="state.batteryPower", icon="mdi:battery"),
 ]
 
+# --- D4H / D4SH (the embedded-Linux feeders) --------------------------------
+# Everything here is a key in the state builder of a real D4SH 867 `ctrl` and is
+# present in both of the real reports in issue #2. What each key MEANS is a
+# separate question, and it is answered per entity below rather than in bulk:
+# where nobody can say, the entity carries the device's own wording and no unit,
+# because a sensor that reads confidently and lies is one you would act on.
+
+FEEDER_NEXT_GEN_SENSORS = [
+    # A pair on the Dual-Hopper; a D4H reports only `food1`.
+    #
+    # 2 = has food and 0 = empty, reported by the owner, who never saw 1 in
+    # between. So this is not a percentage, and it is not a two-state either
+    # until somebody sees the middle value — hence a sensor with an enum rather
+    # than the binary "Food Low" the family already has. An unmapped value
+    # renders as the raw number (`_enum_sensor_value_template`), so a 1 that
+    # does turn up is visible rather than swallowed.
+    EntityDef(component="sensor", key="hopper1_level", name="Hopper 1",
+              value_path="state.food1", icon="mdi:silo",
+              options=["Empty", "Has food"], option_values=[0, 2]),
+    EntityDef(component="sensor", key="hopper2_level", name="Hopper 2",
+              value_path="state.food2", icon="mdi:silo",
+              options=["Empty", "Has food"], option_values=[0, 2]),
+    # Leftover food, and NO unit on purpose. The family's `food_bowl_pct` reads
+    # the same key as a percentage, which it is not: -1 is the firmware's "not
+    # measured" (`recv feed start leftover set(-1)`, logged as a feed begins),
+    # and the one real reading anybody has seen was 46 while surplus control was
+    # being changed. Whether that 46 is grams, a percentage or a raw count is
+    # exactly what nobody can currently say.
+    EntityDef(component="sensor", key="bowl_surplus", name="Bowl Surplus",
+              value_path="state.bowl", icon="mdi:bowl-mix",
+              entity_category="diagnostic"),
+    # Named for the field, because the field is all we have. The owner opened
+    # the lid, pulled both hoppers and took the battery cover off, and this read
+    # 1 throughout — so whatever it is, it is not the lid, and calling it "Lid"
+    # would have been a confident lie about hardware.
+    EntityDef(component="sensor", key="door_raw", name="door",
+              value_path="state.door", icon="mdi:help-circle-outline",
+              entity_category="diagnostic"),
+    # Three infrared readings. Blocking a sensor did raise a "feed chute
+    # blocked" fault, so at least one of them watches the chute — but none of
+    # the three moved while the owner was doing it, so which is which is open.
+    EntityDef(component="sensor", key="ir_b_1", name="ir_b_1",
+              value_path="state.ir_b_1", icon="mdi:leak",
+              entity_category="diagnostic"),
+    EntityDef(component="sensor", key="ir_b_2", name="ir_b_2",
+              value_path="state.ir_b_2", icon="mdi:leak",
+              entity_category="diagnostic"),
+    EntityDef(component="sensor", key="ir_c", name="ir_c",
+              value_path="state.ir_c", icon="mdi:leak",
+              entity_category="diagnostic"),
+    # The DC line, in millivolts going by the 6228-6234 a mains-powered feeder
+    # reports. `batV` is deliberately NOT published: it reads 0 with no backup
+    # batteries fitted, which the owner confirmed is their case, and a battery
+    # sensor pinned at 0 looks like a flat battery rather than an absent one.
+    EntityDef(component="sensor", key="dc_millivolts", name="DC Voltage",
+              value_path="state.DCV", unit="mV", device_class="voltage",
+              entity_category="diagnostic"),
+]
+
+FEEDER_NEXT_GEN_HALL_SENSORS = [
+    EntityDef(component="binary_sensor", key="hall_left", name="Hall: Left",
+              value_path="state.left_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_home", name="Hall: Home",
+              value_path="state.home_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_right", name="Hall: Right",
+              value_path="state.right_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+    EntityDef(component="binary_sensor", key="hall_left_sub", name="Hall: Left Sub",
+              value_path="state.left_sub_hall", icon="mdi:electric-switch",
+              entity_category="diagnostic"),
+]
+
 FOUNTAIN_SENSORS = [
     EntityDef(component="sensor", key="device_status", name="Device Status",
               value_path="state.workingState", icon="mdi:state-machine"),

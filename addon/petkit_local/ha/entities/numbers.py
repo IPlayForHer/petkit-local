@@ -37,6 +37,31 @@ LITTER_CAMERA_NUMBERS = [
               min_value=0, max_value=9, step=1),
 ]
 
+#: How much each hopper of a Dual-Hopper dispenses per press.
+#:
+#: `local.` and not `settings.`, which is the whole point of that prefix: this
+#: is our intent, not a device setting. `Device.to_device_info` serves
+#: `config["settings"]` straight back to the device, so a value parked there
+#: would be pushed to the feeder as a setting it never had.
+#:
+#: The unit really is portions on this model — its firmware reads `amount1`
+#: verbatim with no scaling, and PetKit's app sends 1 for a single portion
+#: (issue #2). That is NOT true of the single-hopper `amount`, which the device
+#: divides before use, which is why these entities exist for the dual model
+#: alone.
+#:
+#: 1..10 is a soft bound. The only limit the firmware evidences is its own
+#: single-byte store (`sb`), so 255 is where a value would start wrapping;
+#: 10 is a sane ceiling for a control someone taps, not a measured maximum.
+FEEDER_DUAL_NUMBERS = [
+    EntityDef(component="number", key="hopper1_portions", name="Hopper 1 Portions",
+              value_path="local.feedAmount1", icon="mdi:silverware-fork-knife",
+              min_value=0, max_value=10, step=1),
+    EntityDef(component="number", key="hopper2_portions", name="Hopper 2 Portions",
+              value_path="local.feedAmount2", icon="mdi:silverware-fork-knife",
+              min_value=0, max_value=10, step=1),
+]
+
 FEEDER_CAMERA_NUMBERS = [
     EntityDef(component="number", key="volume", name="Volume",
               value_path="settings.volume", icon="mdi:volume-high",

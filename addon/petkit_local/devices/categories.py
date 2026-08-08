@@ -21,19 +21,21 @@ from dataclasses import dataclass
 from petkit_local.devices.base import Device
 from petkit_local.ha.discovery import EntityDef
 from petkit_local.ha.entities.buttons import (
-    FEEDER_BUTTONS, FOUNTAIN_BUTTONS, FOUNTAIN_W7H_BUTTONS, LITTER_BUTTONS,
+    FEEDER_BUTTONS, FEEDER_DUAL_BUTTONS,
+    FOUNTAIN_BUTTONS, FOUNTAIN_W7H_BUTTONS, LITTER_BUTTONS,
 )
 from petkit_local.ha.entities.camera import CAMERA_ENTITIES
 from petkit_local.ha.entities.events import (
     FEEDER_EVENTS, FOUNTAIN_W7H_EVENTS, LITTER_EVENTS,
 )
 from petkit_local.ha.entities.numbers import (
-    FEEDER_CAMERA_NUMBERS, FEEDER_NUMBERS, FOUNTAIN_NUMBERS,
+    FEEDER_CAMERA_NUMBERS, FEEDER_DUAL_NUMBERS, FEEDER_NUMBERS, FOUNTAIN_NUMBERS,
     LITTER_CAMERA_NUMBERS, LITTER_NUMBERS,
 )
 from petkit_local.ha.entities.selects import FEEDER_SELECTS, FOUNTAIN_SELECTS, LITTER_SELECTS
 from petkit_local.ha.entities.sensors import (
-    FEEDER_BINARY_SENSORS, FEEDER_SENSORS,
+    FEEDER_BINARY_SENSORS, FEEDER_NEXT_GEN_HALL_SENSORS,
+    FEEDER_NEXT_GEN_SENSORS, FEEDER_SENSORS,
     FOUNTAIN_BINARY_SENSORS, FOUNTAIN_SENSORS,
     FOUNTAIN_W7H_BINARY_SENSORS, FOUNTAIN_W7H_HALL_SENSORS, FOUNTAIN_W7H_SENSORS,
     LITTER_BINARY_SENSORS, LITTER_CAMERA_HALL_SENSORS, LITTER_CAMERA_SENSORS,
@@ -197,6 +199,36 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         camera_state_topics=(
             "eat_start", "eat_over",
             "move_detect", "pet_detect",
+        ),
+        model_entities=(
+            # The embedded-Linux feeders report a dozen fields the ESP32 ones
+            # do not; `state_parsers.FEEDER_NEXT_GEN_FIELDS` is what fills them.
+            ("d4h", (*FEEDER_NEXT_GEN_SENSORS, *FEEDER_NEXT_GEN_HALL_SENSORS)),
+            ("d4sh", (*FEEDER_NEXT_GEN_SENSORS, *FEEDER_NEXT_GEN_HALL_SENSORS,
+                      *FEEDER_DUAL_BUTTONS, *FEEDER_DUAL_NUMBERS)),
+        ),
+        # Four controls a D4SH cannot fill, and the reason is the same for each:
+        # the field behind it is not in either of the two real reports in issue
+        # #2, nor a key in that firmware's state builder. They come from the
+        # reference integration's CLOUD model, which is PetKit's account-side
+        # view — a different vocabulary, not a different spelling.
+        #
+        # `food_low` and `food_in_bowl` are replaced by real entities above:
+        # this model says `food1`/`food2`, and its bowl reading is a surplus
+        # measurement with no unit anyone can name, not grams and not a
+        # percentage. `battery_installed` reads `batteryPower`, where the device
+        # sends `batV`/`ubat`.
+        model_excludes=(
+            ("d4sh", frozenset({
+                "food_low", "food_in_bowl", "food_bowl_pct", "battery_installed",
+            })),
+            # A D4H reports one hopper, so its second-hopper sensor never fills.
+            # Everything else on the exclude list applies to it too — the two
+            # models share a `ctrl` and a state builder.
+            ("d4h", frozenset({
+                "food_low", "food_in_bowl", "food_bowl_pct", "battery_installed",
+                "hopper2_level",
+            })),
         ),
     ),
     # Of the five fountain codenames, only `w7h` can ever reach this table: the
