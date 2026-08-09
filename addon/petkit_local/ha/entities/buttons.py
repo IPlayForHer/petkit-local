@@ -24,6 +24,41 @@ LITTER_BUTTONS = [
     EntityDef(component="button", key="level_litter", name="Level Litter", icon="mdi:format-align-bottom"),
 ]
 
+#: Litter-box actions that need the camera generation's hardware.
+#:
+#: `light` is the illuminator: LBCommand calls 7 LIGHT and three isolated taps
+#: of the app's Light action on a T6 each emitted `start_action: 7`, so two
+#: independent sources agree. It sits here rather than on the shared list
+#: because the illuminator is part of the camera assembly.
+#:
+#: Power is a SERVICE OF ITS OWN — `thing.service.power`, not `property.set`.
+#: The distinction matters: two fountain buttons were removed for writing
+#: `power` as a setting to a field no firmware reads, and the fix is a different
+#: service, not a different field. See `ha/commands.py::_device_power`.
+LITTER_CAMERA_BUTTONS = [
+    EntityDef(component="button", key="light", name="Light", icon="mdi:lightbulb-on-outline"),
+    EntityDef(component="button", key="power_off", name="Power Off", icon="mdi:power-off"),
+    EntityDef(component="button", key="power_on", name="Power On", icon="mdi:power-on"),
+]
+
+#: Purobot Ultra only.
+#:
+#: Both come from single isolated taps in the app's action sheet on a T6, and
+#: neither is safe to extend to its siblings:
+#:
+#: * `pack_waste` sends `start_action: 8` — the value pypetkitapi calls
+#:   RESET_N50_DEODOR. Those two readings cannot both be right, and the T6 one
+#:   is what a controlled tap produced. This box has no N50 cartridge, so its
+#:   `reset_n50` button is excluded in `devices/categories.py` and the code goes
+#:   here under the name the hardware gives it.
+#: * `open_sealed_door` sends `start_action: 11`. The sealed waste door is this
+#:   model's hardware; on a box without one, 11 is an unknown value.
+LITTER_T6_BUTTONS = [
+    EntityDef(component="button", key="pack_waste", name="Pack Waste", icon="mdi:package-down"),
+    EntityDef(component="button", key="open_sealed_door", name="Open Sealed Door",
+              icon="mdi:door-open"),
+]
+
 FEEDER_BUTTONS = [
     EntityDef(component="button", key="feed", name="Feed", icon="mdi:food"),
     EntityDef(component="button", key="reset_desiccant", name="Reset Desiccant", icon="mdi:restart"),
@@ -71,4 +106,12 @@ FOUNTAIN_W7H_BUTTONS = [
               icon="mdi:water-plus"),
     EntityDef(component="button", key="fountain_water_change", name="Water Change",
               icon="mdi:water-boiler-alert"),
+    # What the removed `pause_fountain`/`resume_fountain` were reaching for.
+    # Those wrote `{"power": 0|1}` through `property.set`, and `power` is not
+    # among this firmware's set handlers, so they wrote a field nothing reads.
+    # It IS a service: `parse_service_invoke_msg` accepts `power` with a
+    # `power_action` of 0 or 1, on its own code path. Same two buttons the
+    # camera litter boxes get, for the same reason.
+    EntityDef(component="button", key="power_off", name="Power Off", icon="mdi:power-off"),
+    EntityDef(component="button", key="power_on", name="Power On", icon="mdi:power-on"),
 ]

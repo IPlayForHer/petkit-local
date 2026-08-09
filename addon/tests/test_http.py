@@ -516,6 +516,10 @@ async def test_upload_log_is_acknowledged_the_way_the_cloud_does():
 
 
 async def test_multi_config_json_strings():
+    """The shape is the point: every value is a JSON STRING that wraps its own
+    key again. An unset range is the whole day — which restricts nothing —
+    except the cleaning do-not-disturb, where all day would mean the box never
+    cleans on its own."""
     reg = DeviceRegistry()
     client = await _client(reg)
     try:
@@ -524,9 +528,17 @@ async def test_multi_config_json_strings():
         res = (await r.json())["result"]
         assert isinstance(res["lightMultiRange"], str)
         assert json.loads(res["lightMultiRange"]) == {"lightMultiRange": [[0, 1440]]}
+        assert json.loads(res["distrubMultiRange"]) == {"distrubMultiRange": []}
         cam = json.loads(res["cameraMultiRange"])["cameraMultiRange"]
         assert cam[0]["enable"] == 1
+        assert cam[0]["rpt"] == "1,2,3,4,5,6,7"
         assert cam[0]["time"] == [[0, 1440]]
+
+        # A stored one wins, in that same wrapping.
+        reg.get(100).config["multi_config"] = {"lightMultiRange": [[417, 117]]}
+        r = await client.post("/6/t5/dev_multi_config", headers=HDR)
+        stored = json.loads((await r.json())["result"]["lightMultiRange"])
+        assert stored == {"lightMultiRange": [[417, 117]]}
     finally:
         await client.close()
 
@@ -645,26 +657,43 @@ async def test_signup_rejects_a_non_positive_id():
         await client.close()
 
 
-async def test_schedule_echoes_the_resolved_device_id():
+async def test_an_unset_cleaning_schedule_is_empty_not_invented():
+    """There is no default cleaning schedule. This used to answer any box that
+    had not been given one with three entries — 09:45, 13:45, 18:45, every day —
+    so the add-on ran somebody's litter box on a timetable they never chose and
+    could not see. An empty array is a well-formed schedule that schedules
+    nothing, which is what `dev_feed_get` already answers a feeder with.
+    """
     reg = DeviceRegistry()
     client = await _client(reg)
     try:
         await client.post("/6/t5/dev_signup", headers=HDR)
         r = await client.post("/6/t5/dev_schedule_get", headers=HDR)
-        rows = (await r.json())["result"]
-        assert all(row["deviceId"] == 100 for row in rows)
-        # Distinct ids, as the real cloud sends — every row shared `id: 0`
-        # before, which is not an id at all.
-        assert len({row["id"] for row in rows}) == len(rows)
-        # An ISO-8601 string, not a unix int, and FIXED: re-stamping it with
-        # now() claimed the schedule had changed on every poll.
-        assert rows[0]["updatedAt"].endswith("+0000")
-        again = (await (await client.post("/6/t5/dev_schedule_get", headers=HDR)).json())["result"]
-        assert again == rows
+        assert (await r.json())["result"] == []
 
-        # Unidentified requester keeps the 0 the firmware has always received.
+        # An unidentified requester gets the same, rather than an error: the
+        # firmware reads a 4xx as a server fault and retries forever.
         r = await client.post("/6/t5/dev_schedule_get", headers=HDR_BAD_ID)
-        assert all(row["deviceId"] == 0 for row in (await r.json())["result"])
+        assert r.status == 200
+        assert (await r.json())["result"] == []
+    finally:
+        await client.close()
+
+
+async def test_a_stored_cleaning_schedule_is_served_verbatim():
+    """Whatever the panel stored is what the device gets — the shape differs by
+    transport (the cloud's HTTP reply carries `deviceId`/`updatedAt`, a
+    `property.set` write does not), so this must not reshape it."""
+    reg = DeviceRegistry()
+    client = await _client(reg)
+    try:
+        await client.post("/6/t5/dev_signup", headers=HDR)
+        stored = [{"id": 103382, "repeats": "1,2,3,4,5,6,7", "time": 585, "type": 0},
+                  {"id": 110970, "repeats": "1,3,4,5,6,7", "time": 890, "type": 1}]
+        reg.get(100).config["schedule"] = stored
+
+        r = await client.post("/6/t5/dev_schedule_get", headers=HDR)
+        assert (await r.json())["result"] == stored
     finally:
         await client.close()
 

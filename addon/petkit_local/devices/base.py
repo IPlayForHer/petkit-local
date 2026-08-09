@@ -21,6 +21,7 @@ from petkit_local.utils.const import (
     DEVICE_TYPES_BLE_ONLY,
     DEVICE_TYPES_CAMERA,
     DEVICE_TYPES_FEEDER,
+    DEVICE_TYPES_FEEDER_DUAL,
     DEVICE_TYPES_LITTER,
     DEVICE_TYPES_NEXT_GEN,
     DEVICE_TYPES_PURIFIER,
@@ -51,6 +52,59 @@ if TYPE_CHECKING:  # `devices.ble` imports `devices.registry`, which imports us.
     from petkit_local.devices.ble import BLERegistry
 
 log = logging.getLogger(__name__)
+
+
+#: The whole day, in the two shapes a `*MultiRange` comes in. `1440` is the end
+#: of the day and is the only place it ever appears — every "entire day" payload
+#: PetKit sends is exactly `[0, 1440]`.
+_ALL_DAY = [[0, 1440]]
+_ALL_DAY_WEEKLY = [{"enable": 1, "rpt": "1,2,3,4,5,6,7", "time": [[0, 1440]]}]
+
+#: What a device is served for a schedule range nobody has set.
+#:
+#: All day everywhere, with ONE exception, and the exception is the reason this
+#: is a table rather than a constant. Every entry here is a window during which
+#: some function is active, so "all day" means "always" — the screen is on, the
+#: camera records, detection runs. That restricts nothing and decides nothing on
+#: the owner's behalf.
+#:
+#: `distrubMultiRange` is the cleaning do-not-disturb, and there "always" means
+#: the box never cleans on its own. An all-day default would quietly disable
+#: automatic cleaning on every litter box that has not been given a window,
+#: which is the opposite of harmless. It stays empty.
+#:
+#: `toneMultiRange` is a do-not-disturb too and IS all day, deliberately: it
+#: only silences voice prompts, and it does nothing at all until `toneMode` is
+#: switched on — which is off by default. Somebody who turns on Do Not Disturb
+#: without picking hours means all of them.
+MULTI_RANGE_DEFAULTS: dict[str, Any] = {
+    "lightMultiRange": _ALL_DAY,
+    "toneMultiRange": _ALL_DAY,
+    "cameraMultiRange": _ALL_DAY_WEEKLY,
+    "cameraMultiNew": _ALL_DAY,
+    "detectMultiRange": _ALL_DAY,
+    "distrubMultiRange": [],
+}
+
+
+def encode_multi_range(key: str, value: Any) -> str:
+    """Encode one schedule range the way PetKit encodes it: doubly.
+
+    The value of a `*MultiRange` field is a JSON STRING that wraps its own key
+    again — `"{\\"distrubMultiRange\\":[[1425,585]]}"` — and it is that shape in
+    BOTH directions. It is what the real cloud puts in a `dev_multi_config`
+    reply, and it is what the cloud sends when the app sets a do-not-disturb
+    period, captured going through this add-on to a T5 on 2026-08-09.
+
+    So there is one encoder, called from `Device.to_multi_config` on the way out
+    and from the panel's schedule write on the way in. Two copies of a shape
+    this surprising is two chances for one of them to be right.
+
+    `schedule` is NOT this shape, despite travelling the same way: it is a
+    plain JSON string of the array, with no wrapping key. See
+    `web/panel.py::api_save_schedule`.
+    """
+    return json.dumps({key: value}, separators=(",", ":"))
 
 
 def split_bucket_authority(bucket_endpoint: str) -> tuple[str, str] | None:
@@ -555,12 +609,20 @@ class Device:
         cloud carries those ranges in `dev_multi_config` instead — so they are
         no longer seeded. A device that already has them keeps them; nothing
         strips stored settings, because those are the owner's state.
+
+        `sandType` is not seeded either, and it is the clearest case of why a
+        seed is not a free default. A controlled 1 -> 2 -> 3 -> 1 run through
+        the app gives the whole enum — 1 clay/ore, 2 tofu, 3 mixed — and `0` is
+        not in it. This used to seed `sandType: 0`, which `to_device_info` then
+        served back to the box as the litter it is filled with: a value outside
+        its own vocabulary. Our own T5 reports 2, which is where a real value
+        comes from.
         """
         if self.is_litter:
             base = {
                 "manualLock": 0, "clickOkEnable": 1,
                 "avoidRepeat": 1, "underweight": 1, "kitten": 0,
-                "bury": 0, "sandType": 0, "autoWork": 1,
+                "bury": 0, "autoWork": 1,
                 "fixedTimeClear": 0, "autoIntervalMin": 0,
                 "stillTime": 30, "stopTime": 600, "unit": 0,
                 "language": "en_US", "deepClean": 0, "disturbMode": 0,
@@ -615,6 +677,127 @@ class Device:
             }
         return {}
 
+    def multi_config_ranges(self) -> dict[str, Any]:
+        """The `*MultiRange` schedules this model has, resolved to real values.
+
+        A stored range wins. An unset one falls back to `MULTI_RANGE_DEFAULTS`,
+        which is "the whole day" for everything except the cleaning
+        do-not-disturb — see that table for why the one exception is not an
+        inconsistency.
+
+        These used to fall back to literals of a different kind: quiet hours of
+        00:40-08:40 and 22:00-06:00, windows nobody chose, pushed to every
+        device on every poll and undoing anything set through PetKit's app in
+        proxy mode. An always-on default is not that. It restricts nothing, so
+        it takes no decision away from the owner — the same line the seeded
+        `sandType` and the default cleaning schedule failed to hold.
+
+        The store is `config["multi_config"]` and NOT `config["settings"]`, even
+        though the device writes these fields with `property.set` like any other
+        setting. `to_device_info` serves the settings block straight back, and
+        the real cloud does not put these keys in `dev_device_info` — it puts
+        them here. Parking them in settings would add fields to a payload that a
+        capture says does not carry them.
+
+        A stored value that is not a list is IGNORED rather than served:
+        `devices.json` is hand-editable, and a malformed schedule reaching the
+        firmware is not something to find out about later.
+        """
+        stored = self.config.get("multi_config")
+        stored = stored if isinstance(stored, dict) else {}
+
+        def pick(key: str) -> Any:
+            value = stored.get(key)
+            if isinstance(value, list):
+                return value
+            # Copied, not shared: the caller edits what it is given, and these
+            # are module-level literals.
+            return json.loads(json.dumps(MULTI_RANGE_DEFAULTS[key]))
+
+        keys: tuple[str, ...] = ()
+        if self.is_litter:
+            keys = ("lightMultiRange", "distrubMultiRange")
+            if self.is_camera:
+                keys += ("cameraMultiRange", "toneMultiRange")
+        elif self.is_feeder and self.is_camera:
+            keys = ("detectMultiRange", "cameraMultiNew",
+                    "toneMultiRange", "lightMultiRange")
+        # A fountain has these too — the W7H's own `ctrl` reads
+        # `awDisturbMultiRange`, `wlDisturbMultiRange` and their siblings — but
+        # the branch that serves them is PR #18's, not this change's. Until it
+        # lands, a W7H's ranges are storable and sendable and simply not part of
+        # this reply, which is what it has always received.
+        return {key: pick(key) for key in keys}
+
+    def schedule_targets(self) -> list[dict[str, Any]]:
+        """Every schedule this device has, as the panel's editor needs them.
+
+        One list so the panel does not re-derive which model has which schedule;
+        the ranges come from `multi_config_ranges`, so what is edited is what is
+        served. `kind` selects the editor, and there are only four across the
+        whole product line:
+
+          * `ranges` — `[[start, end], ...]` in MINUTES since local midnight. An
+            end below its start crosses midnight and is valid.
+          * `weekly` — `[{enable, rpt, time: [[s, e]]}]`: the same ranges plus
+            weekdays and a switch.
+          * `points` — `[{id, repeats, time, type}]`: moments, not ranges, and
+            `type` says which job each belongs to (`codes.SCHEDULE_TYPES`).
+          * `feed` — the feeder's own `{schedule: [{re, it, itemJsonString}]}`.
+            Raw-only: `it` was an empty list in every capture and nothing here
+            is going to guess what a meal item looks like.
+
+        A W7H has five of these and gets none of them yet. Its `ctrl` reads them
+        and the app writes them, but the `dev_multi_config` branch that would
+        serve them back is PR #18's — offering an editor for a schedule this
+        add-on cannot answer with would be the confusing half of the feature.
+        """
+        labels = {
+            "lightMultiRange": "Screen Period" if self.is_litter else "Indicator Light Period",
+            "distrubMultiRange": "Cleaning Do Not Disturb",
+            "toneMultiRange": "Voice Undisturbed Period",
+            "cameraMultiRange": "Shooting Period",
+            "cameraMultiNew": "Shooting Period",
+            "detectMultiRange": "Detection Period",
+        }
+        # `cameraMultiNew` is listed as plain ranges because that is the shape
+        # this add-on currently serves for it. PR #18 has evidence the firmware
+        # reads it as `weekly` objects instead; when that lands, this line moves
+        # with it rather than the two disagreeing.
+        weekly = {"cameraMultiRange"}
+
+        targets = [
+            {"target": key, "name": labels.get(key, key),
+             "kind": "weekly" if key in weekly else "ranges", "value": value}
+            for key, value in self.multi_config_ranges().items()
+        ]
+
+        if self.is_litter:
+            targets.append({
+                "target": "schedule", "name": "Scheduled Cleaning & Deodorizing",
+                # Empty when nobody has set one, and `dev_schedule_get` answers
+                # empty too — there is no default cleaning schedule anywhere in
+                # this add-on. Inventing times would run somebody's box on a
+                # timetable they never chose.
+                "kind": "points",
+                "value": self.config.get("schedule") or [],
+            })
+        if self.is_feeder:
+            targets.append({
+                "target": "feed_schedule", "name": "Feeding Schedule",
+                "kind": "feed",
+                # `{"schedule": []}` and not `{}`, so the editor always has the
+                # shape to render — a feeder with no meals set is a feeder with
+                # no groups, not a feeder with no schedule object.
+                "value": self.config.get("feed_schedule") or {"schedule": []},
+                # A Dual-Hopper dispenses from two hoppers and a meal carries a
+                # portion for each (`a1`/`a2`); every other feeder reads one.
+                # Decided here rather than in the browser, next to the set that
+                # already answers this question for `feed_realtime`.
+                "dual": self.device_type in DEVICE_TYPES_FEEDER_DUAL,
+            })
+        return targets
+
     def to_multi_config(self) -> dict[str, Any]:
         """`dev_multi_config` — the schedule ranges (light, do-not-disturb, camera).
 
@@ -626,30 +809,17 @@ class Device:
         The `distrubMultiRange` misspelling is intentional: it is what the
         firmware sends and expects, so correcting it here would silently drop
         the do-not-disturb schedule.
-        """
-        def mc(key: str, val: Any) -> str:
-            """Wrap one range in its own key and encode it as a compact string."""
-            return json.dumps({key: val}, separators=(",", ":"))
 
-        if self.is_litter:
-            result = {
-                "lightMultiRange": mc("lightMultiRange", [[0, 1440]]),
-                "distrubMultiRange": mc("distrubMultiRange", [[40, 520]]),
-            }
-            if self.is_camera:
-                result["cameraMultiRange"] = mc("cameraMultiRange", [
-                    {"enable": 1, "rpt": "1,2,3,4,5,6,7", "time": [[0, 1440]]}
-                ])
-                result["toneMultiRange"] = mc("toneMultiRange", [[1320, 360]])
-            return {"result": result}
-        if self.is_feeder and self.is_camera:
-            return {"result": {
-                "detectMultiRange": mc("detectMultiRange", [[0, 1440]]),
-                "cameraMultiNew": mc("cameraMultiNew", [[0, 1440]]),
-                "toneMultiRange": mc("toneMultiRange", [[1320, 360]]),
-                "lightMultiRange": mc("lightMultiRange", [[0, 1440]]),
-            }}
-        return {"result": {}}
+        This used to build the values inline from literals and read nothing, so
+        every device was handed the same made-up light period and quiet hours on
+        every poll, and a schedule set through the app in proxy mode was undone
+        by the next one. `multi_config_ranges` is where a stored value now comes
+        from.
+        """
+        return {"result": {
+            key: encode_multi_range(key, value)
+            for key, value in self.multi_config_ranges().items()
+        }}
 
     def to_video_device_info(self) -> dict[str, Any]:
         """`dev_video_device_info` — empty Agora credentials.

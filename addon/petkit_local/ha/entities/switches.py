@@ -40,6 +40,12 @@ LITTER_SWITCHES = [
               value_path="settings.sandSaving", icon="mdi:leaf"),
     EntityDef(component="switch", key="fixed_time_clear", name="Periodic Cleaning",
               value_path="settings.fixedTimeClear", icon="mdi:clock-outline"),
+    # Only meaningful while Child Lock is on: it decides whether double-pressing
+    # the physical OK button still works with the panel locked. Seeded to 1
+    # since `default_settings()` first existed; the entity is what was missing.
+    EntityDef(component="switch", key="click_ok", name="OK Button Under Child Lock",
+              value_path="settings.clickOkEnable", icon="mdi:gesture-double-tap",
+              entity_category="config"),
 ]
 
 #: Seeded by `Device.default_settings()` only inside its `is_camera` branch,
@@ -79,6 +85,30 @@ LITTER_CAMERA_SWITCHES = [
               value_path="settings.voice", icon="mdi:ear-hearing"),
     EntityDef(component="switch", key="ph_detection", name="Urine pH Detection",
               value_path="settings.phDetection", icon="mdi:test-tube"),
+    # Five settings this add-on has seeded and served back to the box since
+    # `default_settings()` existed, with no way to change any of them. Each is a
+    # labelled entry in the app's own menus, mapped to these wire names by a
+    # capture of the app writing them on a T6 (supplied 2026-08-09).
+    #
+    # `wanderDetection` is the exception: it is not seeded, appears nowhere else
+    # in this repo, and the capture only ever saw it written TOGETHER with
+    # `petDetection` — so its independent behaviour is unobserved. It is listed
+    # in `tests/test_entity_backing.py::UNSEEDED_BY_DESIGN` for that reason.
+    EntityDef(component="switch", key="pet_detection", name="Pet Detection",
+              value_path="settings.petDetection", icon="mdi:cat"),
+    EntityDef(component="switch", key="wander_detection", name="Wander Detection",
+              value_path="settings.wanderDetection", icon="mdi:motion-sensor"),
+    EntityDef(component="switch", key="toilet_detection", name="Toileting Detection",
+              value_path="settings.toiletDetection", icon="mdi:toilet"),
+    EntityDef(component="switch", key="voice_prompt", name="Voice Prompt",
+              value_path="settings.systemSoundEnable", icon="mdi:account-voice"),
+    # NOT `disturb_mode`: that key is taken by `settings.disturbMode`, the
+    # CLEANING do-not-disturb. The app keeps the two apart (Cleaning Settings vs
+    # Voice Settings) and so does the device — different field, different
+    # schedule (`distrubMultiRange` vs `toneMultiRange`).
+    EntityDef(component="switch", key="voice_disturb_mode", name="Quiet Voice Prompts",
+              value_path="settings.toneMode", icon="mdi:bell-off",
+              entity_category="config"),
 ]
 
 FEEDER_SWITCHES = [
@@ -148,11 +178,16 @@ FOUNTAIN_SWITCHES = [
 # handled by `drinkDetection_Enable`, exactly as the `petDetection` switch we
 # already ship is handled by `pet_det_Enable`.
 #
-# Deliberately NOT here: `flushIntensity`, `flushCycle`, `flushTime`,
-# `waterChangeCycle`, `waterChangeTime`, `addWaterMode` and `targetTemp`. All
+# Deliberately NOT here: `flushIntensity`, `addWaterMode` and `targetTemp`. All
 # are real handlers, but a number or select needs a RANGE and the map gives
 # none, and `Device.to_device_info` serves settings back to the device — so an
 # invented bound is not a display detail, it is a value we would push.
+#
+# `flushCycle`, `flushTime`, `waterChangeCycle` and `waterChangeTime` used to be
+# on that list for the same reason, and are no longer: a second map (supplied
+# 2026-08-09, from a capture of the app's own writes) gives their encodings —
+# cycles count DAYS, times are SECONDS since midnight. They live in
+# `numbers.py::FOUNTAIN_W7H_NUMBERS` and `times.py::FOUNTAIN_W7H_TIMES`.
 #
 # None of these are seeded in `devices/base.py` for the same reason: the honest
 # state is unknown until the device reports one. See `UNSEEDED_BY_DESIGN` in
@@ -187,6 +222,53 @@ FOUNTAIN_W7H_SWITCHES = [
               entity_category="config"),
     EntityDef(component="switch", key="water_level_disturb_mode", name="Quiet Water Level Alerts",
               value_path="settings.wlDisturbMode", icon="mdi:bell-off",
+              entity_category="config"),
+]
+
+#: The W7H's camera and voice settings.
+#:
+#: They are here rather than on a shared fountain list because the W7H is the
+#: only EverSweet with a camera at all — every other codename in the family is
+#: Bluetooth-only (`utils/const.py::DEVICE_TYPES_BLE_ONLY`). Until now the
+#: fountain category contributed NO camera settings whatsoever: `camera_entities`
+#: for a fountain is the common camera/snapshot/clip bundle plus the media
+#: capability toggles, so a W7H owner had a camera entity and no way to turn the
+#: camera off.
+#:
+#: Every field is both a set handler in that firmware's own `ctrl`
+#: (`codes.FOUNTAIN_W7H_SET_FIELDS`) and a labelled row in the app's menus, per
+#: the capture-derived map supplied 2026-08-09. Two of them differ from the
+#: names the litter boxes use for the same idea — `microLight` is the microphone
+#: indicator, not a light mode, and `upload` gates video/photo upload — which is
+#: exactly why they are copied from the map rather than from a sibling list.
+#:
+#: None are seeded (`UNSEEDED_BY_DESIGN`): this device's `property/post` carries
+#: no settings at all, so there is nothing to seed FROM, and a made-up default
+#: is a value `to_device_info` would push to somebody's fountain.
+FOUNTAIN_W7H_CAMERA_SWITCHES = [
+    EntityDef(component="switch", key="camera", name="Camera",
+              value_path="settings.camera", icon="mdi:camera"),
+    EntityDef(component="switch", key="camera_upload", name="Video/Photo Upload",
+              value_path="settings.upload", icon="mdi:cloud-upload"),
+    EntityDef(component="switch", key="microphone", name="Microphone",
+              value_path="settings.microphone", icon="mdi:microphone"),
+    EntityDef(component="switch", key="micro_light", name="Microphone Indicator Light",
+              value_path="settings.microLight", icon="mdi:led-on",
+              entity_category="config"),
+    EntityDef(component="switch", key="night_vision", name="Night Vision",
+              value_path="settings.night", icon="mdi:weather-night"),
+    EntityDef(component="switch", key="time_display", name="Timestamp Display",
+              value_path="settings.timeDisplay", icon="mdi:clock-digital"),
+    EntityDef(component="switch", key="smart_frame", name="Pet Tracking",
+              value_path="settings.smartFrame", icon="mdi:crop"),
+    EntityDef(component="switch", key="voice_prompt", name="Voice Prompt",
+              value_path="settings.systemSoundEnable", icon="mdi:account-voice"),
+    # Third of this device's three independent do-not-disturb systems, next to
+    # `refill_disturb_mode` (awDisturbMode) and `water_level_disturb_mode`
+    # (wlDisturbMode) above. The map is explicit that they are separate despite
+    # near-identical UI labels: this one mutes the device.
+    EntityDef(component="switch", key="voice_disturb_mode", name="Quiet Voice Prompts",
+              value_path="settings.toneMode", icon="mdi:bell-off",
               entity_category="config"),
 ]
 

@@ -474,13 +474,197 @@ a:hover {
   letter-spacing: 0.4px;
   color: var(--mut);
 }
+/* Columns, not a stack. Every schedule box is a few short rows, so stacked full
+   width they were content in the top-left corner of a very wide empty
+   rectangle, five times over. `auto-fill` gives three columns on a desktop, two
+   on a laptop and one on a phone without a breakpoint anywhere.
+
+   `align-items: start` because the boxes are different heights — the cleaning
+   one carries two or three sections — and a stretched short box is the same
+   empty rectangle again. */
+.sched-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
 .sched {
-  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--card2);
+}
+.sched-raw .sched {
+  margin-top: 10px;
+}
+/* Unsaved. The panel repaints every ~10s, so "there are changes here" has to be
+   visible from the card and not only from the button that appeared. */
+.sched.dirty {
+  border-color: var(--accent);
+}
+.sched-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.sched-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.sched-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sched-sub {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--mut);
+  margin-bottom: 4px;
 }
 .sched-json {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   margin-bottom: 6px;
+}
+.sched-raw summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--mut);
+}
+/* A button that is not a button: add/remove/discard are secondary to reading
+   the schedule, and this card has a lot of them. Filled pills made a list of
+   quiet hours look like a control panel. */
+.link {
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+}
+.link:hover {
+  text-decoration: underline;
+}
+.link.danger {
+  color: var(--mut);
+}
+.link.danger:hover {
+  color: var(--bad);
+}
+/* Every row in this card is the same two-column grid: what the schedule SAYS,
+   then what you can do to it. One grid rather than per-row flexbox because the
+   rows are not alike — "All day", a pair of clocks, a clock plus seven weekday
+   chips, an Enabled switch — and laid out independently they landed at four
+   different offsets with the actions floating wherever the content happened to
+   end. The shared track is what makes a column of ✕ read as a column.
+
+   The width is capped: stretched to a wide window the actions end up a
+   thousand pixels from the row they belong to. */
+.sched-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+}
+.sched-vals {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.sched-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+}
+.sched-arrow {
+  color: var(--mut);
+}
+.sched-allday {
+  font-size: 13px;
+}
+.sched-note {
+  font-size: 12px;
+}
+/* Inputs are `width: 100%` globally, which is right for a form field and wrong
+   for a clock sitting in a row of them. Fixed rather than `auto` so the clocks
+   line up down the card whatever the browser thinks a time input should be. */
+.sched-row input[type='time'] {
+  width: 108px;
+  padding: 5px 8px;
+}
+.sched-portion {
+  width: 62px;
+  padding: 5px 8px;
+}
+.sched-card input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+.sw-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--mut);
+  cursor: pointer;
+}
+.sched-entry {
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+  margin: 10px 0;
+}
+/* Sunday first — that is PetKit's numbering, not a display choice. */
+.sched-days {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+.sched-days label {
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 7px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--mut);
+}
+/* Tinted, not filled. Seven solid pills on every row is a wall of colour, and
+   this file already learned that lesson once with the action buttons: a device
+   panel has no filled backgrounds anywhere else, so saturated ones become the
+   loudest thing on the page. The tint plus the accent text is enough to read
+   "on" at a glance. */
+.sched-days label.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+/* Visually hidden, NOT `display: none`: that drops the checkbox out of the
+   accessibility tree and off the tab order, which left the weekday toggles
+   unreachable by keyboard while looking fine. */
+.sched-days input[type='checkbox'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.sched-days label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 /* device panel body */
 .dh {

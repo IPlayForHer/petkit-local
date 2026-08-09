@@ -22,17 +22,21 @@ from petkit_local.devices.base import Device
 from petkit_local.ha.discovery import EntityDef
 from petkit_local.ha.entities.buttons import (
     FEEDER_BUTTONS, FEEDER_DUAL_BUTTONS,
-    FOUNTAIN_BUTTONS, FOUNTAIN_W7H_BUTTONS, LITTER_BUTTONS,
+    FOUNTAIN_BUTTONS, FOUNTAIN_W7H_BUTTONS,
+    LITTER_BUTTONS, LITTER_CAMERA_BUTTONS, LITTER_T6_BUTTONS,
 )
 from petkit_local.ha.entities.camera import CAMERA_ENTITIES
 from petkit_local.ha.entities.events import (
     FEEDER_EVENTS, FOUNTAIN_W7H_EVENTS, LITTER_EVENTS,
 )
 from petkit_local.ha.entities.numbers import (
-    FEEDER_CAMERA_NUMBERS, FEEDER_DUAL_NUMBERS, FEEDER_NUMBERS, FOUNTAIN_NUMBERS,
+    FEEDER_CAMERA_NUMBERS, FEEDER_DUAL_NUMBERS, FEEDER_NUMBERS,
+    FOUNTAIN_NUMBERS, FOUNTAIN_W7H_NUMBERS,
     LITTER_CAMERA_NUMBERS, LITTER_NUMBERS,
 )
-from petkit_local.ha.entities.selects import FEEDER_SELECTS, FOUNTAIN_SELECTS, LITTER_SELECTS
+from petkit_local.ha.entities.selects import (
+    FEEDER_SELECTS, FOUNTAIN_SELECTS, FOUNTAIN_W7H_SELECTS, LITTER_SELECTS,
+)
 from petkit_local.ha.entities.sensors import (
     FEEDER_BINARY_SENSORS, FEEDER_NEXT_GEN_HALL_SENSORS,
     FEEDER_NEXT_GEN_SENSORS, FEEDER_SENSORS,
@@ -45,11 +49,12 @@ from petkit_local.ha.entities.sensors import (
 from petkit_local.ha.entities.switches import (
     CAPABILITY_SWITCHES,
     FEEDER_CAMERA_SWITCHES, FEEDER_SWITCHES,
-    FOUNTAIN_SWITCHES, FOUNTAIN_W7H_SWITCHES,
+    FOUNTAIN_SWITCHES, FOUNTAIN_W7H_CAMERA_SWITCHES, FOUNTAIN_W7H_SWITCHES,
     LITTER_CAMERA_SWITCHES, LITTER_SWITCHES,
     PURIFIER_SWITCHES,
 )
 from petkit_local.ha.entities.text import FEEDER_SCHEDULE_TEXT, LITTER_SCHEDULE_TEXT
+from petkit_local.ha.entities.times import FOUNTAIN_W7H_TIMES
 from petkit_local.utils.const import (
     DEVICE_TYPES_FEEDER, DEVICE_TYPES_LITTER, DEVICE_TYPES_PURIFIER,
     DEVICE_TYPES_WATER_FOUNTAIN,
@@ -166,7 +171,7 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         # change to this tuple that cannot move an existing entity.
         camera_entities=(*LITTER_CAMERA_SENSORS, *LITTER_CAMERA_SWITCHES,
                          *LITTER_CAMERA_NUMBERS, *_COMMON_CAMERA_ENTITIES,
-                         *LITTER_CAMERA_HALL_SENSORS),
+                         *LITTER_CAMERA_HALL_SENSORS, *LITTER_CAMERA_BUTTONS),
         state_topics=(
             "work_start", "work_continue", "work_suspend",
             "clean_over", "dump_over", "reset_over",
@@ -176,6 +181,19 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
             "ble_response/post",
         ),
         camera_state_topics=("move_detect", "pet_detect"),
+        model_entities=(
+            ("t6", LITTER_T6_BUTTONS),
+        ),
+        # The Purobot Ultra has no N50 cartridge, so the button that claims to
+        # reset one cannot be right on this model — and it is not merely inert.
+        # It sends `start_action: 8`, which a controlled tap in the app on this
+        # box produced for **Pack**: the waste-packing cycle. Whatever the value
+        # means elsewhere, here it is a physical action behind a label about a
+        # consumable, so the button goes and `pack_waste` (model_entities above)
+        # says what the code actually does.
+        model_excludes=(
+            ("t6", frozenset({"reset_n50"})),
+        ),
     ),
     "feeder": CategorySpec(
         device_types=frozenset(DEVICE_TYPES_FEEDER),
@@ -260,7 +278,14 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         model_entities=(
             ("w7h", (*FOUNTAIN_W7H_SENSORS, *FOUNTAIN_W7H_BINARY_SENSORS,
                      *FOUNTAIN_W7H_HALL_SENSORS, *FOUNTAIN_W7H_SWITCHES,
-                     *FOUNTAIN_W7H_BUTTONS, *FOUNTAIN_W7H_EVENTS)),
+                     *FOUNTAIN_W7H_BUTTONS, *FOUNTAIN_W7H_EVENTS,
+                     # The camera, voice and water-treatment settings. They are
+                     # here rather than on `camera_entities` because no other
+                     # fountain has a camera to configure: every remaining
+                     # EverSweet codename is Bluetooth-only and never becomes a
+                     # Device at all.
+                     *FOUNTAIN_W7H_CAMERA_SWITCHES, *FOUNTAIN_W7H_NUMBERS,
+                     *FOUNTAIN_W7H_SELECTS, *FOUNTAIN_W7H_TIMES)),
         ),
         # The water-treatment jobs. A live W7H sent `work_start` (2026-08-01)
         # and `add_water_over` a second after a `drink_start`; neither is a

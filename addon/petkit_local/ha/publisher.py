@@ -104,7 +104,12 @@ def _ble_command_value(entity: Any, payload: str) -> int | None:
         if text in (entity.options or []):
             index = list(entity.options).index(text)
             values = entity.option_values or list(range(len(entity.options)))
-            return int(values[index])
+            # `option_values` are not necessarily numbers — the W7H's voice
+            # language maps its labels to "en_US"/"zh_CN" — and an accessory
+            # frame carries a byte. No Bluetooth model publishes such a select
+            # today; coercing rather than `int()` keeps that a None instead of
+            # an exception mid-publish if one ever does.
+            return to_int(values[index], None)
         return None
     return to_int(text, None)
 

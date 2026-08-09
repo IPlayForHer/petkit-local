@@ -24,13 +24,15 @@ FEEDER_NUMBERS = [
 #: parsers (`_parse_litter_camera` is documented as "the ESP32 litter set
 #: PLUS the camera, spray and package fields").
 #:
-#: THE VOLUME RANGE IS UNVERIFIED for a litter box, and 0-9 should not be read
+#: THE VOLUME RANGE IS STILL UNVERIFIED at its ends, and 0-9 should not be read
 #: as evidence. The field itself is real — PetKit's own cloud sends `volume` in
-#: `dev_device_info` — but in all 508 captured replies it was `1` and never
-#: anything else, so no capture bounds it. 0-9 comes from localkit's validator
-#: for the YumShare Solo, a FEEDER (`PetkitYumshareSolo.php`, whose own picker
-#: offers 1-9, not 0-9); its litter-box model declares no volume at all. The
-#: panel shows the range so the bound is at least visible to whoever hits it.
+#: `dev_device_info` — and two sources now agree on 1..9: localkit's validator
+#: for the YumShare Solo, a FEEDER (`PetkitYumshareSolo.php`, whose picker
+#: offers 1-9, not 0-9), and a capture-derived T6 map that reports an "observed
+#: range including 1 through 9". Neither establishes 0, and neither establishes
+#: that 9 is the ceiling rather than the highest anybody happened to pick; our
+#: own T5 currently sits at 9. So the bound stays as it is, deliberately one
+#: step wider at the bottom, and the panel shows it to whoever hits it.
 LITTER_CAMERA_NUMBERS = [
     EntityDef(component="number", key="volume", name="Volume",
               value_path="settings.volume", icon="mdi:volume-high",
@@ -75,4 +77,33 @@ FOUNTAIN_NUMBERS = [
     EntityDef(component="number", key="sleep_time", name="Sleep Time",
               value_path="settings.sleepTime", icon="mdi:sleep",
               unit="h", min_value=1, max_value=24, step=1),
+]
+
+#: How often the W7H runs each of its two water-treatment cycles, in DAYS.
+#:
+#: `switches.py` explains why these were withheld until now: a number needs a
+#: range, and the firmware map that named the handlers gave none. The
+#: capture-derived map supplied 2026-08-09 does — "N = every N days", with 1 and
+#: 7 both observed — which is the encoding, not the bound.
+#:
+#: 1..30 is therefore a SOFT ceiling: a month is well past any cleaning interval
+#: the app offers, and the device does its own clamping. It exists to stop an
+#: obviously-wrong value from reaching hardware, not because 30 was measured.
+#:
+#: The matching times are `time` entities, not numbers — see `times.py`.
+FOUNTAIN_W7H_NUMBERS = [
+    EntityDef(component="number", key="water_change_cycle", name="Drain & Refill Cycle",
+              value_path="settings.waterChangeCycle", icon="mdi:water-refresh",
+              unit="d", min_value=1, max_value=30, step=1),
+    EntityDef(component="number", key="flush_cycle", name="Drain & Flush Cycle",
+              value_path="settings.flushCycle", icon="mdi:water-sync",
+              unit="d", min_value=1, max_value=30, step=1),
+    # Same field and the same unverified 0-9 as LITTER_CAMERA_NUMBERS above,
+    # and for a weaker reason still: the W7H map observed exactly one value (1)
+    # and says outright that the range was not established. Shipped anyway
+    # because a volume control nobody can reach is worse than a wide one, and
+    # the device clamps.
+    EntityDef(component="number", key="volume", name="Volume",
+              value_path="settings.volume", icon="mdi:volume-high",
+              min_value=0, max_value=9, step=1),
 ]

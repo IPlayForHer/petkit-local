@@ -150,6 +150,31 @@ def _litter_ctrl(action_key: str, code: int) -> Command:
     return ("start", _envelope("thing.service.start", {action_key: code}))
 
 
+def _device_power(on: bool) -> Command:
+    """Turn the device itself off or on.
+
+    A SERVICE, not a setting. `pause_fountain`/`resume_fountain` used to write
+    `{"power": 0|1}` through `property.set` and were removed for it: `power` is
+    not among the W7H's set handlers, so those commands were delivered, accepted
+    by the broker and dropped. `parse_service_invoke_msg` does accept a `power`
+    service carrying `power_action`, on a code path of its own — that is this.
+
+    Confirmed on a T6 by a capture of the app (`{"power_action": 0}` / `1`), and
+    present as an accepted service name in the D4SH and W7H `ctrl` binaries. The
+    litter boxes without cameras are NOT given the buttons: nothing has been
+    read for that generation, and a power-off is not a command to guess at.
+    """
+    return ("power", _envelope("thing.service.power", {"power_action": int(on)}))
+
+
+#: Actions that are not one family's. Merged into `ALL_ACTIONS` alongside the
+#: per-category tables, so the litter and fountain buttons resolve to one
+#: implementation instead of two copies that can drift.
+SHARED_ACTIONS = {
+    "power_off": lambda device: _device_power(False),
+    "power_on": lambda device: _device_power(True),
+}
+
 LITTER_ACTIONS = {
     # reference-confirmed (localkit PetkitPuraMax dispatchSync codes)
     "cleaning_start": lambda device: _litter_start(0),
@@ -161,6 +186,14 @@ LITTER_ACTIONS = {
     "level_litter": lambda device: _litter_start(4),
     "reset_n50": lambda device: _litter_start(8),
     "reset_n60": lambda device: _litter_start(10),
+    # Confirmed by isolated taps in the app on a T6 (`codes.LITTER_START_ACTIONS`).
+    # `pack_waste` and `light` send values the enum above also claims — 8 is
+    # RESET_N50_DEODOR to pypetkitapi and Pack to the T6, 7 agrees with it — so
+    # only the T6 gets a Pack button, and only the models that have the
+    # illuminator get a Light one. `open_sealed_door` is that box's own door.
+    "light": lambda device: _litter_start(7),
+    "pack_waste": lambda device: _litter_start(8),
+    "open_sealed_door": lambda device: _litter_start(11),
     # no localkit reference; best-effort control verbs
     "pause": lambda device: _litter_ctrl("stop_action", 0),
     "resume": lambda device: _litter_ctrl("continue_action", 0),
@@ -338,7 +371,7 @@ FOUNTAIN_ACTIONS = {
     "fountain_water_change": lambda device: _fountain_start(5),
 }
 
-ALL_ACTIONS = {**LITTER_ACTIONS, **FEEDER_ACTIONS, **FOUNTAIN_ACTIONS}
+ALL_ACTIONS = {**LITTER_ACTIONS, **FEEDER_ACTIONS, **FOUNTAIN_ACTIONS, **SHARED_ACTIONS}
 
 
 def _coerce_switch(payload: str) -> int:
@@ -370,6 +403,37 @@ def _coerce_number(payload: str) -> int | float | None:
     if number is None:
         return None
     return int(number) if number.is_integer() else number
+
+
+#: Seconds in a day. A time-of-day setting is `0 <= v < DAY_SECONDS`.
+DAY_SECONDS = 24 * 60 * 60
+
+
+def _coerce_time(payload: str) -> int | None:
+    """Coerce HA's `HH:MM:SS` clock to the seconds-since-midnight the device wants.
+
+    HA's MQTT time platform always publishes all three fields, but seconds are
+    accepted as optional so a value typed by hand in the web panel — or pasted
+    from the app's own `13:00` — is not rejected for a formatting detail.
+
+    Returns:
+        None for anything that is not a time, so the caller logs and drops the
+        command rather than writing a number to somebody's fountain. `24:00:00`
+        is refused too: it is the one value that looks valid, reads as
+        `DAY_SECONDS`, and would be a schedule the device can never reach.
+    """
+    parts = str(payload).strip().split(":")
+    if len(parts) not in (2, 3):
+        return None
+    try:
+        hours, minutes = int(parts[0]), int(parts[1])
+        seconds = int(parts[2]) if len(parts) == 3 else 0
+    except ValueError:
+        return None
+    if not (0 <= minutes < 60 and 0 <= seconds < 60):
+        return None
+    total = hours * 3600 + minutes * 60 + seconds
+    return total if 0 <= total < DAY_SECONDS else None
 
 
 def _select_value(entity: EntityDef, payload: str) -> int | float | str | None:
@@ -459,7 +523,7 @@ def handle_ha_command(device: Device, entity: EntityDef, payload: str) -> Comman
         log.info("Set config[%s] for device %d", key, device.petkit_id)
         return None
 
-    if comp not in ("switch", "number", "select"):
+    if comp not in ("switch", "number", "select", "time"):
         return None
 
     field = entity.setting_field
@@ -501,6 +565,11 @@ def handle_ha_command(device: Device, entity: EntityDef, payload: str) -> Comman
             raise Refused(
                 f"{entity.name} must be between "
                 f"{entity.min_value} and {entity.max_value}")
+    elif comp == "time":
+        # No range check of its own: `_coerce_time` already refuses anything
+        # that is not a time within the day, and `min_value`/`max_value` on a
+        # `time` entity mean nothing (HA publishes no bounds for the platform).
+        value = _coerce_time(payload)
     else:
         value = _select_value(entity, payload)
 

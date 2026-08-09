@@ -92,7 +92,7 @@ class EntityDef:
     @property
     def is_settable(self) -> bool:
         """Entity that accepts commands from HA."""
-        return self.component in ("switch", "button", "number", "select", "text")
+        return self.component in ("switch", "button", "number", "select", "text", "time")
 
     @property
     def setting_field(self) -> str:
@@ -209,6 +209,14 @@ def build_discovery_payload(
         payload["command_topic"] = cmd
         payload["options"] = entity.options
 
+    elif entity.component == "time":
+        # HA's MQTT time platform speaks `HH:MM:SS` in both directions; the
+        # device stores seconds since midnight. `_value_template` converts on
+        # the way out, `ha/commands.py::_coerce_time` on the way in. No `format`
+        # key is published: HA's time platform has no such option, and an
+        # unknown key makes it reject the whole discovery message.
+        payload["command_topic"] = cmd
+
     elif entity.component == "text":
         # Free-form control (used for raw schedule JSON). Reads from the state
         # doc via value_template, writes the raw string back via command_topic.
@@ -270,6 +278,8 @@ def _value_template(entity: EntityDef) -> str:
         return "{{ 'ON' if " + accessor + " | default(false) else 'OFF' }}"
     if entity.component == "select":
         return _select_value_template(entity, accessor)
+    if entity.component == "time":
+        return _time_value_template(accessor)
     if entity.component == "sensor" and entity.options:
         return _enum_sensor_value_template(entity, accessor)
     if entity.device_class == "timestamp":
@@ -280,6 +290,27 @@ def _value_template(entity: EntityDef) -> str:
         # is what we actually mean before the first event.
         return "{{ " + accessor + " | default('None') or 'None' }}"
     return "{{ " + accessor + " | default('') }}"
+
+
+def _time_value_template(accessor: str) -> str:
+    """Render seconds-since-midnight as the `HH:MM:SS` HA's time platform wants.
+
+    `| int(-1)` rather than a `number` test, because the value arrives from a
+    device-supplied settings dict: it may be a string, and it may be absent
+    entirely (none of these fields is seeded — the fountain reports no settings
+    at all until it is asked). Both land on -1 and render nothing.
+
+    Rendering NOTHING for an unknown value is the same choice
+    `_select_value_template` makes, for the same reason: there is no honest
+    time of day to publish before the device names one, and inventing 00:00:00
+    would show a schedule nobody set. Whether HA logs about the empty payload
+    the way it does for a timestamp sensor is unverified — no W7H has been
+    available to watch, and only Home Assistant renders these templates.
+    """
+    return ("{% set v = " + accessor + " | default(-1) | int(-1) %}"
+            "{% if v >= 0 %}"
+            "{{ '%02d:%02d:%02d' | format(v // 3600, v // 60 % 60, v % 60) }}"
+            "{% endif %}")
 
 
 def _select_value_template(entity: EntityDef, accessor: str) -> str:

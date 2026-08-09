@@ -5,7 +5,7 @@ from petkit_local.utils.const import DEVICE_TYPES_ALL
 
 VALID_COMPONENTS = {
     "sensor", "binary_sensor", "switch", "button", "number", "select", "camera",
-    "event", "text", "image",
+    "event", "text", "image", "time",
 }
 
 DEVICE_TYPES = ["t5", "t6", "t7", "t3", "t4", "d4h", "d4sh", "d3", "d4", "w7h", "w5", "k2", "k3"]
@@ -46,10 +46,22 @@ EXPECTED_ENTITY_COUNTS = {
     # 42 -> 50 on the D4H, which reports one hopper; the D4SH keeps its second
     # hopper sensor and adds the two per-hopper feed buttons and their portion
     # numbers, for 54.
-    "t3": 45, "t4": 45, "t5": 73, "t6": 73, "t7": 73,
+    #
+    # 2026-08-09, from two capture-derived settings maps (T6 and W7H) plus a
+    # proxied T5. Every litter box gains `click_ok`; a camera one gains five
+    # settings this add-on had been seeding and serving to the device with no
+    # control for them (pet/wander/toilet detection, voice prompt, voice DND)
+    # and three buttons (Light, Power Off, Power On) — 45 -> 46 and 73 -> 82.
+    # The T6 is 83: it drops `reset_n50`, which it has no cartridge for and
+    # whose code its own app uses for Pack, and adds Pack and Open Sealed Door.
+    #
+    # 67 -> 84 on the W7H: nine camera and voice switches (it had a camera
+    # entity and no way to switch the camera off), the two drain cycles and
+    # their two times, volume, voice language, and the same two power buttons.
+    "t3": 46, "t4": 46, "t5": 82, "t6": 83, "t7": 82,
     "feeder": 25, "feedermini": 25, "d3": 25, "d4": 25, "d4s": 25,
     "d4h": 50, "d4sh": 54,
-    "w4": 24, "w5": 24, "ctw2": 24, "ctw3": 24, "w7h": 67,
+    "w4": 24, "w5": 24, "ctw2": 24, "ctw3": 24, "w7h": 84,
     "k2": 12, "k3": 12,
 }
 

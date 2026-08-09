@@ -727,6 +727,133 @@ WORK_MODES: dict[int, str] = {
 #: but graded lower by `events/decode.py`.
 WORK_MODES_OBSERVED = frozenset({0, 2, 9})
 
+#: What a litter box's `thing.service.start {"start_action": N}` asks it to do,
+#: as the APP's own buttons — which is not the same question `WORK_MODES` above
+#: answers. That table decodes a mode the box reports; this one records what
+#: was seen going the other way.
+#:
+#: Every entry is a single isolated tap in PetKit's app on a T6, captured and
+#: mapped 2026-08-09. Light and Level were each pressed several times to check
+#: they were not toggling through a sequence.
+#:
+#: Read alongside `WORK_MODES`, four values agree outright (0, 1, 3, 4) and one
+#: more agrees with pypetkitapi's LBCommand (7 LIGHT). **8 does not.** LBCommand
+#: calls it RESET_N50_DEODOR; the tap that produced it was Pack, the
+#: waste-packing cycle. The disagreement is not resolvable from here and it is
+#: not cosmetic — one reading is a bookkeeping no-op and the other moves the
+#: mechanism — so the row is graded `conflicted` and `ha/entities/buttons.py`
+#: publishes the code under the name the tap gives it, on that model only.
+#:
+#: NOT a whitelist, unlike `FOUNTAIN_W7H_START_ACTIONS`: that set is the literal
+#: `cmp` chain out of the firmware, so a value outside it is known to be
+#: ignored. This is a list of taps somebody made. 2, 9 and 10 are absent here
+#: and are all real (deodorize, maintenance, N60 reset — 10 confirmed against
+#: the real cloud on a T5), because the T6 action sheet does not offer them.
+#: Nothing may validate against this table.
+LITTER_START_ACTIONS: dict[int, tuple[str, str]] = {
+    0: ("scoop", CONFIRMED),
+    1: ("empty", CONFIRMED),
+    3: ("reset", CONFIRMED),
+    4: ("level", CONFIRMED),
+    7: ("light", CONFIRMED),
+    8: ("pack waste", CONFLICTED),
+    11: ("open sealed door", CONFIRMED),
+}
+
+#: The litter a box is told it is filled with (`settings.sandType`).
+#:
+#: The whole enum, from a controlled 1 -> 2 -> 3 -> 1 run through the app's own
+#: picker. There is no 0: it was seeded as a default here for a long time and
+#: served back to devices, which is a value outside their vocabulary — see
+#: `devices/base.py::default_settings`.
+SAND_TYPES: dict[int, str] = {
+    1: "clay/ore",
+    2: "tofu",
+    3: "mixed",
+}
+
+#: What a `schedule[]` entry schedules.
+#:
+#: One array carries BOTH of a litter box's timed jobs and `type` is the only
+#: thing telling them apart. Captured on our own T5 through proxy mode
+#: (2026-08-09): the array held four `type: 0` entries, and adding a periodic
+#: DEODORIZING time appended a fifth with `type: 1` — same array, same write.
+#:
+#: Worth writing down precisely because every source up to now, ours included,
+#: recorded `type` as "observed as 0; semantics unknown". Anything that edits
+#: this array must filter by `type` and merge back, or it silently deletes the
+#: other job's schedule.
+SCHEDULE_TYPES: dict[int, str] = {
+    0: "cleaning",
+    1: "deodorizing",
+}
+
+# Time units in the settings block, because they are not one unit and the field
+# names do not tell you which is which:
+#
+#   * MINUTES since midnight -- every `*MultiRange` (`lightMultiRange`,
+#     `toneMultiRange`, `distrubMultiRange`, `awDisturbMultiRange`,
+#     `wlDisturbMultiRange`, `cameraMultiRange[].time`) and `schedule[].time`.
+#     A range whose end is below its start crosses midnight and is valid; a
+#     one-minute range ([0, 1]) is valid too, so nothing may "tidy" these.
+#   * SECONDS since midnight -- `flushTime` and `waterChangeTime` on a W7H.
+#     The same settings block, the other unit.
+#   * SECONDS as a duration -- `stillTime` (120 is the app's "2 min") and
+#     `autoIntervalMin`, WHOSE NAME SAYS MINUTES AND MEANS SECONDS: PetKit's
+#     app writes 300 for the UI's 5-minute minimum and 7200 for its 2-hour
+#     maximum. See `ha/entities/selects.py`, where reading the name cost every
+#     litter box a repeat-cleaning interval 60x shorter than the one chosen.
+#
+# All of them are LOCAL time; a T5 entry set at 14:50 in UTC+2 came out as 890.
+
+#: A feeder's scheduled meals, which are a shape of their own.
+#:
+#: `dev_feed_get` answers with `{schedule: [...], nextTick, latest}`, where each
+#: `schedule[]` entry is a GROUP of meals sharing weekdays:
+#:
+#:     {"re": "1,2,3,4,5,6,7", "it": [{"id": .., "t": .., "a1": .., "a2": ..}],
+#:      "itemJsonString": "<the same it, as a string>"}
+#:
+#: Read out of a D4SH 867 `ctrl`, `pk_schmg_parse_schedule` in
+#: `schedule_ctrl.c`: it looks up `result`, `schedule`, `latest`, then per group
+#: `re` and `it`, then per item `id`, `t`, `a1` and `a2`. Its own log line names
+#: what those become — `schdl_item[%d]:id = %7s,amount_l=%d,amount_r=%d,
+#: time=%d,repeats=%d` — so `a1`/`a2` are the per-hopper portions, the same pair
+#: a `feed_realtime` carries on this model, and `re` is the group's weekdays.
+#:
+#: `it` was an EMPTY LIST in every capture we have, which is why this was read
+#: out of the binary rather than off the wire. Two things follow from that:
+#:
+#:   * The UNIT OF `t` IS INFERRED, not confirmed. Minutes since local midnight
+#:     is what every other schedule time on these devices uses, including the
+#:     litter box's `schedule[].time` confirmed against our own T5 — but nobody
+#:     has watched a feeder receive one. A feeder owner will find out within a
+#:     day of setting one, which is the fastest correction available.
+#:   * `itemJsonString` is NOT read by this parser. It is written alongside `it`
+#:     anyway, because that is what the real cloud sends and there is no reason
+#:     to hand the device a payload a shape narrower than the one it knows.
+FEED_SCHEDULE_ITEM_KEYS = ("id", "t", "a1", "a2")
+
+#: The weekday numbering PetKit uses everywhere a schedule names days:
+#: `schedule[].repeats`, `cameraMultiRange[].rpt` and their siblings.
+#:
+#: SUNDAY IS 1. Confirmed twice over: a controlled CRUD run on a T6 (01:11
+#: Sunday -> `"1"`, 02:22 Monday -> `"2"`, 03:33 Saturday -> `"7"`), and on our
+#: own T5, where a deodorizing entry set for every day EXCEPT Monday came out as
+#: `"1,3,4,5,6,7"`. Every schedule this add-on serves by default repeats on all
+#: seven days, so the convention has never mattered and has never been checked —
+#: which is exactly how it would have been got wrong the first time a UI let
+#: somebody pick one day.
+WEEKDAY_NAMES: dict[int, str] = {
+    1: "Sunday",
+    2: "Monday",
+    3: "Tuesday",
+    4: "Wednesday",
+    5: "Thursday",
+    6: "Friday",
+    7: "Saturday",
+}
+
 #: A FOUNTAIN's `action` is a different enum in the same field.
 #:
 #: This table exists because the one above was being applied to it. A W7H

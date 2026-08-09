@@ -191,3 +191,63 @@ def test_code_17_is_the_led_light_and_no_longer_conflicted():
     # It fires on the way on AND on the way off with an identical payload, so
     # the direction can only come from the attached state.
     assert code.state_label == ("lightState", "light on", "light off")
+
+
+# --- the settings-side tables (capture-derived, 2026-08-09) ------------------
+
+def test_the_litter_start_actions_are_graded_and_agree_where_they_should():
+    """This table records taps, `WORK_MODES` decodes reports, and they meet on
+    five values. The one that disagrees must stay visible as a disagreement:
+    pypetkitapi calls 8 RESET_N50_DEODOR, and the tap that produced it was
+    Pack. One reading is bookkeeping, the other moves the mechanism."""
+    valid = {codes.CONFIRMED, codes.INFERRED, codes.UNVERIFIED, codes.CONFLICTED}
+    for value, (label, grade) in codes.LITTER_START_ACTIONS.items():
+        assert isinstance(value, int) and label and grade in valid, value
+
+    assert codes.LITTER_START_ACTIONS[8][1] == codes.CONFLICTED
+    for agrees in (0, 1, 3, 4):
+        assert codes.LITTER_START_ACTIONS[agrees][1] == codes.CONFIRMED
+
+
+def test_the_start_action_table_is_not_a_whitelist():
+    """`FOUNTAIN_W7H_START_ACTIONS` is a literal `cmp` chain out of firmware, so
+    a value outside it is known to be ignored. This one is a list of taps
+    somebody made on one model, and 2/9/10 are real codes it does not contain —
+    10 confirmed against the real cloud. Nothing may validate against it."""
+    for real_but_absent in (2, 9, 10):
+        assert real_but_absent not in codes.LITTER_START_ACTIONS
+
+    from petkit_local.ha import commands
+    for key in ("deodorize", "maintenance_start", "reset_n60"):
+        assert key in commands.LITTER_ACTIONS, (
+            f"{key} still has to work, so nothing gates on the tap table")
+
+
+def test_a_schedule_array_carries_two_jobs():
+    """One `schedule[]` holds a box's cleaning AND deodorizing times, and `type`
+    is the only thing separating them — captured on a T5 whose array gained a
+    `type: 1` entry when a periodic deodorizing time was added. Every source
+    before that recorded `type` as "observed as 0, semantics unknown"."""
+    assert codes.SCHEDULE_TYPES == {0: "cleaning", 1: "deodorizing"}
+
+
+def test_sunday_is_the_first_weekday():
+    """Confirmed on two models. Every schedule this add-on serves by default
+    repeats on all seven days, so the convention has never mattered — and would
+    have been got wrong the first time a UI let somebody pick one day."""
+    assert codes.WEEKDAY_NAMES[1] == "Sunday"
+    assert codes.WEEKDAY_NAMES[7] == "Saturday"
+    assert sorted(codes.WEEKDAY_NAMES) == list(range(1, 8))
+
+
+def test_the_litter_type_enum_has_no_zero():
+    """From a controlled 1 -> 2 -> 3 -> 1 run through the app's own picker.
+    `devices/base.py` seeded 0 here for a long time and served it back to
+    devices as the litter they are filled with."""
+    assert 0 not in codes.SAND_TYPES
+    assert sorted(codes.SAND_TYPES) == [1, 2, 3]
+
+    from petkit_local.ha.entities.selects import LITTER_SELECTS
+    sand = next(e for e in LITTER_SELECTS if e.key == "sand_type")
+    assert sand.option_values == sorted(codes.SAND_TYPES)
+    assert len(sand.options) == len(codes.SAND_TYPES)

@@ -98,9 +98,20 @@ def test_select_index_default():
 
 
 def test_select_explicit_values():
+    """`autoIntervalMin` is SECONDS, whatever its name says.
+
+    PetKit's app was captured writing 300 for the UI's 5-minute minimum and
+    7200 for its 2-hour maximum. This used to send the minute count the field
+    name implies, so "1h" asked the box for a sixty-SECOND interval.
+    """
     d, idx = _litter()
     _, payload = handle_ha_command(d, idx["cleaning_interval"], "1h")
-    assert payload["params"] == {"autoIntervalMin": 60}
+    assert payload["params"] == {"autoIntervalMin": 3600}
+
+    _, payload = handle_ha_command(d, idx["cleaning_interval"], "5min")
+    assert payload["params"] == {"autoIntervalMin": 300}
+    _, payload = handle_ha_command(d, idx["cleaning_interval"], "2h")
+    assert payload["params"] == {"autoIntervalMin": 7200}
 
 
 def test_button_returns_mqtt_service_envelope():
@@ -368,3 +379,84 @@ def test_a_number_outside_its_range_is_refused_not_clamped():
     # The bounds themselves are valid, and a value inside them still works.
     assert handle_ha_command(dev, volume, str(volume.max_value)) is not None
     assert dev.config["settings"][volume.setting_field] == volume.max_value
+
+
+def _t6():
+    d = Device(device_type="t6", petkit_id=2, serial_number="SN6")
+    d.config.setdefault("settings", d.default_settings())
+    return d, _settable_index(d)
+
+
+def test_a_purobot_ultra_has_no_n50_button_and_a_pack_one_instead():
+    """`start_action: 8` is the value pypetkitapi calls RESET_N50_DEODOR and
+    the value a controlled tap on this box's **Pack** produced. This model has
+    no N50 cartridge, so the reset button cannot be right here — and it is not
+    merely inert: it moves the mechanism. The code stays reachable under the
+    name the tap gives it, on this model alone."""
+    _, t6 = _t6()
+    assert "reset_n50" not in t6
+    assert "reset_n60" in t6, "only the N50 button is excluded"
+    assert "pack_waste" in t6
+    assert "open_sealed_door" in t6
+
+    _, t5 = _litter()
+    assert "reset_n50" in t5, "other boxes keep the button they have always had"
+    assert "pack_waste" not in t5, "one capture, one model"
+    assert "open_sealed_door" not in t5
+
+
+@pytest.mark.parametrize("key,code", [
+    ("pack_waste", 8),
+    ("open_sealed_door", 11),
+])
+def test_the_t6_buttons_send_the_action_the_app_sent(key, code):
+    d, idx = _t6()
+    suffix, env = handle_ha_command(d, idx[key], "")
+    assert suffix == "start"
+    assert env["method"] == "thing.service.start"
+    assert env["params"] == {"start_action": code}
+
+
+def test_light_is_a_start_action_on_a_camera_box_only():
+    d, idx = _litter()
+    suffix, env = handle_ha_command(d, idx["light"], "")
+    assert suffix == "start"
+    assert env["params"] == {"start_action": 7}
+
+    plain = Device(device_type="t4", petkit_id=3, serial_number="SN4")
+    assert "light" not in _settable_index(plain), "the illuminator is camera hardware"
+
+
+def test_power_is_its_own_service_not_a_settings_write():
+    """The removed `pause_fountain`/`resume_fountain` wrote `{"power": 0|1}`
+    through `property.set`, to a field no firmware has a set handler for — so
+    they were delivered and dropped. `power` IS a service, on its own code
+    path, and that is the difference this test pins."""
+    for device_type in ("t5", "w7h"):
+        dev = Device(device_type=device_type, petkit_id=4, serial_number="SN")
+        dev.config.setdefault("settings", dev.default_settings())
+        idx = _settable_index(dev)
+
+        suffix, env = handle_ha_command(dev, idx["power_off"], "")
+        assert suffix == "power", device_type
+        assert env["method"] == "thing.service.power"
+        assert env["params"] == {"power_action": 0}
+
+        suffix, env = handle_ha_command(dev, idx["power_on"], "")
+        assert env["params"] == {"power_action": 1}
+
+        assert "power" not in dev.config.get("settings", {}), (
+            "a power press must not write a setting the device never reads")
+
+
+def test_the_litter_type_seed_is_gone():
+    """`sandType` was seeded as 0, which is not one of its three values, and
+    `to_device_info` serves seeded settings back as the litter the box is
+    filled with. It now stays absent until the device names one."""
+    dev = Device(device_type="t5", petkit_id=5, serial_number="SN")
+    assert "sandType" not in dev.default_settings()
+
+    dev.config.setdefault("settings", dev.default_settings())
+    idx = _settable_index(dev)
+    _, payload = handle_ha_command(dev, idx["sand_type"], "mixed")
+    assert payload["params"] == {"sandType": 3}

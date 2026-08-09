@@ -65,6 +65,37 @@ UNSEEDED_BY_DESIGN = {
     "wifiLightAssist",
     "awDisturbMode",
     "wlDisturbMode",
+    # The rest of the W7H's app-visible settings, from the capture-derived map
+    # supplied 2026-08-09. Same argument as the block above: real set handlers,
+    # no observed current value, and `to_device_info` would push whatever we
+    # invented. `upload` and `microLight` in particular are NOT the same fields
+    # the litter boxes seed under similar names.
+    "camera",
+    "upload",
+    "microphone",
+    "microLight",
+    "night",
+    "timeDisplay",
+    "smartFrame",
+    "waterChangeCycle",
+    "waterChangeTime",
+    "flushCycle",
+    "flushTime",
+    # These four ARE seeded — for a litter box or a feeder, not for a fountain,
+    # and this list is global. They are here for the W7H alone, and the litter
+    # and feeder entities that read them stay backed by the real seed rather
+    # than by this exemption.
+    "systemSoundEnable",
+    "toneMode",
+    "volume",
+    "language",
+    # Litter box. The app writes it, and the capture only ever saw it written
+    # together with `petDetection` — so what it does on its own is unobserved,
+    # and a seeded 0 or 1 would be us deciding.
+    "wanderDetection",
+    # Seeded until 2026-08-09 as `0`, which is not one of its three values.
+    # `to_device_info` served that back as the litter the box is filled with.
+    "sandType",
 }
 
 #: `state.*` keys whose ONLY backing is a parser passthrough list, with the

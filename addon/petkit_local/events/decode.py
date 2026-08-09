@@ -361,6 +361,11 @@ _FIELDS: dict[str, _FieldSpec] = {
     # -- visit facts
     "is_shit": _FieldSpec("Waste detected", _yes_no),
     "toiletDetection": _FieldSpec("Toilet detection", _yes_no),
+    # Not event content — a setting, decoded here so the panel's state view
+    # stops showing a bare `2` for something with a name. The whole enum came
+    # out of a controlled run through the app's picker; there is no 0.
+    "sandType": _FieldSpec(
+        "Litter type", lambda v: _enum(codes.SAND_TYPES, v, "litter type {n}")),
     "count": _FieldSpec(
         "Detections", lambda v: (_raw_text(v), codes.CONFIRMED),
         "How many animals were detected. Independent of `score_info`: count 1 "
