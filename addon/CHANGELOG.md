@@ -1,5 +1,144 @@
 # Changelog
 
+## 1.10.0 — 2026-08-09
+
+Two settings maps arrived, built from captures of PetKit's own app talking to a
+**Purobot Ultra** and an **EverSweet Ultra AI**, and a live Purobot Max Pro 2
+was watched being configured through proxy mode. Between them they settle a
+handful of things this add-on had been getting wrong, and unlock about twenty
+settings it was already storing with no way to reach them.
+
+### Avoid Repeat Interval was 60x too short
+
+The field is named `autoIntervalMin` and carries **seconds**. Picking "5min"
+asked the box for a five-second interval, and "2h" for two minutes. PetKit's app
+was captured writing 300 at the UI's five-minute minimum and 7200 at its
+two-hour maximum, which is the whole range.
+
+The capture is from one model. The same field exists in the older ESP32 boxes
+and nobody has read its unit there, so applying this reading to them is a
+decision, not an established fact — but a field with one name having one meaning
+is the better bet than leaving every camera box with an interval it never asked
+for. If your box holds a value from the old list it will show as a bare number
+until you pick one.
+
+### Reset N50 could pack the waste on a Purobot Ultra
+
+That button sends `start_action: 8`. On a Purobot Ultra, a single tap of the
+app's **Pack** action sends the same value — and that model has no N50 cartridge
+to reset in the first place. So the button is gone there, and the code it sent is
+now behind **Pack Waste**, named for what it does. **Open Sealed Door** joins it,
+also that model's own hardware.
+
+Nothing changes on the other boxes. Their Reset N50 keeps behaving exactly as
+before, which on the evidence is: no reply at all.
+
+### The litter type is no longer invented
+
+`sandType` was seeded as `0`, and there is no `0` — the app's picker gives 1
+clay/ore, 2 tofu, 3 mixed. That seed was served back to the device as the litter
+it is filled with. It now stays unset until the box says otherwise, and the
+panel shows the name instead of the number.
+
+### Settings that existed with nothing to press
+
+Every litter box gains **OK Button Under Child Lock**. A camera one also gains
+**Pet Detection**, **Wander Detection**, **Toileting Detection**, **Voice
+Prompt** and **Quiet Voice Prompts** — five settings this add-on has been storing
+and serving to the device since the beginning, with no control for any of them —
+plus **Light**, **Power Off** and **Power On**.
+
+An EverSweet Ultra AI gains seventeen. It had a camera entity and no way to
+switch the camera off: **Camera**, **Video/Photo Upload**, **Microphone**,
+**Microphone Indicator Light**, **Night Vision**, **Timestamp Display**, **Pet
+Tracking**, **Voice Prompt**, **Quiet Voice Prompts**, **Volume** and **Voice
+Language**, along with the same two power buttons.
+
+Its two water-treatment schedules are settable now as well — **Drain & Refill
+Cycle** and **Drain & Flush Cycle** in days, with **Drain & Refill Time** and
+**Drain & Flush Time** as real clocks. These four were deliberately withheld
+before: their names were known from the firmware but not their encoding, and a
+number entity needs a range. The capture gives it.
+
+Power is a service of its own, not a settings write. Two fountain buttons were
+removed a release ago for writing `power` as a setting to a field nothing reads;
+this is the thing they were reaching for.
+
+### Schedules are editable, and were never really being served
+
+The panel gets a real schedule editor: clocks and weekday buttons instead of raw
+JSON. It covers the screen period, both do-not-disturb periods, the camera's
+shooting period, the litter box's scheduled cleaning and deodorizing times, and
+a feeder's meals — time, weekdays and a portion per hopper. The raw JSON is
+still there under a disclosure, and it is still the only way to edit a shape the
+editor does not know.
+
+The feeding schedule's shape came out of the firmware rather than off the wire:
+`it` was an empty list in every capture, so `pk_schmg_parse_schedule` in a D4SH
+`ctrl` is what names the fields. One consequence worth knowing — the unit of a
+meal's time is **inferred**. Minutes since midnight is what every other schedule
+on these devices uses, but nobody has watched a feeder receive one, so if your
+meals land at the wrong hour that is the reason, and saying so is the fastest
+way to get it fixed.
+
+A fountain gets no Schedules card yet. Its firmware reads five of these and the
+app writes them, but the reply that serves them back is still open work, and
+storing a schedule this add-on cannot answer with would be the confusing half of
+the feature.
+
+It also fixes something that was invisible: **`dev_multi_config` read nothing.**
+It looked like it resolved a stored value against a default, and did not — every
+device was handed the same hardcoded screen period and quiet hours on every
+poll, whatever it had been set to. In proxy mode that meant a period set in
+PetKit's app was undone by our next reply. What the editor saves is now what the
+device is answered with.
+
+Saving also pushes the change rather than waiting for the device to ask, the way
+the real cloud does. Two shapes travel that path and they are not the same one:
+a period is a JSON string that wraps its own key again, and the cleaning
+schedule is a plain JSON string of its array.
+
+**Nothing schedules itself for you any more.** A litter box that had never been
+given a cleaning schedule was answered with three entries — 09:45, 13:45 and
+18:45, every day — so this add-on was running your box on a timetable you never
+chose and could not see anywhere. It also handed out quiet hours nobody picked:
+00:40–08:40 for cleaning and 22:00–06:00 for voice prompts.
+
+An unset cleaning schedule is now empty, the way an unset feeding schedule
+already was. If you had Periodic Cleaning switched on and never set the times
+yourself, set them now — the editor is right there.
+
+The periods now default to **all day**: screen period, shooting period, voice
+undisturbed period, detection period. All day means "always", so it restricts
+nothing and decides nothing for you. Cleaning Do Not Disturb is the one
+exception and starts empty, because there "all day" would mean the box never
+cleans on its own.
+
+A word on the litter box's schedule: **one array holds both jobs**, cleaning and
+deodorizing, told apart by a `type` field that every source — this one included
+— had recorded as "always 0, meaning unknown". The editor shows them as two
+sections and saves the whole array, so editing one cannot delete the other. An
+entry with a `type` nobody has seen is shown under "Other" and left alone.
+
+A fountain has five of these schedules and gets none of them yet: the firmware
+reads them and PetKit's app writes them, but the reply that serves them back is
+still open work. Storing a schedule this add-on cannot answer with would be the
+confusing half of the feature.
+
+### Under the hood
+
+Home Assistant `time` entities are supported, for any setting that is one point
+in the day. The device stores seconds since midnight; HA and the panel both show
+a clock.
+
+The protocol tables record what these captures settled: the litter box's
+`start_action` values as the app's own buttons send them, the litter enum, the
+three time units that live side by side in one settings block, and weekday
+numbering — which starts at **Sunday**, confirmed on two models. That last one
+has never mattered, because every schedule shipped here repeats on all seven
+days, and it is exactly how it would have gone wrong the first time somebody
+picked one day.
+
 ## 1.9.0 — 2026-08-08
 
 ### A YumShare Dual-Hopper is asked for food in the field it actually reads
