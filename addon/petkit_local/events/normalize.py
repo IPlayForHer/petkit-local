@@ -414,7 +414,7 @@ def apply_state_snapshot(device: Device, state: Any) -> bool:
     The raw blob is merged FIRST and the parsers overlaid on top, the same order
     `bridge.py` uses for a `property` post. That matters beyond the debug view:
     no parser passes `sprayResetTime` through -- it is consumed to derive a
-    countdown -- yet `Device.to_device_info` echoes `state["sprayResetTime"]`
+    countdown -- yet `payloads.to_device_info` echoes `state["sprayResetTime"]`
     back to the device. Applying only the parsed keys would leave the raw stamp
     frozen at whatever a state report last happened to carry, and we would hand
     the box back a reset date older than the one it just told us about.
@@ -553,7 +553,7 @@ _SIZE_KEYS = ("size", "fileSize", "file_size")
 # 2026-07-22 capture) — the original assumption was wrong. The capability
 # category has to come from `moduleType` instead. Mapping confirmed by cross-
 # referencing against the *actual* upload path the device used once it had
-# re-polled our per-capability STS pathPrefix (devices/base.py::to_oss_sts):
+# re-polled our per-capability STS pathPrefix (devices/payloads.py::to_oss_sts):
 # it truncates each cycleType to 4 chars for the path segment ("fullVideo"
 # -> ".../full/...", "eventImage" -> ".../even/...", "dynamicVideo" ->
 # ".../dyna/..."), and those segments lined up exactly with these moduleTypes
@@ -646,7 +646,7 @@ def _resolve_category(info: dict) -> str:
 def from_file_info(device: Device, info: dict) -> dict:
     """Normalize one `dev_upload_file_info_v2` `fileInfos[]` entry into a
     `media` row. The capability category (fullVideo/eventImage/highLight/
-    dynamicVideo — see devices/base.py::Device.to_oss_sts) is derived from
+    dynamicVideo — see devices/payloads.py::to_oss_sts) is derived from
     `moduleType`, see `_MODULE_TYPE_TO_CATEGORY`.
 
     Raises:

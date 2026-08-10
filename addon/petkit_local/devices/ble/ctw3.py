@@ -37,7 +37,8 @@ log = logging.getLogger(__name__)
 
 #: Everything the decoder names fits in 26 bytes, and 26 is what an older
 #: firmware sends — aavdberg/ha-petkit accepts that length from real hardware.
-#: This used to demand 30 and drop the shorter block whole.
+#: Demanding more drops such a block whole rather than reading the part of it
+#: this decoder understands.
 _CTW3_MIN_STATUS_LEN = 26
 
 #: Single-byte fields, offset into the DATA block.
@@ -192,9 +193,10 @@ def ctw3_mode_payload(power: int, suspend: int, mode: int) -> bytes:
     fountain being switched off has nothing to suspend, so 0 is forced there
     rather than left at whatever the last reading held.
 
-    Three bytes, matching aavdberg/ha-petkit's `build_ctw3_mode_payload`. This
-    used to emit four, with a leading zero — which was the frame's missing
-    `len_hi` byte, compensated for in the wrong place.
+    Three bytes, matching aavdberg/ha-petkit's `build_ctw3_mode_payload`. A
+    leading zero does not belong here: that byte is the frame header's `len_hi`,
+    and putting it in the payload compensates for a framing bug in the wrong
+    place (see `framing.py` on the 16-bit length).
     """
     if not power:
         suspend = 0
@@ -205,8 +207,9 @@ def ctw3_config_payload(state: dict[str, Any]) -> bytes | None:
     """cmd 221 on a CTW3 — the settings block, rebuilt from the last status.
 
     Twelve bytes, the same layout `decode_ctw3_config` reads and the same one
-    PetKit's app writes. 1.6.0 sent ten in a different order, on the strength of
-    a third-party capture; the app settles it.
+    PetKit's app writes. A third-party capture shows ten bytes in a different
+    order; where the two disagree the app's own write is what the accessory is
+    known to accept.
 
     Returns None when the accessory has never reported a long status.
     """

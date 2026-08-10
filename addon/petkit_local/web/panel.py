@@ -65,6 +65,7 @@ import aiohttp_jinja2
 import jinja2
 from aiohttp import web
 
+from petkit_local.devices import defaults
 from petkit_local.devices.base import Device, encode_multi_range, split_bucket_authority
 from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.devices.state_parsers import apply_consumable_state
@@ -855,7 +856,7 @@ async def api_device_detail(request: web.Request) -> web.Response:
         # `multi_config_ranges` resolves a stored one against the fallback the
         # device would otherwise be served, so the panel's editor and
         # `dev_multi_config` cannot show different things.
-        "schedules": d.schedule_targets(),
+        "schedules": defaults.schedule_targets(d),
         "entities": [{
             "component": e.component, "key": e.key, "name": e.name,
             "value_path": e.value_path, "unit": e.unit, "device_class": e.device_class,
@@ -1149,7 +1150,7 @@ async def api_save_schedule(request: web.Request) -> web.Response:
     """Store one schedule and push it to the device.
 
     Body: `{"target": <field>, "value": <parsed JSON>}`, where `target` is one
-    of the names `Device.schedule_targets()` gave out. Anything else is refused
+    of the names `defaults.schedule_targets()` gave out. Anything else is refused
     rather than stored, so the panel cannot invent a field.
 
     The write goes to the device as `property.set`, which is how the real cloud
@@ -1173,7 +1174,7 @@ async def api_save_schedule(request: web.Request) -> web.Response:
     body = await _json_body(request)
 
     target = body.get("target")
-    known = {t["target"]: t["kind"] for t in d.schedule_targets()}
+    known = {t["target"]: t["kind"] for t in defaults.schedule_targets(d)}
     if target not in known:
         return web.json_response({"error": f"unknown schedule {target}"}, status=400)
     kind = known[target]

@@ -14,6 +14,7 @@ import pytest
 
 from aiohttp.test_utils import TestClient, TestServer
 
+from petkit_local.devices import defaults, payloads
 from petkit_local.devices.base import Device, encode_multi_range
 from petkit_local.devices.ble import BLERegistry
 from petkit_local.devices.registry import DeviceRegistry
@@ -37,12 +38,12 @@ def test_the_encoding_wraps_the_key_twice():
 
 def test_a_stored_range_is_what_the_device_is_served():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    assert _decode(d.to_multi_config(), "distrubMultiRange") == []
+    assert _decode(payloads.to_multi_config(d), "distrubMultiRange") == []
 
     d.config.setdefault("multi_config", {})["distrubMultiRange"] = [[1425, 585], [0, 1]]
-    assert _decode(d.to_multi_config(), "distrubMultiRange") == [[1425, 585], [0, 1]]
+    assert _decode(payloads.to_multi_config(d), "distrubMultiRange") == [[1425, 585], [0, 1]]
     # Storing one schedule must not touch the others.
-    assert _decode(d.to_multi_config(), "lightMultiRange") == [[0, 1440]]
+    assert _decode(payloads.to_multi_config(d), "lightMultiRange") == [[0, 1440]]
 
 
 def test_an_unset_range_restricts_nothing():
@@ -54,7 +55,7 @@ def test_an_unset_range_restricts_nothing():
     means "always", so it takes no decision away from the owner."""
     for device_type in ("t3", "t5", "d4h"):
         d = Device(device_type=device_type, petkit_id=1, serial_number="SN")
-        for key, raw in d.to_multi_config()["result"].items():
+        for key, raw in payloads.to_multi_config(d)["result"].items():
             value = json.loads(raw)[key]
             if key == "distrubMultiRange":
                 continue
@@ -67,7 +68,7 @@ def test_the_cleaning_do_not_disturb_is_the_one_that_stays_empty():
     day means "always" and restricts nothing. This one is a window during which
     the box must NOT clean, so all day would quietly disable automatic cleaning
     on every litter box nobody had given a window to."""
-    from petkit_local.devices.base import MULTI_RANGE_DEFAULTS
+    from petkit_local.devices.defaults import MULTI_RANGE_DEFAULTS
 
     assert MULTI_RANGE_DEFAULTS["distrubMultiRange"] == []
     for key, value in MULTI_RANGE_DEFAULTS.items():
@@ -75,16 +76,16 @@ def test_the_cleaning_do_not_disturb_is_the_one_that_stays_empty():
             assert value, f"{key} must have an all-day default"
 
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    assert _decode(d.to_multi_config(), "distrubMultiRange") == []
+    assert _decode(payloads.to_multi_config(d), "distrubMultiRange") == []
 
 
 def test_a_default_is_copied_not_shared():
     """The panel hands these straight to an editor that mutates them in place.
     A shared literal would let one device's edit change every other device's
     default for the life of the process."""
-    a = Device(device_type="t5", petkit_id=1, serial_number="SN").multi_config_ranges()
+    a = defaults.multi_config_ranges(Device(device_type="t5", petkit_id=1, serial_number="SN"))
     a["lightMultiRange"][0][1] = 60
-    b = Device(device_type="t5", petkit_id=2, serial_number="SN2").multi_config_ranges()
+    b = defaults.multi_config_ranges(Device(device_type="t5", petkit_id=2, serial_number="SN2"))
     assert b["lightMultiRange"] == [[0, 1440]]
 
 
@@ -94,7 +95,7 @@ def test_an_unstored_range_still_answers_with_a_well_formed_body():
     key or an error."""
     for device_type in ("t3", "t5", "d4h"):
         d = Device(device_type=device_type, petkit_id=1, serial_number="SN")
-        result = d.to_multi_config()["result"]
+        result = payloads.to_multi_config(d)["result"]
         assert result, f"{device_type} served no keys at all"
         for key, raw in result.items():
             assert json.loads(raw).keys() == {key}
@@ -105,17 +106,17 @@ def test_a_malformed_stored_range_is_ignored_not_served():
     out that somebody typed a string where a list goes."""
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     d.config["multi_config"] = {"lightMultiRange": "08:00-20:00"}
-    assert _decode(d.to_multi_config(), "lightMultiRange") == [[0, 1440]]
+    assert _decode(payloads.to_multi_config(d), "lightMultiRange") == [[0, 1440]]
 
     d.config["multi_config"] = "not even a dict"
-    assert _decode(d.to_multi_config(), "lightMultiRange") == [[0, 1440]]
+    assert _decode(payloads.to_multi_config(d), "lightMultiRange") == [[0, 1440]]
 
 
 def test_the_multi_config_shape_is_unchanged():
     """Every value is a JSON STRING that wraps its own key, and the misspelling
     is PetKit's — correcting it drops the do-not-disturb schedule silently."""
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    result = d.to_multi_config()["result"]
+    result = payloads.to_multi_config(d)["result"]
     assert "distrubMultiRange" in result and "disturbMultiRange" not in result
     for key, raw in result.items():
         assert isinstance(raw, str)
@@ -128,8 +129,9 @@ def test_the_editor_and_the_device_see_the_same_values():
     would let the panel show a period the box is not running."""
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     d.config.setdefault("multi_config", {})["toneMultiRange"] = [[1140, 360]]
-    served = {k: _decode(d.to_multi_config(), k) for k in d.to_multi_config()["result"]}
-    for target in d.schedule_targets():
+    served = {k: _decode(payloads.to_multi_config(d), k)
+              for k in payloads.to_multi_config(d)["result"]}
+    for target in defaults.schedule_targets(d):
         if target["kind"] in ("points", "feed"):
             continue
         assert target["value"] == served[target["target"]], target["target"]
@@ -140,21 +142,21 @@ def test_a_fountain_has_no_ranges_to_serve_yet():
     branch that answers with them is PR #18's. Offering an editor for a schedule
     this add-on cannot answer with is the confusing half of the feature."""
     d = Device(device_type="w7h", petkit_id=1, serial_number="SN")
-    assert d.to_multi_config() == {"result": {}}
-    assert d.schedule_targets() == []
+    assert payloads.to_multi_config(d) == {"result": {}}
+    assert defaults.schedule_targets(d) == []
 
 
 def test_every_model_offers_only_schedules_it_has():
-    litter = Device(device_type="t5", petkit_id=1, serial_number="SN").schedule_targets()
+    litter = defaults.schedule_targets(Device(device_type="t5", petkit_id=1, serial_number="SN"))
     kinds = {t["target"]: t["kind"] for t in litter}
     assert kinds["schedule"] == "points"
     assert kinds["cameraMultiRange"] == "weekly"
     assert kinds["distrubMultiRange"] == "ranges"
 
-    plain = Device(device_type="t3", petkit_id=1, serial_number="SN").schedule_targets()
+    plain = defaults.schedule_targets(Device(device_type="t3", petkit_id=1, serial_number="SN"))
     assert "cameraMultiRange" not in {t["target"] for t in plain}
 
-    feeder = Device(device_type="d4sh", petkit_id=1, serial_number="SN").schedule_targets()
+    feeder = defaults.schedule_targets(Device(device_type="d4sh", petkit_id=1, serial_number="SN"))
     assert "feed_schedule" in {t["target"] for t in feeder}
     assert "schedule" not in {t["target"] for t in feeder}
 
@@ -378,7 +380,7 @@ async def test_a_saved_schedule_reaches_dev_multi_config():
     c = await _client(app)
     try:
         await _save(c, "lightMultiRange", [[417, 117]])
-        assert _decode(reg.get(1).to_multi_config(), "lightMultiRange") == [[417, 117]]
+        assert _decode(payloads.to_multi_config(reg.get(1)), "lightMultiRange") == [[417, 117]]
     finally:
         await c.close()
 
@@ -394,11 +396,11 @@ def test_there_is_no_default_cleaning_schedule():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     assert not d.config.get("schedule")
 
-    target = next(t for t in d.schedule_targets() if t["target"] == "schedule")
+    target = next(t for t in defaults.schedule_targets(d) if t["target"] == "schedule")
     assert target["value"] == []
 
     d.config["schedule"] = [{"id": 9, "repeats": "1", "time": 60, "type": 1}]
-    target = next(t for t in d.schedule_targets() if t["target"] == "schedule")
+    target = next(t for t in defaults.schedule_targets(d) if t["target"] == "schedule")
     assert target["value"] == d.config["schedule"]
 
 
@@ -488,7 +490,7 @@ def test_only_a_dual_hopper_is_offered_two_portions():
     esp32 = Device(device_type="d4", petkit_id=3, serial_number="SN3")
 
     for device, expected in ((dual, True), (single, False), (esp32, False)):
-        target = next(t for t in device.schedule_targets() if t["kind"] == "feed")
+        target = next(t for t in defaults.schedule_targets(device) if t["kind"] == "feed")
         assert target["dual"] is expected, device.device_type
         # And every feeder gets the object shape, so the editor has something
         # to render before any meal exists.

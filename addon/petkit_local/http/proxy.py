@@ -201,8 +201,8 @@ def get_proxy_session(app: web.Application, dns_server: str = "") -> aiohttp.Cli
     """Return the shared upstream session for `app`, creating it on first use.
 
     One session per app means one connector pool and one DNS cache for the whole
-    process; the previous per-request session re-resolved and re-handshook TLS
-    with the PetKit cloud on every single proxied call.
+    process; a session per request would re-resolve and re-handshake TLS with the
+    PetKit cloud on every single proxied call.
 
     Args:
         dns_server: `proxy_dns`. Empty uses the system resolver. The resolver

@@ -242,7 +242,7 @@ def test_sunday_is_the_first_weekday():
 
 def test_the_litter_type_enum_has_no_zero():
     """From a controlled 1 -> 2 -> 3 -> 1 run through the app's own picker.
-    `devices/base.py` seeded 0 here for a long time and served it back to
+    `devices/defaults.py` seeded 0 here for a long time and served it back to
     devices as the litter they are filled with."""
     assert 0 not in codes.SAND_TYPES
     assert sorted(codes.SAND_TYPES) == [1, 2, 3]

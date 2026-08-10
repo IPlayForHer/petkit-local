@@ -43,7 +43,7 @@ async def _setup():
 
 
 def _switch_entity(pub, device_id: int = 1):
-    index = pub._entity_index[device_id]
+    index = pub._commands._entity_index[device_id]
     return next((suffix, entity) for suffix, entity in index.items()
                 if entity.component == "switch" and entity.value_path.startswith("settings."))
 
@@ -54,7 +54,7 @@ async def test_unusable_command_payload_does_not_stop_the_command_loop():
     field = entity.value_path.split(".")[-1]
     dev.config.setdefault("settings", {})[field] = 0
 
-    await pub._consume_commands(_stream(
+    await pub._commands.consume_commands(_stream(
         FakeMessage(f"petkit-local/1/cmd/{suffix}", b"\xff\xfe\x00"),  # not UTF-8
         FakeMessage(f"petkit-local/1/cmd/{suffix}", b"ON"),
     ))
@@ -72,8 +72,8 @@ async def test_command_handler_failure_does_not_stop_the_command_loop():
         if len(seen) == 1:
             raise RuntimeError("boom inside a command handler")
 
-    pub._handle_command = flaky
-    await pub._consume_commands(_stream(
+    pub._commands.handle_command = flaky
+    await pub._commands.consume_commands(_stream(
         FakeMessage("petkit-local/1/cmd/a", b"ON"),
         FakeMessage("petkit-local/1/cmd/b", b"OFF"),
     ))
@@ -91,9 +91,9 @@ async def test_connection_error_propagates_out_of_the_command_loop():
     async def dead(message):
         raise ConnectionLost("broker went away")
 
-    pub._handle_command = dead
+    pub._commands.handle_command = dead
     try:
-        await pub._consume_commands(_stream(FakeMessage("petkit-local/1/cmd/a", b"ON")),
+        await pub._commands.consume_commands(_stream(FakeMessage("petkit-local/1/cmd/a", b"ON")),
                                     (ConnectionLost,))
     except ConnectionLost:
         pass
@@ -107,9 +107,9 @@ async def test_cancellation_propagates_out_of_the_command_loop():
     async def cancelled(message):
         raise asyncio.CancelledError()
 
-    pub._handle_command = cancelled
+    pub._commands.handle_command = cancelled
     try:
-        await pub._consume_commands(_stream(FakeMessage("petkit-local/1/cmd/a", b"ON")))
+        await pub._commands.consume_commands(_stream(FakeMessage("petkit-local/1/cmd/a", b"ON")))
     except asyncio.CancelledError:
         pass
     else:
@@ -119,7 +119,7 @@ async def test_cancellation_propagates_out_of_the_command_loop():
 async def test_non_numeric_device_id_in_topic_is_ignored():
     reg, dev, pub = await _setup()
     before = len(pub._client.published)
-    await pub._consume_commands(_stream(FakeMessage("petkit-local/not-an-id/cmd/auto_work", b"ON")))
+    await pub._commands.consume_commands(_stream(FakeMessage("petkit-local/not-an-id/cmd/auto_work", b"ON")))
     assert len(pub._client.published) == before
 
 

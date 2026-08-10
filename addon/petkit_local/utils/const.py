@@ -161,7 +161,7 @@ DEVICE_NAMES = {
 # The object-key prefix our own `dev_upload_log_token` hands out as `pathPrefix`,
 # and the one key shape `http/bucket.py` stores OUTSIDE the media tree. It lives
 # here because the two ends must agree exactly and they sit in different layers:
-# `devices/base.py::Device.to_log_upload_token` mints it, `http/bucket.py::_route`
+# `devices/payloads.py::to_log_upload_token` mints it, `http/bucket.py::_route`
 # consumes it. It must never collide with a device codename, because a media key
 # begins with one (`{device_type}/{petkit_id}/{capability}`) — asserted in tests.
 DEVICE_LOG_KEY_PREFIX = "devlog"

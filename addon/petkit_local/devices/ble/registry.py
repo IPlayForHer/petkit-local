@@ -365,11 +365,11 @@ class BLERegistry(PersistedRegistry):
     def get_by_mac(self, mac: str) -> BLEDevice | None:
         """The accessory with this BLE MAC, or None.
 
-        Compared in canonical form (see `normalize_mac`) rather than verbatim.
-        This used to be an exact string match, which made the single most
-        likely pairing mistake invisible: a MAC typed as `aa:bb:...` never
-        matches a frame carrying `AA-BB-...`, and the frame is then dropped by
-        a `log.debug` in `mqtt/bridge.py` with nothing to show for it.
+        Compared in canonical form (see `normalize_mac`) rather than verbatim,
+        because an exact string match makes the single most likely pairing
+        mistake invisible: a MAC typed as `aa:bb:...` never matches a frame
+        carrying `AA-BB-...`, and the frame is then dropped by a `log.debug` in
+        `mqtt/bridge.py` with nothing to show for it.
         """
         wanted = normalize_mac(mac)
         if not wanted:

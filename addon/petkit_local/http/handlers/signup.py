@@ -16,6 +16,7 @@ from typing import Any
 
 from aiohttp import web
 
+from petkit_local.devices import payloads
 from petkit_local.http.handlers._common import device_field, device_id, device_serial
 from petkit_local.utils.coerce import to_float
 
@@ -71,7 +72,7 @@ async def handle_signup(request: web.Request) -> web.Response:
     and never repaired (`registry.get_or_create` only fills blanks).
 
     Returns:
-        `Device.to_signup()` for the created or existing device. The one
+        `payloads.to_signup()` for the created or existing device. The one
         endpoint here that answers with an error status: without a usable id
         there is nothing to key a registry entry on, so a 400 is returned rather
         than minting a device under a fabricated id.
@@ -98,7 +99,7 @@ async def handle_signup(request: web.Request) -> web.Response:
         firmware=firmware,
     )
     # An ESP32 feeder is the only source of its own BLE address, and it offers
-    # it exactly once, here. `devices/base.py` already reads `bt_mac` out of
+    # it exactly once, here. `devices/payloads.py` already reads `bt_mac` out of
     # `config` when answering `dev_device_info`; nothing had ever written it.
     bt_mac = device_field(request, "bt_mac")
     if bt_mac and not device.config.get("bt_mac"):
@@ -111,4 +112,4 @@ async def handle_signup(request: web.Request) -> web.Response:
     if on_signup:
         await on_signup(device)
 
-    return web.json_response(device.to_signup())
+    return web.json_response(payloads.to_signup(device))

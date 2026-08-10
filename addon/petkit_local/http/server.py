@@ -189,10 +189,10 @@ async def handle_catchall(request: web.Request) -> web.Response:
     """Answer any endpoint we do not implement, without ever failing the device.
 
     The WARNING is unconditional, and that is the point of this handler: the log
-    line is how a not-yet-implemented endpoint gets discovered, and it used to be
+    line is how a not-yet-implemented endpoint gets discovered, so it must not be
     suppressed in proxy mode — exactly the mode you turn on to find new
     endpoints. Proxy mode still forwards the request, from the middleware, and
-    still answers with the cloud's reply; this line now fires either way.
+    still answers with the cloud's reply; this line fires either way.
 
     Returns:
         ``{"result": {}}`` — an empty success, because a 404 would put the

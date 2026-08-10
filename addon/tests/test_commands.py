@@ -1,3 +1,4 @@
+from petkit_local.devices import defaults
 from petkit_local.devices.base import Device
 import pytest
 
@@ -17,7 +18,7 @@ def _settable_index(device):
 
 def _litter():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    d.config.setdefault("settings", d.default_settings())
+    d.config.setdefault("settings", defaults.default_settings(d))
     return d, _settable_index(d)
 
 
@@ -383,7 +384,7 @@ def test_a_number_outside_its_range_is_refused_not_clamped():
 
 def _t6():
     d = Device(device_type="t6", petkit_id=2, serial_number="SN6")
-    d.config.setdefault("settings", d.default_settings())
+    d.config.setdefault("settings", defaults.default_settings(d))
     return d, _settable_index(d)
 
 
@@ -434,7 +435,7 @@ def test_power_is_its_own_service_not_a_settings_write():
     path, and that is the difference this test pins."""
     for device_type in ("t5", "w7h"):
         dev = Device(device_type=device_type, petkit_id=4, serial_number="SN")
-        dev.config.setdefault("settings", dev.default_settings())
+        dev.config.setdefault("settings", defaults.default_settings(dev))
         idx = _settable_index(dev)
 
         suffix, env = handle_ha_command(dev, idx["power_off"], "")
@@ -454,9 +455,9 @@ def test_the_litter_type_seed_is_gone():
     `to_device_info` serves seeded settings back as the litter the box is
     filled with. It now stays absent until the device names one."""
     dev = Device(device_type="t5", petkit_id=5, serial_number="SN")
-    assert "sandType" not in dev.default_settings()
+    assert "sandType" not in defaults.default_settings(dev)
 
-    dev.config.setdefault("settings", dev.default_settings())
+    dev.config.setdefault("settings", defaults.default_settings(dev))
     idx = _settable_index(dev)
     _, payload = handle_ha_command(dev, idx["sand_type"], "mixed")
     assert payload["params"] == {"sandType": 3}

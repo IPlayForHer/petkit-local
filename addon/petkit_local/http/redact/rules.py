@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from petkit_local.devices import payloads
 from petkit_local.http.redact import Redaction, RedactionPolicy, RedactionResult
 
 RULE_RCE = "rce"
@@ -27,7 +28,7 @@ RULE_LOCALE = "locale"
 #: entirely expected traffic.
 #:
 #: `secret` is deliberately NOT here, tempting though it looks. Every ordinary
-#: `dev_signup` and `dev_device_info` reply carries one (`Device.to_signup` /
+#: `dev_signup` and `dev_device_info` reply carries one (`payloads.to_signup` /
 #: `to_device_info`), so the rule fires on routine polling — and persisting it
 #: would put the device's real PetKit credential in a table the panel serves.
 BLOCKING_RULES = frozenset({RULE_RCE, RULE_OTA})
@@ -80,7 +81,7 @@ def _log_upload_answer(name: str, policy: RedactionPolicy) -> dict[str, Any]:
     device = policy.device
     if device is None or not device.config.get("log_upload_enabled", False):
         return LOG_UPLOAD_EMPTY
-    body = device.to_log_upload_token(policy.bucket_endpoint)
+    body = payloads.to_log_upload_token(device, policy.bucket_endpoint)
     return body if body.get("result") else LOG_UPLOAD_EMPTY
 
 #: `dev_serverinfo` is answered from OUR values whatever the upstream said —
@@ -113,7 +114,7 @@ _OTA_SIBLING_KEYS = ("md5", "size", "fileSize", "version", "firmwareVersion")
 _SERVER_KEYS = ("apiServers", "ipServers", "dns")
 
 #: The MQTT credential trio. Present together in both the `ali`-wrapped and the
-#: flat shape (`devices/base.py::to_iot_device_info` / `_flat`).
+#: flat shape (`devices/payloads.py::to_iot_device_info` / `_flat`).
 _MQTT_CRED_KEYS = ("productKey", "deviceName", "deviceSecret")
 
 
@@ -207,7 +208,7 @@ def _match_server(node: dict, path: str, policy: RedactionPolicy,
     if policy.device is None or not any(k in node for k in _SERVER_KEYS):
         return node
 
-    ours = policy.device.to_serverinfo(policy.api_url)["result"]
+    ours = payloads.to_serverinfo(policy.device, policy.api_url)["result"]
     patched = dict(node)
     original = {}
     for key in _SERVER_KEYS:
@@ -305,7 +306,8 @@ def _match_oss_sts(node: dict, path: str, policy: RedactionPolicy,
     if policy.media_to_real_oss:
         return node
 
-    ours = device.to_oss_sts(policy.bucket_endpoint, policy.aes_key)["result"]["capability"]
+    ours = payloads.to_oss_sts(device, policy.bucket_endpoint,
+                               policy.aes_key)["result"]["capability"]
     patched = dict(node)
     patched["capability"] = ours
     out.records.append(Redaction(

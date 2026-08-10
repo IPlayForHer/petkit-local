@@ -27,24 +27,19 @@ log = logging.getLogger(__name__)
 #: cloud's answer is therefore always wrong — it would tell the device to forget
 #: every accessory paired here — which is reason enough for this entry.
 #:
-#: There is a second, weaker reason recorded here honestly because it used to be
-#: stated as fact. The firmware's own log shows:
+#: It is NOT here because an empty `list` crashes the parent. The firmware's own
+#: log shows:
 #:
 #:     res data :{"result": {"list": [], "nextTick": 3600}}
 #:     [ble_relay_network.c]:[95][pk_schmg_parse_ble_dev_list]relay list prase, update:0
 #:     E/ctrl [ble_relay_network.c]:[108][pk_schmg_parse_ble_dev_list]ERR:...parse item NULL
 #:
-#: and that was read as an empty `list` walking into a null dereference that
-#: aborts the boot chain. Captures since then argue against it: PetKit's own
-#: cloud answers `{"result":{"list":[],"nextTick":3600}}` to a device with no
-#: accessories — 234 times in one session — so every unaccessorised PetKit
-#: device in the world receives that payload routinely. The ERR line is real,
-#: but a logged parse error is not the same as an aborted boot.
-#:
-#: Both handlers send the empty array now, matching that capture byte for byte.
-#: They used to omit `list`, which outlived the reasoning behind it — and the
-#: omission was not free: it took `nextTick` with it, so a parent with nothing
-#: paired was told neither what to scan for nor when to ask again.
+#: which reads like an empty list walking into a null dereference that aborts the
+#: boot chain — but PetKit's own cloud answers exactly that payload to a device
+#: with no accessories, 234 times in one captured session, so the ERR line is a
+#: logged parse error rather than an aborted boot. Whether WE send the empty
+#: array is a separate and still unsettled question, argued out in
+#: `handlers/ble_device.py`; this entry stands on the paragraph above either way.
 #:
 #: This set is for answers that would BREAK the device, not for answers that
 #: are merely inconvenient to us. `dev_discern_pic` is deliberately absent: the

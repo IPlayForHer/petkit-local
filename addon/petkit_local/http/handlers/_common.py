@@ -19,16 +19,15 @@ Deliberate decisions
   firmware on every request, whereas ``?id=``/``?sn=`` only appear on a few
   endpoints, so the header is tried first and the query string is the
   fallback. Each fallback triggers whenever the previous source does not yield
-  a *usable* value, not merely when the key is absent. (``handlers/signup.py``
-  historically preferred the query parameter; the two disagree only if a
-  device sends both with different values, which has never been observed.)
+  a *usable* value, not merely when the key is absent. (The two disagree only
+  if a device sends both with different values, which has never been observed.)
 
-  The body is last and was added because of a model that uses nothing else: a
+  The body is last, and it is there for a model that uses nothing else: a
   Feeder D4 signs up with no header and no query string, everything
-  urlencoded in the POST body. Until 1.5.0 it was unidentifiable to every
-  endpoint here — signup answered 400 and, worse, ``dev_iot_device_info``
-  answered **200** with no MQTT credentials, so the device silently never
-  reached the broker.
+  urlencoded in the POST body. Without that fallback it is unidentifiable to
+  every endpoint here — signup answers 400 and, worse, ``dev_iot_device_info``
+  answers **200** with no MQTT credentials, so the device silently never
+  reaches the broker.
 * **id before serial.** ``DeviceRegistry.get()`` is an O(1) primary-key lookup
   and the petkit id is the registry's only identity; ``by_serial()`` is an O(n)
   scan that exists purely as a rescue path for requests whose id is missing or

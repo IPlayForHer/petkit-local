@@ -13,6 +13,7 @@ date.
 import json
 import time
 
+from petkit_local.devices import payloads
 from petkit_local.devices.base import Device
 from petkit_local.devices.state_parsers import (CONSUMABLE_RECORD_KEY, DEODORANT_TOTAL_DAYS,
                                                 SPRAY_TOTAL_DAYS, apply_consumable_state,
@@ -84,11 +85,11 @@ def test_to_device_info_echoes_the_recorded_stamp_rather_than_zero():
 
     restarted = Device.from_dict(json.loads(json.dumps(dev.to_dict())))
     assert restarted.state == {}
-    assert int(restarted.to_device_info()["result"]["sprayResetTime"]) == int(stamp)
+    assert int(payloads.to_device_info(restarted)["result"]["sprayResetTime"]) == int(stamp)
 
     # A device we have never heard from still gets 0 -- there is nothing to
     # preserve, and PetKit sends the field rather than omitting it.
-    assert _dev().to_device_info()["result"]["sprayResetTime"] == 0
+    assert payloads.to_device_info(_dev())["result"]["sprayResetTime"] == 0
 
 
 def test_the_device_stamp_wins_over_ours_and_is_copied_into_the_record():

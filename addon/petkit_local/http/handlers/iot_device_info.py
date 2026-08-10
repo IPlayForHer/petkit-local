@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from aiohttp import web
 
+from petkit_local.devices import payloads
 from petkit_local.devices.base import Device
 from petkit_local.http.handlers._common import (
     device_id, device_serial, no_device_response, request_device,
@@ -67,7 +68,7 @@ async def handle_iot_device_info(request: web.Request) -> web.Response:
     """`dev_only_iot_device_info[_v2]` (Ingenic) — Aliyun-wrapped credentials.
 
     Returns:
-        `Device.to_iot_device_info()`: the broker host plus the product key,
+        `payloads.to_iot_device_info()`: the broker host plus the product key,
         device name and secret the device signs its MQTT CONNECT with (see
         `mqtt/auth.py`), nested in the Aliyun IoT envelope this firmware family
         expects. `handle_iot_device_info_flat` returns the same facts unnested.
@@ -78,14 +79,14 @@ async def handle_iot_device_info(request: web.Request) -> web.Response:
     mqtt_host = device.resolve_mqtt_host(_self_mqtt_host(request))
     log.info("IoT device info: id=%d -> pk=%s dn=%s mqttHost=%s",
              device.petkit_id, device.mqtt_product_key, device.mqtt_device_name, mqtt_host)
-    return web.json_response(device.to_iot_device_info(mqtt_host))
+    return web.json_response(payloads.to_iot_device_info(device, mqtt_host))
 
 
 async def handle_iot_device_info_flat(request: web.Request) -> web.Response:
     """`dev_iot_device_info` (ESP32) — the same credentials, un-nested.
 
     Resolution and credentials are identical to `handle_iot_device_info`; only
-    the response schema differs (`Device.to_iot_device_info_flat()` — same
+    the response schema differs (`payloads.to_iot_device_info_flat()` — same
     fields without the `ali` wrapper or its `iotPlatform` marker). Both are
     routed, because which endpoint a device calls is decided by its firmware.
     """
@@ -95,4 +96,4 @@ async def handle_iot_device_info_flat(request: web.Request) -> web.Response:
     mqtt_host = device.resolve_mqtt_host(_self_mqtt_host(request))
     log.info("IoT device info (flat): id=%d -> pk=%s dn=%s mqttHost=%s",
              device.petkit_id, device.mqtt_product_key, device.mqtt_device_name, mqtt_host)
-    return web.json_response(device.to_iot_device_info_flat(mqtt_host))
+    return web.json_response(payloads.to_iot_device_info_flat(device, mqtt_host))

@@ -14,6 +14,7 @@ TEST-NET-1 address so the `other`-string parse is still exercised.
 """
 import pytest
 
+from petkit_local.devices import defaults
 from petkit_local.devices.base import Device
 from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.devices.state_parsers import (
@@ -472,7 +473,7 @@ def test_every_settable_w7h_field_is_one_the_firmware_dispatches():
     from petkit_local.ha.commands import PROPERTY_SET_SUFFIX, handle_ha_command
 
     device = Device(device_type="w7h", petkit_id=1, serial_number="SN")
-    device.settings = device.default_settings()
+    device.settings = defaults.default_settings(device)
 
     checked = 0
     for entity in get_entities_for_device(device):

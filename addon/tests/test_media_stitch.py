@@ -10,6 +10,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from petkit_local.events.store import EventStore
 from petkit_local.media import stitch
 
@@ -27,8 +29,27 @@ def _make_clip(path: str, seconds: int = 1, size: int = 64) -> bool:
     return r.returncode == 0 and os.path.isfile(path)
 
 
-def _store(tmp):
-    return EventStore(Path(tmp) / "petkit.db")
+async def _store(tmp):
+    """An EventStore inside `tmp`, closed when the test's event loop tears down.
+
+    Not the `event_store` fixture: these tests keep the database in the same
+    temporary tree as the clips they stitch, and several build more than one.
+    """
+    store = EventStore(Path(tmp) / "petkit.db")
+    _OPEN_STORES.append(store)
+    return store
+
+
+#: Every store `_store` handed out this test, drained by the autouse fixture
+#: below. A store holds an aiosqlite pool bound to the test's own event loop.
+_OPEN_STORES: list[EventStore] = []
+
+
+@pytest.fixture(autouse=True)
+async def _close_stores():
+    yield
+    while _OPEN_STORES:
+        await _OPEN_STORES.pop().close()
 
 
 def test_expected_duration_sums_chunk_durations():
@@ -105,7 +126,7 @@ async def _add_chunk(store, path, related_event, category, created_at, device_id
 
 async def test_stitch_candidates_respects_quiet_period_and_min_chunks():
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         now = 10_000.0
         # episode A: 3 chunks, long finished
         for i in range(3):
@@ -123,7 +144,7 @@ async def test_stitch_candidates_respects_quiet_period_and_min_chunks():
 
 async def test_stitch_candidates_never_mixes_categories():
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         now = 10_000.0
         # same episode, two different streams — must stay separate, since the
         # substream has a different resolution/framerate entirely
@@ -141,7 +162,7 @@ async def test_stitch_candidates_never_mixes_categories():
 
 async def test_stitch_candidates_skips_previously_failed():
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         now = 10_000.0
         for i in range(2):
             await _add_chunk(store, f"/x/f{i}.mp4", "epF", "fullVideo", now - 500 + i)
@@ -152,7 +173,7 @@ async def test_stitch_candidates_skips_previously_failed():
 
 async def test_replace_chunks_with_stitched_is_atomic_swap():
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         now = 10_000.0
         for i in range(3):
             await _add_chunk(store, f"/x/s{i}.mp4", "epS", "fullVideo", now - 500 + i)
@@ -173,7 +194,7 @@ async def test_stitch_episode_end_to_end_replaces_chunks_and_keeps_one_playable_
     if not HAVE_FFMPEG:
         return
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         media_root = os.path.join(tmp, "media")
         day_dir = os.path.join(media_root, "Dev", "Playback", "2026-07-22")
         os.makedirs(day_dir, exist_ok=True)
@@ -205,7 +226,7 @@ async def test_stitch_episode_keeps_chunks_when_output_is_unusable():
     """If verification fails the sources must survive — that's the whole
     reason verification runs before deletion."""
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         media_root = os.path.join(tmp, "media")
         day_dir = os.path.join(media_root, "Dev", "Playback", "2026-07-22")
         os.makedirs(day_dir, exist_ok=True)
@@ -231,7 +252,7 @@ async def test_reclassify_media_categories_fixes_old_rows():
     """A row stored under the previous (wrong) mapping must be corrected, so
     the substream stops sharing a category with the main recording."""
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         await store.upsert_media({"file_id": "old", "device_id": 1,
                                   "module_type": "CLOUD_DOUBLE", "category": "fullVideo",
                                   "status": "ready", "media_path": "/x/a.mp4"})
@@ -274,7 +295,7 @@ async def test_stitch_episode_excludes_mismatched_chunk_but_keeps_its_file():
     if not HAVE_FFMPEG:
         return
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         media_root = os.path.join(tmp, "media")
         day_dir = os.path.join(media_root, "Dev", "Playback", "2026-07-22")
         os.makedirs(day_dir, exist_ok=True)
@@ -312,7 +333,7 @@ async def test_stitch_recovers_by_dropping_an_undecodable_chunk():
     if not HAVE_FFMPEG:
         return
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         media_root = os.path.join(tmp, "media")
         day_dir = os.path.join(media_root, "Dev", "Playback", "2026-07-22")
         os.makedirs(day_dir, exist_ok=True)
@@ -450,7 +471,7 @@ async def test_repeated_failed_stitches_do_not_accumulate_temp_files():
     if not HAVE_FFMPEG:
         return
     with tempfile.TemporaryDirectory() as tmp:
-        store = _store(tmp)
+        store = await _store(tmp)
         media_root = os.path.join(tmp, "media")
         day_dir = os.path.join(media_root, "Dev", "Playback", "2026-07-22")
         os.makedirs(day_dir, exist_ok=True)

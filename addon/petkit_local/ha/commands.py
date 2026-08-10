@@ -50,7 +50,7 @@ CAPABILITY_VALUE_PREFIX = "capabilities."
 # `device.config["local"]` and NEVER sent anywhere: the per-hopper portion
 # counts a dual-hopper feed reads are our intent, not a device setting.
 #
-# The distinction is load-bearing rather than tidy. `Device.to_device_info`
+# The distinction is load-bearing rather than tidy. `payloads.to_device_info`
 # serves `config["settings"]` straight back to the device, so a value parked
 # there is not a local default — it is pushed to hardware as a setting the
 # feeder never had and cannot be talked out of.

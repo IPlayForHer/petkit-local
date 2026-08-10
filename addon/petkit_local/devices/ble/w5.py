@@ -39,9 +39,9 @@ _W5_STATUS_STATE_OFFSETS = {
 }
 _W5_STATUS_FILTER_OFFSET = 10  # filterPercentage, raw byte 0-100 for cmd 230
 
-#: The shortest block that is a status rather than a fragment. Reading fewer
-#: bytes than this used to turn a one-byte ACK into a confident `powerStatus`,
-#: because every field was emitted whenever its offset happened to be in range.
+#: The shortest block that is a status rather than a fragment. Accept anything
+#: shorter and a one-byte ACK decodes into a confident `powerStatus`, because
+#: each field is emitted whenever its offset happens to be in range.
 _W5_MIN_STATUS_LEN = 12
 
 

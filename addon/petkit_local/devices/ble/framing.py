@@ -21,17 +21,15 @@ from typing import Any
 # helpers below are shared and the offset tables are not.
 #
 # The length is a 16-bit LITTLE-endian field, and getting that wrong is not a
-# cosmetic detail: `build_ble_frame` used to emit a single length byte, so an
-# accessory read the first byte of our PAYLOAD as the high half of the length.
-# A 4-byte mode write announced 4 bytes and delivered 3 plus the trailer; a
-# 12-byte config write announced 0x030C = 780 and was still being waited for
-# when the session closed. Both fail in silence, which is why no settings write
-# to a CTW3 has ever been seen to take effect.
+# cosmetic detail: emit a single length byte and the accessory reads the first
+# byte of our PAYLOAD as the high half of the length. A 4-byte mode write then
+# announces 4 bytes and delivers 3 plus the trailer; a 12-byte config write
+# announces 0x030C = 780 and is still being waited for when the session closes.
+# Both fail in silence.
 #
 # Three sources agree on the 8-byte header: mr-ransel's W5 protocol notes,
 # aavdberg/ha-petkit's builder and parser, and `_ble_unframe` immediately
-# below — which has always read the payload from offset 8, so this module was
-# encoding and decoding to two different specifications.
+# below, which reads the payload from offset 8.
 BLE_FRAME_HEADER = bytes([0xFA, 0xFC, 0xFD])
 BLE_FRAME_TRAILER = 0xFB
 BLE_FRAME_HEADER_LEN = 8
@@ -42,9 +40,8 @@ BLE_TYPE_REQUEST = 0x01
 
 # The commands, in the one numbering that runs in both directions. `cmd` and
 # the opcode inside the frame are THE SAME NUMBER — 220 is 0xDC — which is
-# worth stating because a table here once mapped one to the other as though
-# they were different, and reading it that way makes 222 look like a value
-# nobody has.
+# worth stating because mapping one to the other as though they were different
+# numbers makes 222 look like a value nobody has.
 CMD_GET_STATE = 210         # short status block, on request
 CMD_GET_CONFIG = 211        # settings block. A CTW3 answers it over the relay.
 CMD_SET_MODE = 220          # power / mode. CTW3 adds a suspend byte.

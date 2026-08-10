@@ -26,8 +26,8 @@ def _walk(node: Any, path: str, policy: RedactionPolicy,
 
     `in_list` is what makes a hostile heartbeat entry disappear whole. A dropped
     value inside a plain object just loses that key, but inside a list element
-    the element itself goes — which is the behaviour the old `_strip_run_cmd`
-    had for `result[]` and the shape the firmware iterates.
+    the element itself goes — which is the shape the firmware iterates over in
+    `result[]`, where a stripped-but-present entry would still be a command.
     """
     if isinstance(node, dict):
         return _walk_dict(node, path, policy, out, in_list=in_list)

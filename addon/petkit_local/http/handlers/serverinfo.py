@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from aiohttp import web
 
+from petkit_local.devices import payloads
 from petkit_local.http.handlers._common import request_device
 
 
@@ -17,7 +18,7 @@ async def handle_serverinfo(request: web.Request) -> web.Response:
     """Point the device at this server.
 
     Returns:
-        `Device.to_serverinfo()`'s body, which documents where each field value
+        `payloads.to_serverinfo()`'s body, which documents where each field value
         comes from. An unregistered device gets the same answer built from a
         throwaway `Device`, so it is still told where to go — and so the shape
         cannot drift between the two paths, which it did while this handler
@@ -28,9 +29,10 @@ async def handle_serverinfo(request: web.Request) -> web.Response:
     api_url = request.app["config"]["api_url"]
 
     if device:
-        return web.json_response(device.to_serverinfo(api_url))
+        return web.json_response(payloads.to_serverinfo(device, api_url))
 
     from petkit_local.devices.base import Device
     return web.json_response(
-        Device(device_type=request.get("device_type", "unknown"),
-               petkit_id=0).to_serverinfo(api_url))
+        payloads.to_serverinfo(
+            Device(device_type=request.get("device_type", "unknown"), petkit_id=0),
+            api_url))

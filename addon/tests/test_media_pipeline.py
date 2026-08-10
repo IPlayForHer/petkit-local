@@ -2,6 +2,8 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from petkit_local.devices.base import Device
 from petkit_local.events.store import EventStore
 from petkit_local.media import crypto, pipeline
@@ -9,7 +11,24 @@ from petkit_local.media import crypto, pipeline
 JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"A" * 60  # 64 bytes, block-aligned
 
 
+#: Every store `_env` handed out this test, drained by the autouse fixture
+#: below. A store holds an aiosqlite pool bound to the test's own event loop.
+_OPEN_STORES: list[EventStore] = []
+
+
+@pytest.fixture(autouse=True)
+async def _close_stores():
+    yield
+    while _OPEN_STORES:
+        await _OPEN_STORES.pop().close()
+
+
 def _env():
+    """A temp raw/media tree, a store inside it, and a device to attribute to.
+
+    The `TemporaryDirectory` is returned so the caller can keep it alive: the
+    tree is deleted when it is collected, and these tests read files back.
+    """
     tmp = tempfile.TemporaryDirectory()
     raw_root = os.path.join(tmp.name, "raw")
     media_root = os.path.join(tmp.name, "media")
@@ -17,6 +36,7 @@ def _env():
     os.makedirs(media_root, exist_ok=True)
     config = {"media_raw_root": raw_root, "media_root": media_root, "data_dir": tmp.name}
     store = EventStore(Path(tmp.name) / "petkit.db")
+    _OPEN_STORES.append(store)
     device = Device(device_type="t5", petkit_id=1, serial_number="SN")
     return tmp, config, store, device, raw_root, media_root
 

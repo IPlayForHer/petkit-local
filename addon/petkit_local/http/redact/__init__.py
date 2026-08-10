@@ -8,8 +8,8 @@ one place that decides what survives that trip.
 endpoints": every rule matches on the SHAPE of a decoded object wherever it
 appears, so an `apiServers` block returned from an endpoint nobody expected it
 on is caught anyway. The walker also descends into JSON encoded as a *string*,
-which is how the heartbeat carries its commands and how the old
-`_strip_run_cmd` was able to see only that one case.
+which is how the heartbeat carries its commands — a rule that matched only
+decoded objects would never see them.
 
 Two very different kinds of rule live here, and the difference is what
 `BLOCKING_RULES` encodes:
@@ -22,7 +22,7 @@ Two very different kinds of rule live here, and the difference is what
   command, push firmware, or re-credential the device. These are rare, and each
   one is persisted (`events/models.py::BlockedAttempt`).
 
-The values every substitution uses come from `Device.to_*` — the same methods
+The values every substitution uses come from `payloads.to_*` — the same functions
 that build our own responses — so a redacted body cannot drift from the body the
 local handler would have produced.
 
@@ -37,6 +37,8 @@ import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from petkit_local.devices import payloads
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from petkit_local.devices.base import Device
@@ -264,7 +266,7 @@ def redact_body(body: bytes, *, endpoint: str, policy: RedactionPolicy) -> Redac
         return result
 
     if policy.device is not None and _last_segment(endpoint) in SERVERINFO_ENDPOINTS:
-        ours = policy.device.to_serverinfo(policy.api_url)
+        ours = payloads.to_serverinfo(policy.device, policy.api_url)
         if data != ours:
             result.records.append(Redaction(
                 rule=RULE_SERVER, path="", original=data, replacement=ours,

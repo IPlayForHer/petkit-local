@@ -91,7 +91,7 @@ def _route(app: web.Application, path: str) -> tuple[str, str, list[str]] | None
     media the `cloud` process uploads, and — when a device has log collection
     switched on — the debug log `logUpload` PUTs. They are told apart by the key
     prefix we ourselves handed out in the STS response, so the routing here and
-    the `pathPrefix` in `devices/base.py` are two ends of one agreement.
+    the `pathPrefix` in `devices/payloads.py` are two ends of one agreement.
 
     Returns:
         `(kind, root, rel_parts)` where `kind` is "media" or "log" and
@@ -130,7 +130,7 @@ def _notify(request: web.Request, path: str, size: int) -> None:
     The object key carries the attribution, but at a different offset per kind,
     so this asks `_route` rather than assuming one: a media key is
     ``{device_type}/{petkit_id}/{cycleType}/{key}`` (see
-    `devices/base.py::Device.to_oss_sts`'s per-capability `pathPrefix`) and a
+    `devices/payloads.py::to_oss_sts`'s per-capability `pathPrefix`) and a
     device-log key is ``devlog/{petkit_id}/{name}``. Both put the id first in
     what `_route` returns as the remainder. A key without a usable one is
     published with no device — the upload is still worth showing, and this is a

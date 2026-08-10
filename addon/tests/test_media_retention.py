@@ -11,11 +11,6 @@ from petkit_local.media.retention import (DEFAULT_RETENTION, RetentionConfig, Re
                                           sweep_all, sweep_category)
 
 
-def _store():
-    tmp = tempfile.TemporaryDirectory()
-    return EventStore(Path(tmp.name) / "petkit.db"), tmp
-
-
 def test_retention_config_defaults():
     cfg = RetentionConfig()
     assert cfg.data == DEFAULT_RETENTION
@@ -85,8 +80,8 @@ async def _add_media(store, category, size, created_at, device_id=1, media_path=
     return fid
 
 
-async def test_sweep_category_deletes_oldest_first_over_size_cap():
-    store, _tmp = _store()
+async def test_sweep_category_deletes_oldest_first_over_size_cap(event_store):
+    store = event_store
     now = 1_000_000.0
     await _add_media(store, "fullVideo", 5 * 1024 * 1024, now - 300)
     await _add_media(store, "fullVideo", 5 * 1024 * 1024, now - 200)
@@ -103,8 +98,8 @@ async def test_sweep_category_deletes_oldest_first_over_size_cap():
     assert total <= 8 * 1024 * 1024
 
 
-async def test_sweep_category_deletes_past_age_cap_even_under_size():
-    store, _tmp = _store()
+async def test_sweep_category_deletes_past_age_cap_even_under_size(event_store):
+    store = event_store
     now = 1_000_000.0
     old_id = await _add_media(store, "eventImage", 1024, now - (40 * 86400))
     await _add_media(store, "eventImage", 1024, now - 10)
@@ -118,8 +113,8 @@ async def test_sweep_category_deletes_past_age_cap_even_under_size():
     assert old_id not in remaining_ids
 
 
-async def test_sweep_category_noop_when_within_caps():
-    store, _tmp = _store()
+async def test_sweep_category_noop_when_within_caps(event_store):
+    store = event_store
     now = 1_000_000.0
     await _add_media(store, "highLight", 1024, now - 10)
 
@@ -142,9 +137,12 @@ async def test_sweep_category_unlinks_the_expired_file_from_disk():
 
         cfg = RetentionConfig()
         cfg.update({"eventImage": {"max_days": 30}})
-        assert (await sweep_category(store, "eventImage", cfg, now=now))["deleted"] == 1
-        assert not doomed.exists()
-        assert await store.media_for_retention("eventImage") == []
+        try:
+            assert (await sweep_category(store, "eventImage", cfg, now=now))["deleted"] == 1
+            assert not doomed.exists()
+            assert await store.media_for_retention("eventImage") == []
+        finally:
+            await store.close()
 
 
 async def test_sweep_category_drops_the_row_even_if_the_file_is_already_gone():
@@ -157,12 +155,15 @@ async def test_sweep_category_drops_the_row_even_if_the_file_is_already_gone():
 
         cfg = RetentionConfig()
         cfg.update({"eventImage": {"max_days": 30}})
-        assert (await sweep_category(store, "eventImage", cfg, now=now))["deleted"] == 1
-        assert await store.media_for_retention("eventImage") == []
+        try:
+            assert (await sweep_category(store, "eventImage", cfg, now=now))["deleted"] == 1
+            assert await store.media_for_retention("eventImage") == []
+        finally:
+            await store.close()
 
 
-async def test_sweep_all_prunes_events_by_age():
-    store, _tmp = _store()
+async def test_sweep_all_prunes_events_by_age(event_store):
+    store = event_store
     now = 1_000_000.0
     await store.upsert_event({"device_id": 1, "event_type": "old", "ts": now - (200 * 86400)})
     await store.upsert_event({"device_id": 1, "event_type": "recent", "ts": now - 10})
@@ -368,12 +369,7 @@ async def test_a_missing_log_root_is_not_an_error():
         "deleted": 0, "freed_bytes": 0}
 
 
-async def test_sweep_all_still_works_without_a_log_root():
+async def test_sweep_all_still_works_without_a_log_root(event_store):
     """Both existing call sites pass two arguments."""
-    store, tmp = _store()
-    try:
-        summary = await sweep_all(store, RetentionConfig())
-        assert summary[retention.DEVICE_LOG_CATEGORY] == {"deleted": 0, "freed_bytes": 0}
-    finally:
-        await store.close()
-        tmp.cleanup()
+    summary = await sweep_all(event_store, RetentionConfig())
+    assert summary[retention.DEVICE_LOG_CATEGORY] == {"deleted": 0, "freed_bytes": 0}

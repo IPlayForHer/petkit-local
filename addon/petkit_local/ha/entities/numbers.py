@@ -18,7 +18,7 @@ LITTER_NUMBERS = [
 FEEDER_NUMBERS = [
 ]
 
-#: Seeded by `Device.default_settings()` only inside its `is_camera` branch,
+#: Seeded by `defaults.default_settings()` only inside its `is_camera` branch,
 #: so on a non-camera model these render blank forever. Two sources agree
 #: they belong to the camera hardware: the defaults table and the state
 #: parsers (`_parse_litter_camera` is documented as "the ESP32 litter set
@@ -42,7 +42,7 @@ LITTER_CAMERA_NUMBERS = [
 #: How much each hopper of a Dual-Hopper dispenses per press.
 #:
 #: `local.` and not `settings.`, which is the whole point of that prefix: this
-#: is our intent, not a device setting. `Device.to_device_info` serves
+#: is our intent, not a device setting. `payloads.to_device_info` serves
 #: `config["settings"]` straight back to the device, so a value parked there
 #: would be pushed to the feeder as a setting it never had.
 #:

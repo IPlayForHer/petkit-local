@@ -764,7 +764,7 @@ LITTER_START_ACTIONS: dict[int, tuple[str, str]] = {
 #: The whole enum, from a controlled 1 -> 2 -> 3 -> 1 run through the app's own
 #: picker. There is no 0: it was seeded as a default here for a long time and
 #: served back to devices, which is a value outside their vocabulary — see
-#: `devices/base.py::default_settings`.
+#: `devices/defaults.py::default_settings`.
 SAND_TYPES: dict[int, str] = {
     1: "clay/ore",
     2: "tofu",

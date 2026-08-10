@@ -48,7 +48,7 @@ LITTER_SWITCHES = [
               entity_category="config"),
 ]
 
-#: Seeded by `Device.default_settings()` only inside its `is_camera` branch,
+#: Seeded by `defaults.default_settings()` only inside its `is_camera` branch,
 #: so on a non-camera model these render blank forever. Two sources agree
 #: they belong to the camera hardware: the defaults table and the state
 #: parsers (`_parse_litter_camera` is documented as "the ESP32 litter set
@@ -120,7 +120,7 @@ FEEDER_SWITCHES = [
               value_path="settings.lightMode", icon="mdi:lightbulb"),
     # Confirmed present in real D4SH firmware (`feedSound` appears in `ctrl`
     # and `libbase.so`), but deliberately NOT seeded in
-    # `Device.default_settings()`: `to_device_info` serves the seeded settings
+    # `defaults.default_settings()`: `to_device_info` serves the seeded settings
     # straight back to the device, so inventing a value here would silently
     # change the owner's setting. It stays unknown until the device reports it.
     EntityDef(component="switch", key="feed_sound", name="Feed Sound",
@@ -180,7 +180,7 @@ FOUNTAIN_SWITCHES = [
 #
 # Deliberately NOT here: `flushIntensity`, `addWaterMode` and `targetTemp`. All
 # are real handlers, but a number or select needs a RANGE and the map gives
-# none, and `Device.to_device_info` serves settings back to the device — so an
+# none, and `payloads.to_device_info` serves settings back to the device — so an
 # invented bound is not a display detail, it is a value we would push.
 #
 # `flushCycle`, `flushTime`, `waterChangeCycle` and `waterChangeTime` used to be
@@ -189,7 +189,7 @@ FOUNTAIN_SWITCHES = [
 # cycles count DAYS, times are SECONDS since midnight. They live in
 # `numbers.py::FOUNTAIN_W7H_NUMBERS` and `times.py::FOUNTAIN_W7H_TIMES`.
 #
-# None of these are seeded in `devices/base.py` for the same reason: the honest
+# None of these are seeded in `devices/defaults.py` for the same reason: the honest
 # state is unknown until the device reports one. See `UNSEEDED_BY_DESIGN` in
 # tests/test_entity_backing.py.
 FOUNTAIN_W7H_SWITCHES = [

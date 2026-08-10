@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 from petkit_local.config import Config
+from petkit_local.devices import payloads
 from petkit_local.devices.base import Device
 
 
@@ -63,7 +64,7 @@ def test_the_sts_response_never_says_localhost():
     """The actual bug. `localhost` is not merely useless to the device — it is
     the device, so the upload 'succeeds' at nothing or fails forever."""
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    body = json.dumps(d.to_oss_sts("", "0123456789abcdef"))
+    body = json.dumps(payloads.to_oss_sts(d, "", "0123456789abcdef"))
     assert "localhost" not in body
     assert json.loads(body)["result"]["capability"] == []
 
@@ -76,7 +77,7 @@ def test_a_derived_endpoint_reaches_every_url_in_the_response():
     c.resolve_bucket_endpoint()
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
 
-    cap = d.to_oss_sts(c.bucket_endpoint, "0123456789abcdef")["result"]["capability"]
+    cap = payloads.to_oss_sts(d, c.bucket_endpoint, "0123456789abcdef")["result"]["capability"]
     assert cap, "a configured endpoint must yield capabilities"
     for entry in cap:
         # The domain is portless on purpose: the firmware runs it through
@@ -92,8 +93,8 @@ def test_the_log_upload_token_agrees_with_it():
     authority from two halves, so an empty endpoint has to yield no token
     rather than a broken one."""
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    assert d.to_log_upload_token("")["result"] == {}
+    assert payloads.to_log_upload_token(d, "")["result"] == {}
 
-    token = d.to_log_upload_token("https://192.0.2.55:9000")["result"]
+    token = payloads.to_log_upload_token(d, "https://192.0.2.55:9000")["result"]
     assert token, "a real endpoint should produce a token"
     assert "localhost" not in json.dumps(token)

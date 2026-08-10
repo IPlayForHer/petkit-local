@@ -15,7 +15,7 @@ import inspect
 
 import pytest
 
-from petkit_local.devices import state_parsers
+from petkit_local.devices import defaults, state_parsers
 from petkit_local.devices.base import Device
 from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.utils.const import DEVICE_TYPES_ALL
@@ -34,7 +34,7 @@ RUNTIME_DERIVED = {
 
 #: `settings.*` fields we know are real but deliberately never seed.
 #:
-#: `Device.to_device_info` serves `config["settings"]` straight back to the
+#: `payloads.to_device_info` serves `config["settings"]` straight back to the
 #: device, so a seeded default is not a display convenience — it is a value we
 #: PUSH. Inventing one would silently change the owner's setting, which is why
 #: the litter defaults carry a note saying they were checked against a captured
@@ -299,7 +299,7 @@ def test_every_entity_a_model_publishes_has_something_that_can_fill_it(device_ty
     parser = _parser_for(device_type)
     producible = _keys_a_parser_can_emit(parser) if parser else set()
     passthrough = _passthrough_only_keys(parser) if parser else set()
-    seeded = set(device.default_settings())
+    seeded = set(defaults.default_settings(device))
 
     unbacked = []
     for e in entities:
@@ -328,7 +328,7 @@ def test_every_entity_a_model_publishes_has_something_that_can_fill_it(device_ty
 
     assert not unbacked, (
         f"{device_type} publishes entities nothing can fill:\n  " + "\n  ".join(unbacked)
-        + "\n\nEither seed the setting in Device.default_settings(), move the entity onto a "
+        + "\n\nEither seed the setting in defaults.default_settings(), move the entity onto a "
           "capability-gated list, or remove it. An entity that can never hold a value is "
           "worse than a missing one."
     )

@@ -8,6 +8,14 @@ carry one `value_path` per spelling, so every spelling is collapsed here into
 one flat key per value, and `state.<key>` is then the only thing the HA
 templates, the panel and the MQTT property path all read.
 
+The standard bug in this module is a derivation wired into one transport only.
+The HTTP `dev_state_report` and the MQTT `property/post` are parsed by separate
+functions, so a mapping added to just one of them works on whichever frames
+happen to carry it and silently does nothing on the other — and which transport
+a device uses is not a detail, since a device on MQTT stops polling the HTTP
+heartbeat entirely. Anything computed the same way from the same fields belongs
+in a helper both sides call.
+
 Everything in this module is best-effort by design: an unrecognised device type
 passes its body through untouched, an unexpected shape at any level is skipped
 rather than raised on. A state report that fails would cost the device its whole
@@ -16,205 +24,53 @@ update, so a partial state always beats an exception.
 from __future__ import annotations
 
 import json
-import math
 import re
-import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from petkit_local.devices.consumables import (_days_left_from_reset, _extract_consumable_days,
+                                              apply_consumable_state, record_consumable_reset)
+from petkit_local.devices.state_tables import (CONSUMABLE_RECORD_KEY, CONSUMABLE_TOTALS,
+                                               DEODORANT_TOTAL_DAYS, FEEDER_HALLS,
+                                               FEEDER_NEXT_GEN_FIELDS, LITTER_CAMERA_HALLS,
+                                               LITTER_CAMERA_MODELS, PRESENCE_FLAGS,
+                                               SNAPSHOT_MARKER, SPRAY_TOTAL_DAYS,
+                                               W7H_DEVICE_TIMESTAMPS, W7H_HALLS, W7H_MODELS,
+                                               W7H_STATE_FIELDS, WORK_MODE_IDLE)
 from petkit_local.events import codes
 from petkit_local.utils.coerce import to_float
 from petkit_local.utils.const import DEVICE_TYPES_FEEDER_NEXT_GEN
 from petkit_local.utils.dicts import dig
 
-if TYPE_CHECKING:  # import-cycle-free: base.py imports SPRAY_TOTAL_DAYS from here
-    from petkit_local.devices.base import Device
-
-# A litter box has two independent deodorant consumables, and the countdown for
-# both is OURS to compute: the device reports only the reset timestamps
-# (`sprayResetTime`, `liquidReset`) and never a remaining count.
-# `deodorantLeftDays` and `sprayLeftDays` appear in zero of 685 captured state
-# reports and nowhere in the `ctrl` or `ble` binaries — they are the cloud's
-# vocabulary, and here the cloud is us.
-#
-#   N60  the ACTIVE one: the box's own sprayer, which fires for ~2 minutes after
-#        a visit. Manufacturer's replacement interval is 45 days.
-#   N50  the PASSIVE one: sits in the waste bin and needs no mechanism.
-#        Manufacturer's replacement interval is 30 days.
-#
-# SPRAY_TOTAL_DAYS is CONFIRMED: PetKit's own cloud answers `dev_device_info`
-# with `sprayDays: 45` alongside `sprayResetTime`, captured in proxy mode, and
-# it is the same 45 the manufacturer's replacement interval gives. It is also
-# what `Device.to_device_info` advertises to the device, which the firmware
-# stores (`set sprayDays (%d)` in `ctrl`), so both sites must read this
-# constant. They were once independently hardcoded to 45 and 30, and HA burned
-# down a cartridge the device had been told was a third longer.
-#
-# DEODORANT_TOTAL_DAYS is the manufacturer's interval only, and the field it
-# counts from never arrives -- see the N50 note below.
-#
-# Mind the vocabulary, which is inverted from the products: `deodorantLeftDays`
-# is the N50 even though the N60 is the active deodorant, and `sprayLeftDays` is
-# the N60. Those are pypetkitapi's cloud names, kept because they are already
-# the entities' `value_path`. Do not "correct" one into the other.
-#
-# Why the cloud vocabulary says "spray" rather than "N60": the deodorizing
-# FUNCTION is not tied to the N60. Models with no built-in unit can take an
-# optional K3 (Pura Air) over BLE instead, so one field name has to cover both.
-# On a T5 it is unambiguously the built-in N60 — `ctrl` holds no `k3` string at
-# all and drives the sprayer off its own motor controller
-# (`_pki_transmit_spray_over_event_from_mot`, `pk_hmi_get_spray_percent`), while
-# `k3LightSwitch` turns up in a T4 property post and the T4 has no N60.
-#
-# The substitution is functional, NOT a shared data source: a K3 reports
-# `battery`/`liquid` LEVELS on its parent's report (`bridge._update_linked_k3`),
-# never a reset date, so these date-based countdowns cannot be fed from a K3 and
-# a K3-equipped box cannot be assumed to populate them.
-# The N50 has NO representation in the device protocol, established by
-# experiment on a T5 (2026-07-30). Resetting the N60 from PetKit's app sends
-# `thing.service.start {"start_action":10}`, the box answers `liquid_reset_over`
-# and its `sprayResetTime` becomes the reset moment. Resetting the N50 from the
-# app sends ONLY `thing.service.errState {"show":1,"err_state":1}` -- no start,
-# no date, no device reply, and `liquidReset` does not move. PetKit's own
-# `dev_device_info` reply carries no N50 field either: just `sprayDays`,
-# `sprayResetTime` and the `deodorantTip`/`purificationTip` notify flags. So
-# PetKit keeps the N50 replacement date in their account database and only tells
-# the box what to display.
-#
-# Consequence: `deodorantLeftDays` can never be filled from telemetry. Its
-# source `liquidReset` has been 0 in every one of 983+ captured reports and
-# nothing in any transport ever writes it. For "N50 Days Left" to read anything
-# we have to record the replacement date ourselves -- being the cloud is the
-# whole point of this add-on, and this is one of the places that has to mean it.
-SPRAY_TOTAL_DAYS = 45
-DEODORANT_TOTAL_DAYS = 30
-
-#: Where a replacement date WE recorded lives, inside `Device.config`. It has to
-#: be config rather than `state`: state is rebuilt from the device's next
-#: contact and does not survive a restart, and for the N50 there is no next
-#: contact that would ever carry it.
-CONSUMABLE_RECORD_KEY = "consumables"
-
-#: The consumables a "replaced" action can stamp, and what each one fills.
-CONSUMABLE_TOTALS = {
-    "n50": ("deodorantLeftDays", DEODORANT_TOTAL_DAYS),
-    "n60": ("sprayLeftDays", SPRAY_TOTAL_DAYS),
-}
-
-#: OURS, not the device's: no work-mode code means "idle", because the device
-#: says so by omitting `workState` entirely. Deliberately negative so it can
-#: never collide with a real `WORK_MODES` code, and deliberately NOT added to
-#: that table, which is the device's vocabulary and not ours. `sensors.py` pairs
-#: it with the label; nothing else should read it as a protocol value.
-WORK_MODE_IDLE = -1
-
-#: Fields the device sends ONLY while the thing they describe is happening.
-#: Presence is the whole signal — the payload never carries an "off" value, it
-#: just stops appearing. Measured over 1254 captured snapshots (both
-#: transports): the report is a fixed 29-key dump plus at most these extras,
-#: `workState` (166), `lightState` (166) and `refreshState` (32).
-#:
-#: They MUST be turned into a real 0/1 here, because `device.state` is only ever
-#: merged into and never pruned: a key that stops being sent keeps its last
-#: value forever. `refreshState` is also an object, and a non-empty dict is
-#: truthy — so the "Deodorization Running" sensor latched ON at the box's first
-#: spray and stayed on for good. `lightState` is mapped too, since it has the
-#: identical shape and would repeat the bug the moment anyone gives it an entity.
-PRESENCE_FLAGS = {
-    "refreshState": "deodorizing",
-    "lightState": "lightOn",
-}
-
-
-#: Proof that a payload is a whole-device snapshot rather than a fragment.
-#: `litter` was present in all 1254 captured litter-box reports across both
-#: transports, so its absence means we are looking at something partial (a
-#: hand-built dict in a test, a device that frames its report differently) and
-#: must not conclude anything from a key not being there.
-SNAPSHOT_MARKER = "litter"
-
-
-#: Models whose reports carry the W7H field set. A codename, NOT a payload
-#: marker: `sensor` looked like one — it holds the hall block and no other
-#: fountain sends it — but a live T5 carries a `sensor` block of its own
-#: (`open_hall`, `dump_hall`, `prox_raw`, ...), so keying off its presence would
-#: have run the fountain branch over every litter box. Both call sites already
-#: know the codename; per CLAUDE.md, pass it rather than infer it.
-W7H_MODELS = frozenset({"w7h"})
-
-#: W7H top-level state fields, from the reverse-engineered `property/post` map
-#: supplied 2026-07-31 and present key-for-key in a real capture from the same
-#: device. Copied under their own names: this IS the device's vocabulary, the
-#: panel renders `device.state` verbatim, and inventing a second spelling for
-#: `stgFullState` would only create something to keep in sync.
-#:
-#: Every one of these is a plain scalar the device sends on every report, so
-#: unlike the litter box's presence-signalled trio there is no absence to read.
-W7H_STATE_FIELDS = (
-    # install / seating
-    "stgInstall", "stgFullState", "cwtInstall", "wtInstall", "wtLock",
-    "heatInstall",
-    # level / state codes (integers; the code meanings are NOT known, so they
-    # are published raw rather than decoded into labels we would be inventing)
-    "cwtState", "wtState",
-    # work states
-    "heatState", "liftValveState", "pumpState", "waterPumpState",
-    "addWaterState", "flushState", "liftResetState", "liftLiveState",
-    "disinfectState", "addWaterFrequent",
-    # timers / measurements
-    "disinfectTime", "heatLeftTime", "heatStatusTime", "heatRealTemp",
-    # camera + housekeeping
-    "cameraStatus", "ota", "rebootReason",
-)
-
-#: The ten hall switches a W7H reports under `sensor{}`, in the order the
-#: device sends them. Digital reed switches, NOT ADC readings — the supplied
-#: map correlated each against the BLE log's own `hall_data` lines
-#: (`CLEAN_WATER_H`, `LOCK_INSTALL_R`, `WATER_TRAY_INSTALL`, ...).
-#:
-#: Listed explicitly rather than copied by `hall_` prefix so that the set an
-#: entity may bind to is the set a source names. It is also what lets
-#: `tests/test_entity_backing.py` see a producer for each one; a prefix match
-#: is invisible to it, and an entity it cannot see a producer for is exactly
-#: the "reads unknown forever" case that test exists to catch.
-#:
-#: Names are the device's, kept verbatim so one string follows an entity
-#: through the panel into a firmware log.
-W7H_HALLS = (
-    "hall_CH", "hall_CL",       # clean-water tank, high / low level
-    "hall_CKL", "hall_CKR",     # waste lock, left / right
-    "hall_DH",                  # sewage tank full
-    "hall_DKL", "hall_DKR",     # sewage tank seated, left / right
-    "hall_LTU", "hall_LTD",     # lift travel, upper / lower
-    "hall_TY",                  # drinking tray seated
-)
-
-#: The T5-family litter box has a `sensor{}` block too, and it is NOT the same
-#: one — different names, different mechanism. Read live from a running T5
-#: (firmware 943) on 2026-07-31:
-#:
-#:     {"weight":0, "stdby_hall":0, "smooth_hall":1, "dump_hall":1,
-#:      "open_hall":1, "close_hall":0, "top_hall":0, "prox_raw":99,
-#:      "around_pos":0}
-#:
-#: Only the six `*_hall` switches are taken. `weight` duplicates `sandWeight`,
-#: and `prox_raw`/`around_pos` are a raw ADC and a position code whose scale
-#: and enum no source gives — publishing either would mean inventing a unit.
-#:
-#: Unlike the W7H's, these names have NO external map behind them, so the
-#: entities carry the device's own wording rather than an interpretation of it.
-#: What does corroborate them is the same device's `err{}` block, which carries
-#: a matching fault bit per hall (`hallT`, `hallD`, `hallS`, `hallO`, `hallC`) —
-#: the firmware itself treating each as a distinct sensor.
-LITTER_CAMERA_HALLS = (
-    "stdby_hall", "smooth_hall", "dump_hall",
-    "open_hall", "close_hall", "top_hall",
-)
-
-#: Litter models that report `LITTER_CAMERA_HALLS`. Seen on a T5; T6 and T7 run
-#: the same firmware family and share every other field, so they are included
-#: rather than left publishing nothing, and an absent key simply never fills.
-LITTER_CAMERA_MODELS = frozenset({"t5", "t6", "t7"})
+#: The names this module answers to. The evidence tables live in
+#: `state_tables.py` and the consumable countdowns in `consumables.py`, and both
+#: are re-exported here because this is the module a caller reaching for a state
+#: key already imports — listing them is also what marks those imports as used,
+#: so the lint gate does not read a re-export as dead code. The two private
+#: names are here because the tests reach for them by name.
+__all__ = [
+    "CONSUMABLE_RECORD_KEY",
+    "CONSUMABLE_TOTALS",
+    "DEODORANT_TOTAL_DAYS",
+    "FEEDER_HALLS",
+    "FEEDER_NEXT_GEN_FIELDS",
+    "LITTER_CAMERA_HALLS",
+    "LITTER_CAMERA_MODELS",
+    "PRESENCE_FLAGS",
+    "SNAPSHOT_MARKER",
+    "SPRAY_TOTAL_DAYS",
+    "W7H_DEVICE_TIMESTAMPS",
+    "W7H_HALLS",
+    "W7H_MODELS",
+    "W7H_STATE_FIELDS",
+    "WORK_MODE_IDLE",
+    "_days_left_from_reset",
+    "_extract_consumable_days",
+    "apply_consumable_state",
+    "normalize_property_params",
+    "parse_state_report",
+    "record_consumable_reset",
+]
 
 
 def _extract_sensor_block(body: dict[str, Any], state: dict[str, Any],
@@ -231,16 +87,6 @@ def _extract_sensor_block(body: dict[str, Any], state: dict[str, Any],
     for key in names:
         if key in sensor:
             state[key] = sensor[key]
-
-#: The `device{}` block's unix timestamps, and the state key each becomes.
-#: These are TIMESTAMPS, not counters — `drink_time` is "when the pet last
-#: drank", not "how many times". Reading it as a count is how it ended up
-#: behind a "Drink Times" sensor that would have displayed 1785531049.
-W7H_DEVICE_TIMESTAMPS = {
-    "drink_time": "lastDrink",
-    "pet_time": "lastPetDetect",
-    "pet_close_time": "lastPetLeft",
-}
 
 
 def _iso_or_none(value: Any) -> str | None:
@@ -293,46 +139,6 @@ def _extract_fountain_w7h(body: dict[str, Any], state: dict[str, Any],
             state["sw"] = device_block["sw"]
 
 
-#: The hall switches a next-gen feeder reports in its `sensor{}` block, in the
-#: device's own wording. Named rather than copied wholesale for the same reason
-#: as the litter box's: a blanket copy would also drag in raw ADC readings whose
-#: scale nobody here knows.
-FEEDER_HALLS = ("left_hall", "home_hall", "right_hall", "left_sub_hall")
-
-#: Flat keys a D4H/D4SH report carries that no other feeder does. Every one is
-#: present in the two real D4SH 867 reports in issue #2 (one per transport) and
-#: is a JSON key in the state builder of that firmware's `ctrl`.
-#:
-#: What each MEANS is a separate question from whether it is there, and most of
-#: these are only the second. `door` read 1 through the lid being opened, the
-#: hoppers being pulled and the battery cover coming off, so it is not the lid;
-#: `ir_b_1`/`ir_b_2`/`ir_c` never moved, though blocking a sensor did raise a
-#: "feed chute blocked" fault. They are carried so the values are visible in the
-#: panel and in diagnostics -- an entity that names them is a different decision,
-#: made per key in `ha/entities/sensors.py`.
-FEEDER_NEXT_GEN_FIELDS = (
-    # Hopper contents, one per hopper. 2 = has food and 0 = empty, reported by
-    # the owner in #2; 1 was never observed and is deliberately not guessed at.
-    "food1", "food2",
-    # Leftover food in the bowl. -1 is "not measured", not a level: the firmware
-    # logs `recv feed start leftover set(-1)` as it begins a feed, and the one
-    # real reading seen (46) appeared while surplus control was being changed.
-    # Related to `surplusControl`/`surplusStandard`, both strings in `ctrl`.
-    "bowl",
-    "door", "feeding", "eating",
-    "ir_b_1", "ir_b_2", "ir_c",
-    # Backup batteries and the DC line. `batV` reads 0 with no batteries fitted
-    # (confirmed by the owner), which is why it must not be read as a fault.
-    "batV", "ubat", "DCV",
-    "ultra_sta",
-    # Five slots of sound readiness, NOT the feeding schedule -- the firmware
-    # logs `clean sound_list[%d], id = %d, ready[%d]=%d` and takes a `soundId`
-    # in its `play_sound` service. The owner confirmed the list does not track
-    # how many meals are scheduled.
-    "ready",
-)
-
-
 def _extract_feeder_next_gen(body: dict[str, Any], state: dict[str, Any],
                              device_type: str = "") -> None:
     """Flatten the D4H/D4SH-specific parts of a feeder report into `state`.
@@ -370,69 +176,20 @@ def _extract_presence_flags(body: dict[str, Any], state: dict[str, Any]) -> None
 def _extract_shared(body: dict[str, Any], state: dict[str, Any]) -> None:
     """Everything derived identically from either transport's payload.
 
-    ONE call site per transport instead of one per derivation. The module
-    docstring calls hand-syncing the two lists "the standard bug in this
-    module", and it had already happened three times to the consumables alone;
-    `runtime` was the fourth. Anything computed the same way from the same
-    fields belongs in here, not copied into both parsers.
+    ONE call site per transport instead of one per derivation. Hand-syncing two
+    lists is what the module docstring calls "the standard bug in this module",
+    and the consumables alone have been through it repeatedly. Anything computed
+    the same way from the same fields belongs in here, not copied into both
+    parsers.
     """
-    # runtime (seconds of uptime) -> totalTime. This lived only in the HTTP
-    # parser, and a T5 STOPS polling the HTTP heartbeat once it is on MQTT --
-    # so the Uptime sensor was permanently unknown on exactly the devices that
-    # had the healthiest connection.
+    # runtime (seconds of uptime) -> totalTime. A derivation kept in the HTTP
+    # parser alone is missing on exactly the healthiest devices: a T5 STOPS
+    # polling the HTTP heartbeat once it is on MQTT, so the Uptime sensor would
+    # read unknown for as long as the MQTT session lives.
     if "runtime" in body:
         state["totalTime"] = body["runtime"]
     _extract_consumable_days(body, state)
     _extract_presence_flags(body, state)
-
-
-def record_consumable_reset(device: Device, which: str,
-                            when: float | None = None) -> float | None:
-    """Stamp `which` ("n50"/"n60") as replaced now and refresh its countdown.
-
-    Returns:
-        The stamp written, or None for a name we do not track — the caller logs
-        it rather than guessing which consumable was meant.
-    """
-    if which not in CONSUMABLE_TOTALS:
-        return None
-    ts = float(when) if when is not None else time.time()
-    device.config.setdefault(CONSUMABLE_RECORD_KEY, {})[which] = ts
-    apply_consumable_state(device)
-    return ts
-
-
-def apply_consumable_state(device: Device) -> None:
-    """Fill both consumable countdowns, and persist the N60 stamp.
-
-    The N50 has no representation anywhere in the device protocol — see the note
-    above — so a date we recorded is its ONLY possible source.
-
-    The N60 does have one, and the DEVICE wins: `sprayResetTime` is also moved by
-    a reset from PetKit's app, so the box's stamp can be newer than ours. What we
-    keep is a copy, and that copy earns its place twice: the countdown survives a
-    restart, and `to_device_info` stops echoing a zero back over a live reset
-    date during the window before the device has reported.
-
-    Call this AFTER the state parsers, which is where `sprayResetTime` arrives.
-    """
-    rec = device.config.get(CONSUMABLE_RECORD_KEY)
-    if not isinstance(rec, dict):
-        rec = {}
-        device.config[CONSUMABLE_RECORD_KEY] = rec
-
-    reported = to_float(device.state.get("sprayResetTime"), None)
-    if reported:
-        rec["n60"] = reported
-    else:
-        remembered = to_float(rec.get("n60"), None)
-        if remembered:
-            device.state["sprayResetTime"] = remembered
-
-    for which, (state_key, total) in CONSUMABLE_TOTALS.items():
-        left = _days_left_from_reset(rec.get(which), total)
-        if left is not None:
-            device.state[state_key] = left
 
 
 def parse_state_report(device_type: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -477,52 +234,6 @@ def _extract_camel(body: dict[str, Any], keys: list[str], state: dict[str, Any])
             state[key] = body[snake]
 
 
-def _days_left_from_reset(reset_ts: Any, total_days: int) -> int | None:
-    """Compute remaining days from a unix reset timestamp (e.g. sprayResetTime).
-
-    Rounded UP, because a part-used day is still a day you have: 19.5 days
-    remaining is "20 days left", and it reaches 0 only when the interval is
-    genuinely spent. Truncating instead made a consumable replaced one second
-    ago report `total - 1`, so pressing Reset N50 showed 29 of 30 days
-    immediately — visibly wrong at the one moment the user is looking.
-
-    `reset_ts` is whatever the device put in the field, hence `to_float`
-    rather than a numeric annotation. An isinstance check is not enough:
-    `json.loads` accepts bare `Infinity`/`NaN` by default and an int is
-    unbounded, so the arithmetic could raise OverflowError on a device payload
-    and take the whole state report down with it. `to_float` rejects both, and
-    accepts the numeric-string form the field sometimes has.
-    """
-    ts = to_float(reset_ts, None)
-    if not ts:
-        return None
-    days_since = (time.time() - ts) / 86400
-    return max(0, math.ceil(total_days - days_since))
-
-
-def _extract_consumable_days(body: dict[str, Any], state: dict[str, Any]) -> None:
-    """Derive the N60 spray and N50 deodorant countdowns from their reset stamps.
-
-    Shared by BOTH transports on purpose. This lived only in
-    `_extract_litter_nested`, which the MQTT property post never reaches, so a
-    device that speaks only MQTT — a T5 stops polling the HTTP heartbeat once it
-    connects, and may never send a single `dev_state_report` — left both sensors
-    permanently empty while reporting a perfectly good `sprayResetTime`.
-
-    A zero stamp is not a fresh cartridge, it is "never reset": `liquidReset` was
-    0 in all 685 captured reports of a box whose N50 had never been replaced.
-    `_days_left_from_reset` returns None for it and the key is left unset, so HA
-    shows unknown rather than a confident zero days remaining.
-    """
-    spray_left = _days_left_from_reset(body.get("sprayResetTime"), SPRAY_TOTAL_DAYS)
-    if spray_left is not None:
-        state["sprayLeftDays"] = spray_left
-
-    liquid_left = _days_left_from_reset(body.get("liquidReset"), DEODORANT_TOTAL_DAYS)
-    if liquid_left is not None:
-        state["deodorantLeftDays"] = liquid_left
-
-
 def _extract_litter_nested(body: dict[str, Any], state: dict[str, Any]) -> None:
     """Flatten the nested sub-objects a real litter box sends into `state`.
 
@@ -561,11 +272,11 @@ def _extract_error_flags(body: dict[str, Any], state: dict[str, Any],
                          device_type: str = "") -> None:
     """`err{DC:0, taryF:1, ...}` -> a readable `errorMsg`, plus litter's boxFull.
 
-    Both transports used to carry their own copy of this, and neither knew what
-    a flag meant, so the Error sensor read `taryF,cycL` — the firmware's own
-    abbreviations, and its spelling of "tray" at that. `codes.error_flag_label`
-    translates per device family and falls back to the raw name, so a family
-    with no table (litter, feeder) reads exactly as it did before.
+    One helper for both transports, because an untranslated flag reaches the
+    Error sensor as `taryF,cycL` — the firmware's own abbreviations, and its
+    spelling of "tray" at that. `codes.error_flag_label` translates per device
+    family and falls back to the raw name, so a family with no table (litter,
+    feeder) still reads out exactly what the device sent.
 
     `full` is excluded from the message on purpose: it has its own `boxFull`
     entity, and listing it as an error made a full waste bin look like a fault.
@@ -608,15 +319,15 @@ def _extract_ip(body: dict[str, Any], state: dict[str, Any]) -> None:
     much further away than it is written and its absence never looks like a
     missing field. `media/go2rtc.py` skips a device with no `ip` when it builds
     its stream config, and the whole Patchers tab reports the device as
-    unsupported — so a camera feeder whose parser dropped this had no stream
-    URL and could not be patched at all, with nothing anywhere naming the
-    cause. Two of the three parsers read it, in two different ways, and the
-    feeder read it in neither.
+    unsupported — so a parser that drops this leaves a camera device with no
+    stream URL and no way to patch it, with nothing anywhere naming the cause.
+    Every parser must go through here rather than reading the field its own way.
 
-    The value is checked for shape, which the old `[0-9.]+` did not do: it
-    matched `....` as readily as an address. This becomes a go2rtc source and
-    an SSH target, so one cheap look is worth having, and a device reporting
-    something else is left with no `ip` — a state every caller already handles.
+    The value is checked for shape rather than trusted: a bare run of digits and
+    dots matches `....` as readily as an address, and this becomes a go2rtc
+    source and an SSH target, so one cheap look is worth having. A device
+    reporting something else is left with no `ip` — a state every caller
+    already handles.
     """
     ip = body.get("Ip") or body.get("ip") or ""
     if not ip:
@@ -671,10 +382,11 @@ def _extract_work_mode(body: dict[str, Any], state: dict[str, Any]) -> None:
     elif SNAPSHOT_MARKER in body:
         # A litter box sends `workState` ONLY while a cycle is running: it is
         # absent from 988 of 1254 captured snapshots, present in 166, and the
-        # payload is otherwise a fixed 29-key dump. This used to default to 0,
-        # which is `WORK_MODES[0] == "cleaning"` -- so an idle box reported
-        # itself as cleaning about 79% of the time. Absence means idle, but
-        # only in a payload that would have carried the key had it applied.
+        # payload is otherwise a fixed 29-key dump. Defaulting to 0 here is not
+        # neutral: `WORK_MODES[0] == "cleaning"`, so a default would have an
+        # idle box reporting itself as cleaning about 79% of the time. Absence
+        # means idle, but only in a payload that would have carried the key had
+        # it applied.
         state["workingState"] = WORK_MODE_IDLE
     # else: nothing is known, so nothing is written and HA reads unknown --
     # the same rule the rest of this module follows.
@@ -745,16 +457,16 @@ def _parse_feeder(body: dict[str, Any], device_type: str = "") -> dict[str, Any]
     """
     state: dict[str, Any] = {}
     # Only when the device actually said so. A real D4SH report (issue #2, both
-    # transports) carries no `workState` at all, and the old `, 0)` default
-    # published a Device Status of 0 that the device never sent -- the same
-    # mistake the W7H's parser was fixed for, and the same one that had an idle
-    # litter box calling itself "cleaning".
+    # transports) carries no `workState` at all, so a `, 0)` default would
+    # publish a Device Status of 0 the device never sent -- the same trap the
+    # W7H falls into, and the one that has an idle litter box calling itself
+    # "cleaning".
     if "workState" in body or "work_state" in body:
         state["workingState"] = body.get("workState", body.get("work_state"))
     # The family's shared names, which come from the reference integration's
-    # CLOUD model. `food1`/`food2` were on this list and are not: they are the
-    # dual-hopper hardware's, they are in no single-hopper cloud model, and they
-    # now have a real source of their own below.
+    # CLOUD model. `food1`/`food2` are deliberately NOT on it: they are the
+    # dual-hopper hardware's, they appear in no single-hopper cloud model, and
+    # they have a real source of their own below.
     _extract_camel(body, [
         "errorMsg", "rssi", "desiccantLeftDays",
         "batteryPower", "batteryStatus",
@@ -767,10 +479,9 @@ def _parse_feeder(body: dict[str, Any], device_type: str = "") -> dict[str, Any]
     # a key left solely to the list above would reach a next-gen feeder over
     # HTTP and vanish on the transport it actually reports state on.
     _extract_feeder_next_gen(body, state, device_type)
-    # The `err{}` fault block. The MQTT path has always had this and the HTTP
-    # one never did, so the Error sensor read whatever the last transport to
-    # arrive had to say -- exactly the asymmetry this module's docstring calls
-    # the standard bug.
+    # The `err{}` fault block, on both transports. Parse it on one only and the
+    # Error sensor reads whatever the last transport to arrive had to say --
+    # exactly the asymmetry this module's docstring calls the standard bug.
     _extract_error_flags(body, state, device_type)
 
     feed_state = dig(body, "feedState", default=dig(body, "feed_state", default={}))
@@ -794,10 +505,10 @@ def _parse_water_fountain(body: dict[str, Any], device_type: str = "") -> dict[s
     """State for the water fountains (W4/W5/CTW2/CTW3/W7H).
 
     Checked against a real W7H `property/post` (2026-07-31). Its payload carries
-    no `workState` at all, so the old `body.get("workState", …, 0)` default made
-    every W7H report Device Status 0 — a value the device never sent. Same
-    mistake as the litter box's, where defaulting to 0 meant `WORK_MODES[0] ==
-    "cleaning"` and an idle box called itself busy. Absent stays absent.
+    no `workState` at all, so a `body.get("workState", …, 0)` default would have
+    every W7H report Device Status 0 — a value the device never sent. Same trap
+    as the litter box's, where 0 is `WORK_MODES[0] == "cleaning"` and an idle
+    box calls itself busy. Absent stays absent.
 
     The W4/W5/CTW2/CTW3 field names below come from the reference integration's
     cloud model and none of them appear in a W7H report; the W7H's own fields
@@ -817,10 +528,9 @@ def _parse_water_fountain(body: dict[str, Any], device_type: str = "") -> dict[s
         "heatInstall", "stgFullState", "runStatus", "powerStatus",
     ], state)
 
-    # These two blocks are absent on a W7H, and the old code still wrote the
-    # key — `.get(...)` fell all the way through to None and published an
-    # explicit "unknown" rather than leaving the entity alone. Only write what
-    # the payload actually carried.
+    # These two blocks are absent on a W7H, so the key is written only when the
+    # payload actually carried it: a `.get(...)` falling all the way through to
+    # None publishes an explicit "unknown" rather than leaving the entity alone.
     electricity = dig(body, "electricity", default={})
     if isinstance(electricity, dict):
         battery = electricity.get("battery_percent", electricity.get("batteryPercent"))

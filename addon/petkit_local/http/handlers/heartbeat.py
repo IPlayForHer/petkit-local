@@ -137,9 +137,9 @@ def _to_heartbeat_content(cmd: Any) -> str:
         # nothing else, so it is inert either way — but a capture of PetKit's
         # own cloud setting a D4's light shows the key simply absent
         # (`{"msgType": 1, "payload": {"lightMode": 0}, "timestamp": …}`, PR
-        # #10). This used to invent `"property_set"` on the grounds that a
-        # blank `type` reads like a bug; matching the cloud costs nothing and
-        # means a capture of ours can be compared with one of theirs.
+        # #10). Inventing a `"property_set"` here on the grounds that a blank
+        # `type` reads like a bug costs the only thing this shape buys: matching
+        # the cloud means a capture of ours can be compared with one of theirs.
         return json.dumps({
             "msgType": MSG_TYPE_PROPERTY_SET,
             "payload": params,

@@ -8,7 +8,7 @@ uploads, one of them tagged `uploadres=ctrl_reboot`.
 The three steps, all confirmed against that capture and the `logUpload` binary:
 
 1. ``GET dev_upload_log_token`` -> the STS block built by
-   `Device.to_log_upload_token`, whose docstring records the firmware
+   `payloads.to_log_upload_token`, whose docstring records the firmware
    constraints on its shape.
 2. The device PUTs `/tmp/devRun.log` — plain text, `logcat -v time` with the
    agora and media debug logs appended, 12-234 KB observed — straight to the
@@ -34,6 +34,7 @@ import logging
 
 from aiohttp import web
 
+from petkit_local.devices import payloads
 from petkit_local.http.handlers._common import request_device
 from petkit_local.utils.coerce import to_int
 
@@ -65,7 +66,7 @@ async def handle_upload_log_token(request: web.Request) -> web.Response:
         return web.json_response(NO_TOKEN)
 
     config = request.app["config"]
-    body = device.to_log_upload_token(config.get("bucket_endpoint", ""))
+    body = payloads.to_log_upload_token(device, config.get("bucket_endpoint", ""))
     if not body.get("result"):
         log.warning("Device %d wants to upload its log, but bucket_endpoint %r "
                     "cannot be split into a virtual-host authority",

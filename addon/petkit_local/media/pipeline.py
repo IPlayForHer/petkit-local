@@ -35,7 +35,7 @@ def _locate_raw_file(raw_root: str, info: dict) -> str | None:
     """Find the raw upload matching this file_info entry. Primary: the path
     component of file_info's `fileUrl` (the PAR URL the device PUT to) —
     exact and cheap, and matches the per-device/per-capability `pathPrefix`
-    from devices/base.py::Device.to_oss_sts. Fallback: a recursive filename
+    from devices/payloads.py::to_oss_sts. Fallback: a recursive filename
     search for `fileId` anywhere under RAW, in case a device names the
     object differently than fileUrl implies.
 

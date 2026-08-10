@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from petkit_local.devices import payloads
 from petkit_local.devices.ble import BLERegistry, normalize_mac
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.http.server import create_app
@@ -319,7 +320,7 @@ def test_a_linked_k3_is_named_in_the_parents_device_info():
     ble.register(ble_type="k3", petkit_id=555, mac="AABBCCDDEE01",
                  serial_number="K3SN", secret="k3s", link_with=10)
 
-    info = parent.to_device_info(ble)["result"]
+    info = payloads.to_device_info(parent, ble)["result"]
     assert info["withK3"] == 1 and info["k3Id"] == 555
     assert info["k3Device"]["mac"] == "AABBCCDDEE01"
     assert info["k3Device"]["sn"] == "K3SN"
@@ -328,7 +329,7 @@ def test_a_linked_k3_is_named_in_the_parents_device_info():
 def test_no_k3_says_so_explicitly():
     reg = DeviceRegistry()
     parent = reg.get_or_create(petkit_id=10, device_type="t5", serial_number="SN10")
-    assert parent.to_device_info(BLERegistry())["result"]["withK3"] == 0
+    assert payloads.to_device_info(parent, BLERegistry())["result"]["withK3"] == 0
 
 
 # --- pairing a K3 tells the parent about it ---------------------------------
@@ -699,7 +700,7 @@ async def test_an_accessory_paired_to_a_feeder_still_gets_polled():
     paired in the panel.
     """
     bridge, reg, _ = _bridge_with("d4sh")
-    await bridge._poll_ble_accessories(reg.get(10))
+    await bridge._ble_relay._poll_ble_accessories(reg.get(10))
 
     sent = bridge._client.sent
     assert len(sent) == 1, "the parent was never asked to open a session"
@@ -710,7 +711,7 @@ async def test_an_accessory_paired_to_a_feeder_still_gets_polled():
 
 async def test_the_poll_carries_the_scan_type_the_accessory_was_paired_with():
     bridge, reg, _ = _bridge_with("d4sh")
-    await bridge._poll_ble_accessories(reg.get(10))
+    await bridge._ble_relay._poll_ble_accessories(reg.get(10))
     params = json.loads(bridge._client.sent[0][1])["params"]
     assert params["device"] == {"type": 24, "mac": "aabbccddeeff"}
 
@@ -719,14 +720,14 @@ async def test_a_k3_is_never_asked_to_open_a_relay_session():
     """It is not in the relay list, so a `connect` for it named `type: 0` —
     a scan for a device the parent has never been told about."""
     bridge, reg, _ = _bridge_with("t5", ble_type="k3")
-    await bridge._poll_ble_accessories(reg.get(10))
+    await bridge._ble_relay._poll_ble_accessories(reg.get(10))
     assert bridge._client.sent == []
 
 
 async def test_the_interval_still_throttles():
     bridge, reg, _ = _bridge_with("d4sh", interval=240)
-    await bridge._poll_ble_accessories(reg.get(10))
-    await bridge._poll_ble_accessories(reg.get(10))
+    await bridge._ble_relay._poll_ble_accessories(reg.get(10))
+    await bridge._ble_relay._poll_ble_accessories(reg.get(10))
     assert len(bridge._client.sent) == 1
 
 
@@ -734,7 +735,7 @@ async def test_the_session_is_closed_once_the_reading_is_in():
     """Left open, the parent holds its radio on the accessory until something
     else happens to end it."""
     bridge, reg, ble = _bridge_with("d4sh")
-    await bridge._handle_ble_response(reg.get(10), {
+    await bridge._ble_relay._handle_ble_response(reg.get(10), {
         "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
                                "payload": [{"cmd": 230, "data": CTW3_CMD230}]}),
     })
@@ -1038,7 +1039,7 @@ async def test_an_accessory_remembers_when_it_last_spoke():
     bridge, reg, ble = _bridge_with("d4sh")
     assert ble.get(700).last_seen == 0.0
 
-    await bridge._handle_ble_response(reg.get(10), {
+    await bridge._ble_relay._handle_ble_response(reg.get(10), {
         "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
                                "payload": [{"cmd": 230, "data": CTW3_CMD230}]}),
     })
@@ -1102,7 +1103,7 @@ async def test_a_write_acknowledgement_is_named_rather_than_dropped(caplog):
     bridge, reg, ble = _bridge_with("d4sh")
     ack = base64.b64encode(bytes([1])).decode()
     with caplog.at_level(logging.INFO):
-        await bridge._handle_ble_response(reg.get(10), {
+        await bridge._ble_relay._handle_ble_response(reg.get(10), {
             "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
                                    "payload": [{"cmd": 220, "data": ack}]}),
         })
@@ -1176,16 +1177,16 @@ async def test_the_parent_is_asked_to_hold_the_session_open():
     short 251/252 and only then does its own run-info pass, so the status
     arrives after the window. `time` is how long to hold it — confirmed at 30
     on hardware by @strxno."""
-    from petkit_local.mqtt.bridge import BLE_SESSION_HOLD_SECONDS
+    from petkit_local.mqtt.ble_relay import BLE_SESSION_HOLD_SECONDS
 
     bridge, reg, ble = _bridge_with("d4sh")
-    await bridge._poll_ble_accessories(reg.get(10))
+    await bridge._ble_relay._poll_ble_accessories(reg.get(10))
     params = json.loads(bridge._client.sent[-1][1])["params"]
     assert params["connect_action"] == 1
     assert params["time"] == BLE_SESSION_HOLD_SECONDS
 
     # Closing carries no hold — there is nothing to hold open.
-    await bridge._ble_connect(reg.get(10), ble.get(700), action=0)
+    await bridge._ble_relay._ble_connect(reg.get(10), ble.get(700), action=0)
     closing = json.loads(bridge._client.sent[-1][1])["params"]
     assert closing["connect_action"] == 0
     assert "time" not in closing
@@ -1199,14 +1200,14 @@ async def test_a_frame_that_is_not_a_reading_does_not_end_the_session():
 
     bridge, reg, ble = _bridge_with("d4sh")
     ack = base64.b64encode(bytes([1])).decode()
-    await bridge._handle_ble_response(reg.get(10), {
+    await bridge._ble_relay._handle_ble_response(reg.get(10), {
         "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
                                "payload": [{"cmd": 252, "data": ack}]}),
     })
     assert bridge._client.sent == [], "hung up before the accessory had spoken"
 
     # A real decode still closes it — the radio is not left on for ever.
-    await bridge._handle_ble_response(reg.get(10), {
+    await bridge._ble_relay._handle_ble_response(reg.get(10), {
         "content": json.dumps({"device": {"mac": "AABBCCDDEEFF"},
                                "payload": [{"cmd": 230, "data": CTW3_CMD230}]}),
     })

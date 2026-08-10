@@ -1,9 +1,6 @@
 import json
-import tempfile
-from pathlib import Path
 
 from petkit_local.devices.registry import DeviceRegistry
-from petkit_local.events.store import EventStore
 from petkit_local.ha.publisher import HAPublisher
 
 
@@ -42,27 +39,23 @@ async def test_publish_pet_discovery_uses_distinct_identifiers_and_topics():
     assert avail == ["online"]
 
 
-async def test_publish_pet_state_builds_stats_and_resolves_device_name():
+async def test_publish_pet_state_builds_stats_and_resolves_device_name(event_store):
     reg, dev, pub = _setup()
-    with tempfile.TemporaryDirectory() as tmp:
-        store = EventStore(Path(tmp) / "petkit.db")
-        await store.upsert_event({"device_id": 1, "event_type": "pet_out",
-                                  "event_kind": "toilet_visit", "pet_id": 7, "ts": 1000.0,
-                                  "content_json": '{"pet_weight": 2200}'})
+    await event_store.upsert_event({"device_id": 1, "event_type": "pet_out",
+                                    "event_kind": "toilet_visit", "pet_id": 7, "ts": 1000.0,
+                                    "content_json": '{"pet_weight": 2200}'})
 
-        await pub.publish_pet_state({"id": 7, "name": "Mruczek"}, store)
+    await pub.publish_pet_state({"id": 7, "name": "Mruczek"}, event_store)
 
-        state_msgs = [p for t, p, _ in pub._client.published if t == "petkit-local/pet/7/state"]
-        assert state_msgs
-        state = json.loads(state_msgs[-1])["state"]
-        assert state["lastVisitWeight"] == 2200.0
-        assert state["lastDeviceUsed"] == "T5 SN"
-        assert state["lastVisit"] is not None
+    state_msgs = [p for t, p, _ in pub._client.published if t == "petkit-local/pet/7/state"]
+    assert state_msgs
+    state = json.loads(state_msgs[-1])["state"]
+    assert state["lastVisitWeight"] == 2200.0
+    assert state["lastDeviceUsed"] == "T5 SN"
+    assert state["lastVisit"] is not None
 
 
-async def test_publish_pet_state_noop_without_client():
+async def test_publish_pet_state_noop_without_client(event_store):
     reg = DeviceRegistry()
     pub = HAPublisher(reg, {})
-    with tempfile.TemporaryDirectory() as tmp:
-        store = EventStore(Path(tmp) / "petkit.db")
-        await pub.publish_pet_state({"id": 1, "name": "X"}, store)  # must not raise
+    await pub.publish_pet_state({"id": 1, "name": "X"}, event_store)  # must not raise

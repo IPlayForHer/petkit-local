@@ -26,14 +26,13 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterable
 
-from petkit_local.devices.ble import (
-    BLEDevice, _iter_ble_frames, ble_command_frame, parser_for,
-)
+from petkit_local.devices import payloads
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.ha.categories import get_setting_fields
 from petkit_local.events import codes
 from petkit_local.events.ingest import (apply_derived_state, apply_state_snapshot,
                                         entity_for_event, telemetry_only)
+from petkit_local.mqtt.ble_relay import BLERelay
 from petkit_local.mqtt.topics import (
     parse_topic, event_reply_topic, is_server_published, service_topic, user_get_topic,
 )
@@ -42,17 +41,13 @@ from petkit_local.utils.dicts import dig
 if TYPE_CHECKING:
     from petkit_local.ai.pets import PetRegistry
     from petkit_local.devices.base import Device
-    from petkit_local.devices.ble import BLERegistry
+    from petkit_local.devices.ble import BLEDevice, BLERegistry
     from petkit_local.events.store import EventStore
     from petkit_local.ha.publisher import HAPublisher
     from petkit_local.mqtt.upstream import UpstreamMQTT
     from petkit_local.web.hub import EventHub
 
 log = logging.getLogger(__name__)
-
-#: Seconds to ask a parent to hold a BLE relay session open (`connect.time`).
-#: Confirmed working at 30 on a CTW3 behind a D4SH; the unit is inferred.
-BLE_SESSION_HOLD_SECONDS = 30
 
 # The embedded broker needs a moment to bind before the first connect attempt;
 # without it every startup wastes a full reconnect delay.
@@ -126,12 +121,12 @@ def _event_content(params: dict) -> dict:
             return {}
     return c if isinstance(c, dict) else {}
 
-# Which HA `event` entity an event fires now lives in
-# `events/normalize.py::entity_for_event`. It used to be a literal map of MQTT
-# topic names here, which the HTTP handler imported too — and which silently
-# never matched there, because over HTTP `event_type` is a numeric code rather
-# than a name. Resolving through `codes.lookup` handles both namespaces and
-# reproduces every entry of the old table exactly.
+# Which HA `event` entity an event fires lives in
+# `events/normalize.py::entity_for_event`, not here: the HTTP handler needs the
+# same answer, and over HTTP `event_type` is a numeric code rather than a topic
+# name, so a literal map of MQTT topic names matches nothing on that side and
+# fails silently when it does. Resolving through `codes.lookup` serves both
+# namespaces.
 
 
 class MQTTBridge:
@@ -194,17 +189,48 @@ class MQTTBridge:
         self._event_store = event_store
         self._pet_registry = pet_registry
         self._upstream = upstream
-        self._ble_poll_ts: dict[int, float] = {}
-        #: Per-accessory BLE frame sequence, wrapping at a byte.
-        self._ble_seq: dict[int, int] = {}
         self._client = None
+        self._ble_relay = BLERelay(self, registry, ble_registry, ha_publisher)
+
+    @property
+    def connected(self) -> bool:
+        """Whether there is a broker session to publish on right now.
+
+        Read by the BLE relay before it does anything, and true only between an
+        established connection and the `finally` in `start()` that clears the
+        client — see there for why that window has to be exact.
+        """
+        return bool(self._client)
+
+    async def publish_service(self, device: Device, topic_suffix: str,
+                              envelope: dict) -> bool:
+        """Publish one `thing/service/{topic_suffix}` frame, if there is a link.
+
+        The BLE relay's way out. Unlike `publish_to_device` it reports a missing
+        connection rather than raising: an accessory's traffic has no heartbeat
+        queue to fall back to, and its callers answer the panel with the bool.
+
+        Returns:
+            True if it was published, False when the bridge has no client.
+        """
+        if not self._client:
+            return False
+        topic = service_topic(device.mqtt_product_key, device.mqtt_device_name, topic_suffix)
+        payload = _dumps(envelope)
+        await self._client.publish(topic, payload)
+        # Recorded like any other outbound frame. Without this the whole BLE
+        # conversation was invisible in the panel's live log, which is the one
+        # place somebody debugging a silent accessory would look.
+        if self._hub:
+            self._hub.record_mqtt(device.petkit_id, topic, payload, outbound=True)
+        return True
 
     @property
     def _capture(self) -> bool:
         """Whether to write frames to disk, re-read per message.
 
-        A property and not a stored flag: the panel flips capture live, and this
-        is the value that used to need a restart to notice.
+        A property and not a stored flag: the panel flips capture live, and a
+        value read once at construction would not notice until a restart.
         """
         return bool(self._live_config.get("capture", self._capture_default))
 
@@ -429,21 +455,20 @@ class MQTTBridge:
                 apply_consumable_state(device)
                 self._sync_settings_from_device(device, params)
                 self._registry.mark_dirty()
-                k3 = self._update_linked_k3(device, params)
+                k3 = self._ble_relay._update_linked_k3(device, params)
                 if k3 and self._ha_publisher:
                     await self._ha_publisher.publish_ble_discovery(k3)
                     await self._ha_publisher.publish_ble_state(k3)
-                await self._poll_ble_accessories(device)
+                await self._ble_relay._poll_ble_accessories(device)
 
-        # NOTE: the work / pet / feed / move / pet_detect branches used to copy
-        # their whole raw `params` into `device.state` as `<name>_event` and
-        # `<name>_params`, plus a catch-all `f"{event_type}_params"`. Nothing
-        # ever read any of them -- the event itself is already persisted by
-        # `store.upsert_event`, shown in the Timeline and published as an HA
-        # event entity. All they did was inflate `device.state`, which is merged
-        # into and never pruned, and then get dumped verbatim into the panel's
-        # "Raw parsed state JSON" -- including an `XDevice` string carrying the
-        # request signature. `state` holds what entities read; nothing else.
+        # NOTE: the work / pet / feed / move / pet_detect branches deliberately
+        # do not copy their raw `params` into `device.state`. The event itself is
+        # persisted by `store.upsert_event`, shown in the Timeline and published
+        # as an HA event entity, so a second copy is read by nothing -- while
+        # `device.state` is merged into and never pruned, and is dumped verbatim
+        # into the panel's "Raw parsed state JSON", including the `XDevice`
+        # string carrying the request signature. `state` holds what entities
+        # read; nothing else.
         if event_type in ("error_start", "error_over"):
             err = content.get("err", content.get("errorMsg"))
             if err is not None:
@@ -459,7 +484,7 @@ class MQTTBridge:
             await self._reply_user_get(device, params)
 
         elif event_type == "ble_response":
-            await self._handle_ble_response(device, params)
+            await self._ble_relay._handle_ble_response(device, params)
 
         # Persist to the event store, skipping pure protocol/telemetry messages:
         # "property" is continuous state rather than a discrete event, and
@@ -515,200 +540,25 @@ class MQTTBridge:
                 settings[k] = v
 
     async def publish_ble_command(self, device: Device, ble: BLEDevice,
-                                 cmd: int, payload: bytes) -> bool:
-        """Write one framed command to an accessory, through its parent.
-
-        The mirror of `_handle_ble_response`: `thing/service/ble` carries the
-        MQTT `cmd` alongside the same `FA FC FD ... FB` frame the accessory
-        answers with. The parent forwards the bytes; it does not interpret them.
-
-        A write needs a session that is already open. Published on its own it is
-        accepted by the parent, forwarded, and does nothing — confirmed on a
-        CTW3 by @strxno, who saw the same frame acknowledged with a session held
-        and silently ignored without one. So the session is opened first, on
-        every write, and left for `_handle_ble_response` to close once a reading
-        comes back.
-
-        Returns False when nothing could be sent, so a caller does not report
-        success for a command that never left.
-        """
-        if not self._client:
-            return False
-        await self._ble_connect(device, ble, action=1)
-        seq = self._ble_seq.get(ble.petkit_id, 0)
-        self._ble_seq[ble.petkit_id] = (seq + 1) & 0xFF
-        data = ble_command_frame(cmd, seq, payload)
-        if data is None:
-            log.warning("No BLE opcode known for cmd %s (%s id=%d)",
-                        cmd, ble.ble_type, ble.petkit_id)
-            return False
-        now = int(time.time())
-        envelope = {
-            "method": "thing.service.ble",
-            "id": str(now),
-            "params": {
-                "device": {"type": ble.ble_type_int, "mac": ble.wire_mac},
-                "payload": {"cmd": cmd, "data": data},
-                "timestamp": now,
-            },
-            "version": "1.0.0",
-        }
-        topic = service_topic(device.mqtt_product_key, device.mqtt_device_name, "ble")
-        body = _dumps(envelope)
-        await self._client.publish(topic, body)
-        if self._hub:
-            self._hub.record_mqtt(device.petkit_id, topic, body, outbound=True)
-        log.info("BLE cmd %d -> %s (mac=%s) via parent %d",
-                 cmd, ble.ble_type, ble.mac, device.petkit_id)
-        return True
+                                  cmd: int, payload: bytes) -> bool:
+        """Write one framed command to an accessory, through its parent
+        (`mqtt/ble_relay.py`)."""
+        return await self._ble_relay.publish_ble_command(device, ble, cmd, payload)
 
     async def request_ble_reading(self, device: Device, ble: BLEDevice) -> bool:
-        """Ask the parent for a reading from this accessory, right now.
-
-        Bypasses the `interval` throttle on purpose: this exists for the moment
-        somebody is standing in front of the panel asking "is it alive", and
-        making them wait up to four minutes for the timer is the opposite of an
-        answer. The throttle is then re-armed so the periodic loop does not
-        immediately ask again.
-        """
-        if not self._client:
-            return False
-        await self._ble_connect(device, ble, action=1)
-        self._ble_poll_ts[ble.petkit_id] = time.time()
-        return True
+        """Ask the parent for a reading from this accessory, right now
+        (`mqtt/ble_relay.py`)."""
+        return await self._ble_relay.request_ble_reading(device, ble)
 
     async def poll_ble_loop(self, period: float = 30.0) -> None:
-        """Ask every paired accessory's parent for a reading, forever.
-
-        An accessory reports only when the server tells its parent to open a
-        BLE session -- the parent never does it unprompted. Until this existed
-        the only thing that asked was the handler for the parent's own
-        `property/post`, which meant an accessory paired to a FEEDER never
-        reported at all: a feeder does not send that topic. Its owner saw an
-        accessory that paired, appeared in Home Assistant, and stayed unknown.
-
-        A timer rather than a reaction, because that is what the cloud does and
-        because it is the only trigger that does not depend on the parent
-        having something of its own to say. `_poll_ble_accessories` still holds
-        each accessory's `interval`, so this loop can tick often without
-        talking often; `period` is only how finely those intervals are honoured.
-        """
-        while True:
-            try:
-                await asyncio.sleep(period)
-                if not self._client or not self._ble_registry:
-                    continue
-                for ble in self._ble_registry.all():
-                    if not ble.link_with:
-                        continue
-                    parent = self._registry.get(ble.link_with)
-                    if parent is not None:
-                        await self._poll_ble_accessories(parent)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - one bad poll must not end the loop
-                log.exception("BLE poll loop")
-
-    async def _ble_connect(self, device: Device, ble: BLEDevice, action: int) -> None:
-        """Open (`action=1`) or close (`action=0`) the parent's BLE session.
-
-        `thing.service.connect` is the only way an accessory reports at all:
-        the parent does not poll on its own initiative, so nothing arrives
-        until this is pushed. Closing matters too — an accessory whose session
-        is never ended keeps the parent's radio busy between readings.
-        """
-        if not self._client:
-            return
-        now = int(time.time())
-        envelope = {
-            "method": "thing.service.connect",
-            "id": str(now),
-            "params": {
-                "connect_action": action,
-                # How long to HOLD the session open, in seconds. Without it the
-                # parent opens the radio and lets it go again before the
-                # accessory has said anything useful: a CTW3 answers a bare
-                # open with a short 251/252 and only then does its own run-info
-                # pass, so the status arrives after the window we were giving
-                # it. 30 is what @strxno confirmed on hardware; the unit is
-                # inferred from the value working, not from a capture of the
-                # field being varied.
-                **({"time": BLE_SESSION_HOLD_SECONDS} if action else {}),
-                "device": {"type": ble.ble_type_int, "mac": ble.wire_mac},
-                "timestamp": now,
-            },
-            "version": "1.0.0",
-        }
-        topic = service_topic(device.mqtt_product_key, device.mqtt_device_name, "connect")
-        payload = _dumps(envelope)
-        await self._client.publish(topic, payload)
-        # Recorded like any other outbound frame. Without this the whole BLE
-        # conversation was invisible in the panel's live log, which is the one
-        # place somebody debugging a silent accessory would look.
-        if self._hub:
-            self._hub.record_mqtt(device.petkit_id, topic, payload, outbound=True)
-        log.info("BLE %s -> %s (mac=%s) via parent %d",
-                 "connect" if action else "disconnect",
-                 ble.ble_type, ble.mac, device.petkit_id)
+        """Ask every paired accessory's parent for a reading, forever
+        (`mqtt/ble_relay.py`). Started as a background task by `main/lifecycle.py`."""
+        await self._ble_relay.poll_ble_loop(period)
 
     async def publish_relay_update(self, device: Device) -> bool:
-        """Tell a parent its accessory list has changed, so it refetches now.
-
-        `dev_ble_device` answers with `nextTick: 3600`, and the parent honours
-        it: pair an accessory and it is an HOUR before that parent knows to scan
-        for the MAC. Everything downstream looks broken for that hour — the poll
-        pushes `thing/service/connect` for an accessory the parent was never
-        told about, and nothing comes back, which is indistinguishable from a
-        wrong scan type or a bad MAC.
-
-        `update_action: 1` is the trigger, and any other value (or no field at
-        all) is logged by the firmware and ignored. Confirmed on a T5: the
-        publish is followed immediately by a `GET /6/t5/dev_ble_device`.
-        Reported by @strxno.
-
-        Returns False when nothing could be sent, so a caller does not report a
-        refresh that never left.
-        """
-        if not self._client:
-            return False
-        now = int(time.time())
-        envelope = {
-            "method": "thing.service.ble_relay_update",
-            "id": str(now),
-            "params": {"update_action": 1},
-            "version": "1.0.0",
-        }
-        topic = service_topic(device.mqtt_product_key, device.mqtt_device_name,
-                              "ble_relay_update")
-        payload = _dumps(envelope)
-        await self._client.publish(topic, payload)
-        if self._hub:
-            self._hub.record_mqtt(device.petkit_id, topic, payload, outbound=True)
-        log.info("BLE relay list refresh -> parent %d", device.petkit_id)
-        return True
-
-    async def _poll_ble_accessories(self, device: Device) -> None:
-        """Ask the parent to open a BLE relay session for each linked accessory
-        so it starts posting ble_response frames. Without this poll the parent
-        never relays W5 data. Throttled per accessory `interval`.
-
-        Mirrors localkit ServiceConnect (thing/service/connect, connect_action=1).
-        """
-        if not self._client or not self._ble_registry:
-            return
-        # `non_k3_for_parent`, not `get_linked`: a K3 is never in the relay list
-        # at all (it travels inside the parent's own device_info), so asking a
-        # parent to open a BLE session for one sent a `connect` with `type: 0`.
-        linked = self._ble_registry.non_k3_for_parent(device.petkit_id)
-        if not linked:
-            return
-        now = time.time()
-        for ble in linked:
-            interval = getattr(ble, "interval", 240) or 240
-            if now - self._ble_poll_ts.get(ble.petkit_id, 0) < interval:
-                continue
-            self._ble_poll_ts[ble.petkit_id] = now
-            await self._ble_connect(device, ble, action=1)
+        """Tell a parent its accessory list has changed, so it refetches now
+        (`mqtt/ble_relay.py`)."""
+        return await self._ble_relay.publish_relay_update(device)
 
     async def _reply_user_get(self, device: Device, params: dict) -> None:
         """Answer an MQTT data_get by publishing the requested resource to
@@ -766,11 +616,11 @@ class MQTTBridge:
             resource the device would take as authoritative.
         """
         if data_type == "dev_device_info":
-            return device.to_device_info(self._ble_registry)
+            return payloads.to_device_info(device, self._ble_registry)
         if data_type == "dev_multi_config":
-            return device.to_multi_config()
+            return payloads.to_multi_config(device)
         if data_type == "dev_serverinfo":
-            return device.to_serverinfo(self._api_url) if self._api_url else None
+            return payloads.to_serverinfo(device, self._api_url) if self._api_url else None
         if data_type == "dev_schedule_get":
             sched = device.config.get("schedule")
             return {"result": sched} if sched is not None else None
@@ -793,104 +643,6 @@ class MQTTBridge:
                 result["list"] = lst
             return {"result": result}
         return None
-
-    def _update_linked_k3(self, device: Device, params: dict) -> BLEDevice | None:
-        """Merge K3 consumable fields piggybacked on the parent's property post.
-
-        The K3 spray is BLE-only and never posts anything itself: its
-        battery and liquid level ride along in the parent litter box's own
-        property post, which is why they are picked out here rather than in
-        `_handle_ble_response`.
-
-        Returns:
-            The K3 BLEDevice if anything changed (the caller re-publishes it to
-            HA), else None.
-        """
-        if not self._ble_registry:
-            return None
-        k3 = self._ble_registry.get_linked_k3(device.petkit_id)
-        if not k3:
-            return None
-
-        updated = False
-        if "battery" in params:
-            k3.state.setdefault("consumables", {})["battery"] = params["battery"]
-            updated = True
-        if "liquid" in params:
-            k3.state.setdefault("consumables", {})["liquid"] = params["liquid"]
-            updated = True
-
-        if not updated:
-            return None
-        self._ble_registry.mark_dirty()
-        log.info("Updated K3 (id=%d) from parent device %d: battery=%s liquid=%s",
-                 k3.petkit_id, device.petkit_id,
-                 params.get("battery", "?"), params.get("liquid", "?"))
-        return k3
-
-    async def _handle_ble_response(self, device: Device, params: dict) -> None:
-        """Apply one relayed BLE frame to the accessory it came from.
-
-        The accessory is identified by MAC, not by the relaying parent: the
-        same W5 can in principle be reachable through more than one WiFi
-        device, and the MAC is the only stable key in the frame.
-        """
-        if not self._ble_registry:
-            return
-
-        content = params.get("content", {})
-        if isinstance(content, str):
-            try:
-                content = json.loads(content)
-            except (ValueError, TypeError):
-                content = {}
-
-        ble_mac = dig(content, "device", "mac", default="")
-
-        ble_dev = self._ble_registry.get_by_mac(ble_mac) if ble_mac else None
-        if not ble_dev:
-            log.debug("BLE response with no matching accessory (mac=%s)", ble_mac)
-            return
-
-        parse = parser_for(ble_dev.ble_type)
-        fragment = parse(content) if parse is not None else {}
-        if fragment:
-            for section, vals in fragment.items():
-                ble_dev.state.setdefault(section, {}).update(vals)
-            ble_dev.last_seen = time.time()
-            self._ble_registry.mark_dirty()
-            log.info("Decoded %s (id=%d) from parent %d: %s",
-                     ble_dev.ble_type.upper(), ble_dev.petkit_id,
-                     device.petkit_id, json.dumps(fragment)[:120])
-        else:
-            # Not a status frame, or one we cannot read. Either way, name what
-            # came back: a write is answered with a bare `01` on its own cmd,
-            # or a short 251/252, and dropping those in silence left "the
-            # switch flipped back" as the only symptom of a frame the accessory
-            # did not accept.
-            replies = [(cmd, bytes(data).hex() or "(empty)")
-                       for cmd, data in _iter_ble_frames(content)]
-            if replies:
-                log.info("%s (id=%d) replied: %s", ble_dev.ble_type.upper(),
-                         ble_dev.petkit_id,
-                         ", ".join(f"cmd {c} {d}" for c, d in replies))
-            else:
-                log.info("%s ble_response not decodable yet (id=%d) - turn capture on in the "
-                         "panel (Setup -> Settings) to collect frames",
-                         ble_dev.ble_type.upper(), ble_dev.petkit_id)
-
-        # Hang up only once a reading is actually in. A session is also
-        # answered with frames that are not status — a bare `01` write ack, a
-        # short 251/252 — and closing on those cut the radio before the
-        # accessory got to its run-info pass, which is most of why a CTW3 was so
-        # hard to get anything out of. The hold above bounds the session, so
-        # leaving it open costs a fixed number of seconds rather than for ever.
-        if fragment:
-            await self._ble_connect(device, ble_dev, action=0)
-
-        if self._ha_publisher:
-            await self._ha_publisher.publish_ble_discovery(ble_dev)
-            await self._ha_publisher.publish_ble_state(ble_dev)
 
     async def publish_to_device(self, device: Device, topic_suffix: str, payload: dict) -> None:
         """Push a command to a device over `thing/service/{topic_suffix}`.

@@ -1,5 +1,6 @@
 import json
 
+from petkit_local.devices import payloads
 from petkit_local.devices.base import Device
 
 
@@ -24,7 +25,7 @@ def test_capability_toggle_off_is_respected():
 def test_oss_sts_omits_disabled_capability():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     d.config["capabilities"] = {"highLight": False}
-    sts = d.to_oss_sts("https://192.0.2.20:9000")
+    sts = payloads.to_oss_sts(d, "https://192.0.2.20:9000")
     types = {c["cycleType"] for c in sts["result"]["capability"]}
     assert "highLight" not in types
     assert types == {"fullVideo", "eventImage", "dynamicVideo"}
@@ -32,7 +33,7 @@ def test_oss_sts_omits_disabled_capability():
 
 def test_oss_sts_pathprefix_is_per_capability():
     d = Device(device_type="t5", petkit_id=42, serial_number="SN")
-    sts = d.to_oss_sts("https://192.0.2.20:9000")
+    sts = payloads.to_oss_sts(d, "https://192.0.2.20:9000")
     for c in sts["result"]["capability"]:
         assert c["pathPrefix"] == f"t5/42/{c['cycleType']}"
 
@@ -44,7 +45,7 @@ def test_oss_sts_names_nowhere_rather_than_somewhere_unreachable():
     cannot tell an unreachable address from a working one until it has tried,
     and then it keeps trying."""
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    sts = d.to_oss_sts("")
+    sts = payloads.to_oss_sts(d, "")
     assert sts["result"]["capability"] == []
     assert "localhost" not in json.dumps(sts)
 
@@ -52,14 +53,14 @@ def test_oss_sts_names_nowhere_rather_than_somewhere_unreachable():
 def test_oss_sts_empty_when_all_capabilities_disabled():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     d.config["capabilities"] = {ct: False for ct in Device.CAPABILITY_TYPES}
-    sts = d.to_oss_sts("https://192.0.2.20:9000")
+    sts = payloads.to_oss_sts(d, "https://192.0.2.20:9000")
     assert sts["result"]["capability"] == []
 
 
 def test_device_info_capacity_mirrors_enabled_capabilities():
     d = Device(device_type="t5", petkit_id=1, serial_number="SN")
     d.config["capabilities"] = {"dynamicVideo": False}
-    info = d.to_device_info()
+    info = payloads.to_device_info(d)
     names = {c["name"] for c in info["result"]["capacity"]}
     assert "dynamicVideo" not in names
     assert names == {"fullVideo", "eventImage", "highLight"}

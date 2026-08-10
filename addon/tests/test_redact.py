@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from petkit_local.devices import payloads
 from petkit_local.devices.base import Device
 from petkit_local.http.redact import (
     RULE_MQTT,
@@ -336,10 +337,10 @@ def test_the_adopted_secret_is_what_signup_then_hands_out():
 
     device.api_secret = "0123456789abcdef"
     assert device.signing_secret == "0123456789abcdef"
-    assert device.to_signup()["result"]["secret"] == "0123456789abcdef"
-    assert device.to_device_info()["result"]["secret"] == "0123456789abcdef"
+    assert payloads.to_signup(device)["result"]["secret"] == "0123456789abcdef"
+    assert payloads.to_device_info(device)["result"]["secret"] == "0123456789abcdef"
     # The broker credential is a DIFFERENT value and must not move with it.
-    assert device.to_iot_device_info("h")["result"]["ali"]["deviceSecret"] == \
+    assert payloads.to_iot_device_info(device, "h")["result"]["ali"]["deviceSecret"] == \
         device.mqtt_device_secret
 
 
@@ -550,7 +551,7 @@ def test_serverinfo_is_forced_to_ours_even_when_upstream_omits_it():
                          policy=_policy(device=device))
     body = json.loads(result.body)
 
-    assert body == device.to_serverinfo(API_URL)
+    assert body == payloads.to_serverinfo(device, API_URL)
     assert body["result"]["apiServers"] == [API_URL]
     assert [r.rule for r in result.records] == [RULE_SERVER]
 

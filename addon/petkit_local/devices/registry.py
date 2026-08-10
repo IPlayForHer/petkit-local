@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from petkit_local.devices import defaults
 from petkit_local.devices.base import Device
 from petkit_local.utils.jsonio import atomic_write_json, atomic_write_text, read_json
 
@@ -35,7 +36,7 @@ def _merge_default_settings(device: Device) -> None:
     """
     settings = device.config.setdefault("settings", {})
     if isinstance(settings, dict):
-        for key, value in device.default_settings().items():
+        for key, value in defaults.default_settings(device).items():
             settings.setdefault(key, value)
 
 
@@ -291,9 +292,10 @@ class DeviceRegistry(PersistedRegistry):
                 device.firmware = kwargs["firmware"]
                 changed = True
             if changed:
-                # These updates used to live in memory only until some unrelated
-                # later save() happened to flush them, so a restart in between
-                # lost a firmware upgrade or a changed MAC.
+                # Marked dirty here, not left to the next writer: without this
+                # the update lives in memory until some unrelated later save()
+                # happens to flush it, and a restart in between loses a
+                # firmware upgrade or a changed MAC.
                 self.mark_dirty()
             return device
         device = Device(device_type=device_type, petkit_id=petkit_id, **kwargs)

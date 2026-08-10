@@ -8,6 +8,7 @@ web panel's own control emitting the same shape.
 """
 import pytest
 
+from petkit_local.devices import defaults
 from petkit_local.devices.base import Device, Refused
 from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.ha.commands import _coerce_time, handle_ha_command
@@ -17,7 +18,7 @@ from petkit_local.ha.entities.times import FOUNTAIN_W7H_TIMES
 
 def _fountain():
     d = Device(device_type="w7h", petkit_id=1, serial_number="SN")
-    d.config.setdefault("settings", d.default_settings())
+    d.config.setdefault("settings", defaults.default_settings(d))
     index = {e.unique_id_suffix: e for e in get_entities_for_device(d) if e.is_settable}
     return d, index
 

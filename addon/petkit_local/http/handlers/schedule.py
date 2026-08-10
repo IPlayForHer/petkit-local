@@ -11,7 +11,7 @@ it. Not even a plausible one — a T5 was watched being sent 09:45/13:45/18:45 b
 PetKit's own cloud, which makes those times some real account's schedule, not
 this account's.
 
-Same rule as `devices/base.py::default_settings`: a value we make up does not
+Same rule as `devices/defaults.py::default_settings`: a value we make up does not
 stay ours, because it is served straight back to the device as the owner's
 setting.
 """

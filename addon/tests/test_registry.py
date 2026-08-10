@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import petkit_local.utils.jsonio as jsonio
+from petkit_local.devices import defaults
 from petkit_local.devices.ble import BLERegistry
 from petkit_local.devices.registry import DeviceRegistry
 
@@ -22,11 +23,11 @@ def test_create_seeds_settings():
 
 def test_seeded_settings_match_the_public_defaults():
     # The registry, ha/publisher.py and the tests all seed from the same
-    # Device.default_settings(); a divergence would show HA one set of values
+    # defaults.default_settings(); a divergence would show HA one set of values
     # while the device_info response hands the device another.
     reg = DeviceRegistry()
     d = reg.get_or_create(petkit_id=1, device_type="t5", serial_number="SN")
-    assert d.config["settings"] == d.default_settings()
+    assert d.config["settings"] == defaults.default_settings(d)
 
 
 def test_persistence_roundtrip():
@@ -63,7 +64,7 @@ def test_settings_added_in_a_later_version_are_backfilled_on_load():
         d2 = DeviceRegistry(persist_path=path).get(5)
         assert d2.config["settings"]["autoWork"] == 0   # owner's value survives
         assert "petDetection" in d2.config["settings"]  # gap filled
-        assert set(d2.default_settings()) <= set(d2.config["settings"])
+        assert set(defaults.default_settings(d2)) <= set(d2.config["settings"])
 
 
 def test_by_mqtt_name_lookup():

@@ -23,6 +23,7 @@ import time
 
 from aiohttp import web
 
+from petkit_local.devices import payloads
 from petkit_local.http.handlers._common import (
     device_id, no_device_response, request_device,
 )
@@ -74,7 +75,7 @@ async def handle_oss_sts(request: web.Request) -> web.Response:
     it at the source (see `Device.enabled_capabilities()`).
 
     Returns:
-        `Device.to_oss_sts()` — bucket URLs plus the AES key the device
+        `payloads.to_oss_sts()` — bucket URLs plus the AES key the device
         encrypts uploads with, which `media/pipeline.py` later decrypts against.
         An unidentified caller gets a full STS block built from a throwaway
         Device rather than the usual empty result, because that is the shape
@@ -86,7 +87,7 @@ async def handle_oss_sts(request: web.Request) -> web.Response:
     bucket_endpoint = config.get("bucket_endpoint", "")
     aes_key = _get_aes_key(config)
     if device:
-        return web.json_response(device.to_oss_sts(bucket_endpoint, aes_key))
+        return web.json_response(payloads.to_oss_sts(device, bucket_endpoint, aes_key))
 
     # A throwaway Device, never registered: it only exists to render the payload
     # (see the docstring on why an unidentified caller gets a full block), and
@@ -95,21 +96,21 @@ async def handle_oss_sts(request: web.Request) -> web.Response:
     from petkit_local.devices.base import Device
     x_dev = request.get("x_device", {})
     fallback = Device(device_type=x_dev.get("type", "unknown"), petkit_id=device_id(request) or 0)
-    return web.json_response(fallback.to_oss_sts(bucket_endpoint, aes_key))
+    return web.json_response(payloads.to_oss_sts(fallback, bucket_endpoint, aes_key))
 
 
 async def handle_video_device_info(request: web.Request) -> web.Response:
     """`dev_video_device_info` — tell a camera device it has no Agora account.
 
     Returns:
-        `Device.to_video_device_info()`, which is empty Agora credentials; the
+        `payloads.to_video_device_info()`, which is empty Agora credentials; the
         same empty block is returned for an unknown device. Live view runs over
         the local RTSP/go2rtc path instead, so the device has to be told the
         cloud relay does not exist rather than being left retrying it.
     """
     device = request_device(request)
     if device:
-        return web.json_response(device.to_video_device_info())
+        return web.json_response(payloads.to_video_device_info(device))
     return web.json_response({"result": {"agora": {"license": "", "appId": ""}}})
 
 
@@ -121,13 +122,13 @@ async def handle_device_info(request: web.Request) -> web.Response:
     hence the `ble_registry` lookup.
 
     Returns:
-        `Device.to_device_info()`, or the standard empty result for an unknown
+        `payloads.to_device_info()`, or the standard empty result for an unknown
         device.
     """
     device = request_device(request)
     if device:
         ble_registry = request.app.get("ble_registry")
-        return web.json_response(device.to_device_info(ble_registry))
+        return web.json_response(payloads.to_device_info(device, ble_registry))
     return no_device_response()
 
 
@@ -135,13 +136,13 @@ async def handle_multi_config(request: web.Request) -> web.Response:
     """`dev_multi_config` — the schedule ranges (light, do-not-disturb, camera).
 
     Returns:
-        `Device.to_multi_config()`, whose values are JSON-encoded STRINGS rather
+        `payloads.to_multi_config()`, whose values are JSON-encoded STRINGS rather
         than nested objects (verified against the real cloud), or the standard
         empty result for an unknown device.
     """
     device = request_device(request)
     if device:
-        return web.json_response(device.to_multi_config())
+        return web.json_response(payloads.to_multi_config(device))
     return no_device_response()
 
 

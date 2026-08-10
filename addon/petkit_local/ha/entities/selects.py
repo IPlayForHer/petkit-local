@@ -41,7 +41,7 @@ LITTER_SELECTS = [
 
 FEEDER_SELECTS = [
     # `surplusControl` is in real D4SH firmware (`ctrl`, `libbase.so`), so the
-    # control is genuine — but it is NOT seeded in `Device.default_settings()`,
+    # control is genuine — but it is NOT seeded in `defaults.default_settings()`,
     # because `to_device_info` serves seeded settings back to the device and a
     # made-up value would change the owner's setting.
     #

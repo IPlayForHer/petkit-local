@@ -298,14 +298,15 @@ def test_a_never_reset_consumable_stays_unknown_rather_than_zero():
 
 
 def test_advertised_spray_days_matches_the_countdown_total():
-    # base.py told the device sprayDays=45 while the countdown here used 30, so
-    # HA burned down a cartridge the device had been told was half again as
+    # payloads.py told the device sprayDays=45 while the countdown here used 30,
+    # so HA burned down a cartridge the device had been told was half again as
     # long. Both now read one constant; this fails if either is re-hardcoded.
+    from petkit_local.devices import payloads
     from petkit_local.devices.base import Device
     from petkit_local.devices.state_parsers import SPRAY_TOTAL_DAYS
 
     dev = Device(device_type="t5", petkit_id=1, serial_number="SN")
-    info = dev.to_device_info()["result"]
+    info = payloads.to_device_info(dev)["result"]
     assert info["sprayDays"] == SPRAY_TOTAL_DAYS
 
     # 10.5 days into the cartridge, off a whole-day boundary so the assertion
