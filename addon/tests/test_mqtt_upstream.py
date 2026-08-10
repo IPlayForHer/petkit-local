@@ -197,6 +197,20 @@ async def test_a_post_reply_from_the_cloud_is_not_relayed(tmp_path):
     assert local == []
 
 
+@pytest.mark.parametrize("topic", [
+    "/sys/realpk/realdn/thing/event/property/post",
+    "/sys/realpk/realdn/thing/event/pet_out/post",
+    "/ota/device/inform/realpk/realdn",
+])
+async def test_a_device_direction_frame_from_upstream_is_not_relayed(tmp_path, topic):
+    """The loop from #20: relayed down, it comes back through the bridge's `#`
+    subscription, is ingested as device traffic, and goes straight back up."""
+    up, device, _, local = _bridge(tmp_path)
+
+    await up._on_upstream(device, REAL, _FakeMessage(topic, {"id": "495", "params": {}}))
+    assert local == []
+
+
 # --- the one thing that is never relayed ------------------------------------
 
 async def test_an_ota_push_is_blocked_and_recorded(tmp_path, event_store):

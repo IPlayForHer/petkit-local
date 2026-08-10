@@ -22,7 +22,11 @@ every relayed frame is re-addressed (`mqtt/topics.py::rewrite_topic`).
 **The bridge hears its own echo.** `MQTTBridge` holds one `#` subscription, so
 it sees our own downward publishes come back. The upward path is therefore an
 explicit ALLOW-LIST of what a device originates; a deny-list would relay our own
-relayed frames straight back up and loop forever.
+relayed frames straight back up and loop forever. That allow-list filters by
+topic SHAPE, so it cannot tell a device's own event from one we just relayed
+down onto the same topic — which is why the DOWNWARD path refuses everything
+outside the server's own direction (`_on_upstream`, and #20 for the storm that
+came of not doing it).
 
 Nothing here may affect the local broker. Every failure path — no credentials, a
 refused connection, a dropped one, a frame that will not parse — leaves the
@@ -49,7 +53,9 @@ import time
 from typing import TYPE_CHECKING, Any, Callable
 
 from petkit_local.mqtt.auth import compute_aliyun_sign
-from petkit_local.mqtt.topics import ota_upgrade_topic, parse_topic, rewrite_topic
+from petkit_local.mqtt.topics import (
+    is_server_published, ota_upgrade_topic, parse_topic, rewrite_topic,
+)
 from petkit_local.utils.jsonio import atomic_write_json, read_json
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -434,6 +440,27 @@ class UpstreamMQTT:
         parsed = parse_topic(topic)
         if parsed is not None and parsed.category == "ota" and parsed.detail == "upgrade":
             await self._block_ota(device, topic, raw)
+            return
+
+        # Only what the SERVER publishes may go down. The direction table at the
+        # top of `topics.py` is the whole rule: a frame arriving from upstream
+        # on a device-direction topic (`thing/event/*/post`) is not a command,
+        # the local broker would not deliver it to the device anyway
+        # (`topics.downstream_filters` does not carry it), and republishing it
+        # locally starts a loop — the bridge's `#` subscription hands it back,
+        # `is_server_published` does not claim it, so `_handle_message` ingests
+        # it as device traffic and `forward_up` sends it straight back up.
+        # Observed against the real cloud as ~90 round trips per property post,
+        # every ~5s (#20). The module docstring's ALLOW-LIST is not enough on
+        # its own: it filters by topic SHAPE, and what has to be told apart here
+        # is PROVENANCE.
+        #
+        # Warned rather than dropped in silence, because a frame on a topic
+        # `_downstream_topics` never subscribed to is itself the anomaly.
+        if parsed is not None and not is_server_published(parsed):
+            log.warning("Refusing to relay a device-direction frame from upstream "
+                        "for device %d on %s: %s",
+                        device.petkit_id, topic, _text(raw)[:200])
             return
 
         local_topic = rewrite_topic(topic, device.mqtt_product_key, device.mqtt_device_name)
