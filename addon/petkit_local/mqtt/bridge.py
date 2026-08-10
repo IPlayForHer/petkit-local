@@ -32,15 +32,18 @@ from typing import TYPE_CHECKING, Any, AsyncIterable
 
 from petkit_local.devices import payloads
 from petkit_local.devices.registry import DeviceRegistry
+from petkit_local.devices.state_parsers import apply_consumable_state, normalize_property_params
 from petkit_local.ha.categories import get_setting_fields
-from petkit_local.events import codes
+from petkit_local.events import codes, ingest
 from petkit_local.events.ingest import (apply_derived_state, apply_state_snapshot,
                                         entity_for_event, telemetry_only)
 from petkit_local.mqtt.ble_relay import BLERelay
 from petkit_local.mqtt.topics import (
     parse_topic, event_reply_topic, is_server_published, service_topic, user_get_topic,
 )
+from petkit_local.utils.capture import capture_record
 from petkit_local.utils.dicts import dig
+from petkit_local.utils.logtext import excerpt, payload_text
 
 if TYPE_CHECKING:
     from petkit_local.ai.pets import PetRegistry
@@ -95,19 +98,6 @@ def _dumps(payload: object) -> str:
     localkit both emit compact, so every broker->device publish must too.
     """
     return json.dumps(payload, separators=(",", ":"))
-
-
-def _payload_text(payload: object) -> str:
-    """Decode a raw MQTT payload to text, never raising on a binary frame."""
-    if isinstance(payload, (bytes, bytearray)):
-        return bytes(payload).decode("utf-8", errors="replace")
-    return str(payload)
-
-
-def _excerpt(payload: object, limit: int = PAYLOAD_LOG_CHARS) -> str:
-    """Render a raw MQTT payload as bounded, log-safe text."""
-    text = _payload_text(payload)
-    return (text[:limit] + "...") if len(text) > limit else text
 
 
 def _event_content(params: dict) -> dict:
@@ -251,7 +241,7 @@ class MQTTBridge:
         events or command push).
         """
         try:
-            import aiomqtt
+            import aiomqtt  # noqa: PLC0415 - optional dependency, probed at use
         except ImportError:
             log.warning("aiomqtt not installed - MQTT bridge disabled")
             return
@@ -316,7 +306,8 @@ class MQTTBridge:
                 raise
             except Exception:
                 log.exception("Dropped MQTT message on %s: %s",
-                              message.topic, _excerpt(getattr(message, "payload", b"")))
+                              message.topic,
+                              excerpt(getattr(message, "payload", b""), PAYLOAD_LOG_CHARS))
 
     async def _handle_message(self, message: Any) -> None:
         """Route one broker message to the device it belongs to.
@@ -334,12 +325,11 @@ class MQTTBridge:
             payload = None
 
         if self._capture:
-            from petkit_local.utils.capture import capture_record
             capture_record(self._capture_dir, "mqtt", {
                 "topic": topic,
                 # Capture is a reverse-engineering aid: keep undecodable frames
                 # in full, they are the ones worth studying.
-                "payload": payload if isinstance(payload, (dict, list)) else _payload_text(raw),
+                "payload": payload if isinstance(payload, (dict, list)) else payload_text(raw),
             })
 
         # Every handler below reads the Aliyun envelope by key, so a frame that
@@ -347,7 +337,8 @@ class MQTTBridge:
         # passing raw bytes on and letting `.get()` blow up mid-handler) keeps
         # the failure to the one device that sent it.
         if not isinstance(payload, dict):
-            log.warning("Ignoring non-object MQTT payload on %s: %s", topic, _excerpt(raw))
+            log.warning("Ignoring non-object MQTT payload on %s: %s", topic,
+                        excerpt(raw, PAYLOAD_LOG_CHARS))
             return
 
         parsed = parse_topic(topic)
@@ -453,8 +444,6 @@ class MQTTBridge:
                 device.state.update(telemetry_only(params))
                 # Overlay the flat keys the entities read (MQTT nests differently
                 # from the HTTP state_report).
-                from petkit_local.devices.state_parsers import (apply_consumable_state,
-                                                                normalize_property_params)
                 device.state.update(normalize_property_params(device.device_type, params))
                 apply_consumable_state(device)
                 self._sync_settings_from_device(device, params)
@@ -502,7 +491,6 @@ class MQTTBridge:
         # session opened and closed put two rows in the Timeline. Harmless
         # while nothing polled; a steady stream once `poll_ble_loop` existed.
         if self._event_store is not None and event_type not in codes.MQTT_TRANSPORT_TOPICS:
-            from petkit_local.events import ingest
             row = ingest.from_mqtt(device, event_type, params)
             # Same rule as the HTTP path: only an identity we can prove is ours
             # becomes `pet_id` (see ai/pets.py::resolve_pet_ref).

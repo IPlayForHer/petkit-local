@@ -133,7 +133,7 @@ def _session_from_visit(anchor: dict, pet_in: dict | None, media: list[dict]) ->
         "display_ts": _started_at(anchor, pet_in) or anchor.get("ts"),
         "pet_id": anchor.get("pet_id"),
         "event_type": anchor.get("event_type"),
-        "event_kind": "toilet_visit",
+        "event_kind": codes.KIND_TOILET,
         "duration_sec": duration,
         "weight": _weight_of(anchor),
         "content": _content_of(anchor),
@@ -515,11 +515,11 @@ def _filter_buckets(session: dict) -> set[str]:
     """
     kind = session.get("event_kind")
     buckets: set[str] = set()
-    if kind == "toilet_visit":
+    if kind == codes.KIND_TOILET:
         buckets.add("toileting")
-    elif kind in ("pet", "motion"):
+    elif kind in (codes.KIND_PET, codes.KIND_MOTION):
         buckets.add("pet")
-    elif kind == "error":
+    elif kind == codes.KIND_ERROR:
         buckets.add("fault")
 
     if to_int((session.get("content") or {}).get("petVoice"), 0):

@@ -20,7 +20,7 @@ dependency or a configured zone name.
 from __future__ import annotations
 
 import time
-from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone
 
 #: The wire format the panel's date picker and `?date=` parameter both use.
 DATE_FORMAT = "%Y-%m-%d"
@@ -39,16 +39,6 @@ def cloud_timestamp(when: float | None = None) -> str:
     return (now.strftime("%Y-%m-%dT%H:%M:%S.")
             + f"{now.microsecond // 1000:03d}"
             + now.strftime("%z"))
-
-
-def local_tz() -> tzinfo | None:
-    """The process's current local timezone as a fixed-offset `tzinfo`.
-
-    Only valid for the instant it is called: it carries today's offset, not a
-    rule, so it must not be reused to interpret a date on the other side of a
-    DST boundary. `local_day_bounds` deliberately does not use it.
-    """
-    return datetime.now().astimezone().tzinfo
 
 
 def local_offset_hours(when: float | None = None) -> float:

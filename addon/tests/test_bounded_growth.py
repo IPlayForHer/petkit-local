@@ -109,7 +109,7 @@ NOT_IN_PANEL = {RAW_CATEGORY}
 
 
 def test_every_retention_category_is_editable_from_the_panel():
-    """`RETENTION_LABELS` in app.js is the single source for the retention table
+    """`RETENTION_LABELS` in setup.js is the single source for the retention table
     AND its save payload, so a category missing from it renders no row and can
     never be changed.
 
@@ -118,7 +118,7 @@ def test_every_retention_category_is_editable_from_the_panel():
     which is how `wasteCheck` and `healthPic` stayed unreachable. Dropping one
     on purpose means naming it in `NOT_IN_PANEL` with the reason.
     """
-    js = Path(__file__).resolve().parents[1] / "petkit_local/web/static/app.js"
+    js = Path(__file__).resolve().parents[1] / "petkit_local/web/static/js/setup.js"
     text = js.read_text()
     labels = text[text.index("const RETENTION_LABELS = {"):]
     labels = labels[: labels.index("};")]

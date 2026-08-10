@@ -20,6 +20,7 @@ from petkit_local.devices.state_parsers import apply_consumable_state
 from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.ha.commands import ALL_ACTIONS, Refused, handle_ha_command
 from petkit_local.media.go2rtc import stream_urls_with_rtsp
+from petkit_local.mqtt.broker import delivery_view
 from petkit_local.utils.const import device_display_name
 from petkit_local.utils.dicts import dig_path
 from petkit_local.web.api._common import (
@@ -73,12 +74,10 @@ def _state_doc(d: Device) -> dict[str, Any]:
 def _delivery_view(broker: Any, d: Device) -> dict | None:
     """What the broker would deliver to this device, or None if it isn't running.
 
-    Imported locally so the panel does not pull amqtt in just to render a
-    device list — `--no-mqtt` and every panel test run without a broker at all.
+    `--no-mqtt`, and every panel test, runs with no broker at all.
     """
     if broker is None:
         return None
-    from petkit_local.mqtt.broker import delivery_view
     return delivery_view(broker, d.mqtt_product_key, d.mqtt_device_name)
 
 

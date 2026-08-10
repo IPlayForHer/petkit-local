@@ -7,10 +7,15 @@ initialization` at load, which aborts the whole script — every tab, not just
 the broken feature — while the file parsed perfectly and every Python test
 passed. The panel was simply blank.
 
-So this executes app.js against a DOM stub just big enough to reach the end of
-the top-level code. It is deliberately NOT a DOM test: nothing here asserts what
-the page renders. It answers one question — does the file survive being loaded —
-because that is the failure that takes everything with it.
+So this imports `static/js/main.js` against a DOM stub just big enough to reach
+the end of its bootstrap. It is deliberately NOT a DOM test: nothing here
+asserts what the page renders. It answers one question — does the panel survive
+being loaded — because that is the failure that takes everything with it.
+
+Importing the real entry point rather than reading one file also makes this the
+check on the module graph: a typo in a relative path is `ERR_MODULE_NOT_FOUND`
+here, and a name a module forgot to export is `SyntaxError`, both of which are
+just as total as the dead-zone error above.
 """
 import shutil
 import subprocess
@@ -18,10 +23,12 @@ from pathlib import Path
 
 import pytest
 
-APP_JS = Path(__file__).resolve().parent.parent / "petkit_local" / "web" / "static" / "app.js"
+JS_DIR = Path(__file__).resolve().parent.parent / "petkit_local" / "web" / "static" / "js"
+MAIN_JS = JS_DIR / "main.js"
+PROVISION_JS = JS_DIR / "provision.js"
 
-#: Everything app.js touches at load: the delegation listeners, the nav wiring,
-#: `localStorage`, and the first `fetch` its bootstrap fires.
+#: Everything the panel touches at load: the delegation listeners, the nav
+#: wiring, `localStorage`, and the first `fetch` its bootstrap fires.
 DOM_STUB = """
 const noop = () => {};
 const el = () => new Proxy({
@@ -49,10 +56,10 @@ globalThis.localStorage = {getItem: () => null, setItem: noop, removeItem: noop}
 globalThis.fetch = () => Promise.resolve({json: () => Promise.resolve({}), ok: true});
 // Node 21 turned `navigator` into a read-only accessor on globalThis, so a
 // plain assignment throws `Cannot set property navigator` and takes this whole
-// harness down before app.js is even read. That is a difference between Node
-// versions, not between environments: it passed on a local Node 20 and failed
-// on CI's Node 22. defineProperty covers both, and the catch covers a future
-// version that makes it non-configurable too — the panel only reads
+// harness down before the panel is even imported. That is a difference between
+// Node versions, not between environments: it passed on a local Node 20 and
+// failed on CI's Node 22. defineProperty covers both, and the catch covers a
+// future version that makes it non-configurable too — the panel only reads
 // `navigator.clipboard`, and undefined is the right answer for it here.
 try {
   Object.defineProperty(globalThis, 'navigator', {
@@ -76,24 +83,18 @@ process.on('unhandledRejection', () => {});   // network calls we stubbed away
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_the_panel_script_survives_being_loaded(tmp_path):
     harness = tmp_path / "harness.mjs"
-    harness.write_text(
-        DOM_STUB
-        + f"const src = await import('node:fs').then(m => m.readFileSync({str(APP_JS)!r}, 'utf8'));\n"
-        + "const run = new (Object.getPrototypeOf(async () => {}).constructor)(src);\n"
-        + "await run();\n"
-        + "console.log('LOADED');\n"
-    )
+    # A DYNAMIC import, because a static one is hoisted above the stub and the
+    # first module to evaluate would find no `document`.
+    harness.write_text(DOM_STUB + f"await import({MAIN_JS.as_uri()!r});\n" + "console.log('LOADED');\n")
     r = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
     assert "LOADED" in r.stdout, (
-        "app.js threw while loading, which blanks every tab in the panel:\n"
-        f"{r.stderr.strip()[:2000]}"
+        "the panel threw while loading, which blanks every tab:\n" f"{r.stderr.strip()[:2000]}"
     )
 
 
-#: Appended INSIDE app.js's own scope. The harness evaluates the file as one
-#: async function body, so its `function` declarations are locals of that body
-#: and cannot be reached from outside — concatenating the assertions onto the
-#: source is what puts them in scope.
+#: Run against the real `provision.js` export. This used to be concatenated
+#: onto app.js's source, because a file evaluated as one function body keeps
+#: its declarations to itself; the module exports them by name instead.
 PROVISION_ASSERTIONS = """
 const cases = [
   ['http, chrome-with-bluetooth-hidden', false, false],
@@ -127,10 +128,8 @@ def test_a_plain_http_page_is_told_it_needs_https_not_a_different_browser(tmp_pa
     harness = tmp_path / "provision.mjs"
     harness.write_text(
         DOM_STUB
-        + f"const src = await import('node:fs').then(m => m.readFileSync({str(APP_JS)!r}, 'utf8'));\n"
-        + "const run = new (Object.getPrototypeOf(async () => {}).constructor)("
-        + "src + " + repr(PROVISION_ASSERTIONS) + ");\n"
-        + "await run();\n"
+        + f"const {{provisionWarning}} = await import({PROVISION_JS.as_uri()!r});\n"
+        + PROVISION_ASSERTIONS
     )
     r = subprocess.run(["node", str(harness)], capture_output=True, text=True, timeout=60)
     assert "PROVISION_OK" in r.stdout, r.stderr.strip()[:2000]

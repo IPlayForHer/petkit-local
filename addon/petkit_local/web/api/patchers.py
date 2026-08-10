@@ -31,6 +31,7 @@ from petkit_local.patchers.common import (
 )
 from petkit_local.patchers.mqtt import PATCHER_INFO as MQTT_PATCHER, patch_ctrl
 from petkit_local.patchers.ssh import (
+    AUTHKEYS_STAGED_NAME,
     PATCHER_INFO as SSH_PATCHER, build_install_commands as ssh_install_commands,
     ARCH_TO_BINARY as SSH_ARCH_TO_BINARY,
     DBKEY_RESERVE_BYTES, dropbear_path_for,
@@ -176,7 +177,7 @@ async def api_patcher_apply(request: web.Request) -> web.Response:
     # Imported in the call rather than at module scope: `panel.py` owns the
     # background-task set this pins the run to, and it imports this module for
     # its route table — so the dependency only runs one way at import time.
-    from petkit_local.web.panel import _spawn_background
+    from petkit_local.web.panel import _spawn_background  # noqa: PLC0415
 
     _spawn_background(request.app, _run(), name=f"patcher-{patcher_id}-{action}-{did}")
     hub.publish("patcher", did, f"[{patcher_id}] {action} started")
@@ -313,7 +314,6 @@ async def _patcher_apply(d: Device, patcher_id: str, device_ip: str, download_ba
         with open(bin_path, "rb") as f:
             dropbear = f.read()
 
-        from petkit_local.patchers.ssh import AUTHKEYS_STAGED_NAME
         authkeys = (pubkey.strip() + "\n").encode()
         ssh_paths = patcher_device_files(SSH_PATCHER, d)
         hub.publish("patcher", did, f"{P} checking free space on device...")

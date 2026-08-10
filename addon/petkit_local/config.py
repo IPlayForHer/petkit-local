@@ -367,7 +367,7 @@ class Config:
         `api_url` is the right source and the only one available: it is the
         address the operator configured for the device to call, and the request
         being answered arrived on it. Same reasoning as
-        `handlers/iot_device_info.py::_self_mqtt_host`, which picks the MQTT
+        `handlers/iot_device_info.py::self_mqtt_host`, which picks the MQTT
         broker address the same way and for the same reason.
 
         Does nothing when the endpoint is already set — the add-on path fills it

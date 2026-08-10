@@ -21,112 +21,6 @@ from petkit_local.web.api.settings import LIVE_SETTINGS
 from petkit_local.web.panel import create_panel_app
 
 
-# --- EventHub ---
-
-def test_hub_publish_and_recent():
-    hub = EventHub(maxlen=5)
-    for i in range(8):
-        hub.publish("http", device_id=1, summary=f"e{i}")
-    evs = hub.recent()
-    assert len(evs) == 5  # ring capped
-    assert evs[-1]["summary"] == "e7"
-
-
-def test_hub_recent_filters_by_device():
-    hub = EventHub()
-    hub.publish("http", 1, "a")
-    hub.publish("http", 2, "b")
-    assert [e["summary"] for e in hub.recent(device_id=2)] == ["b"]
-
-
-def test_hub_diag_records():
-    hub = EventHub()
-    hub.record_http(5, "POST", "/6/t5/dev_signup", 200)
-    hub.set_state_report(5, {"sandPercent": 40})
-    hub.record_mqtt(5, "/sys/pk/dn/thing/event/property/post", {"params": {"x": 1}})
-    hub.record_connect(5, {"username": "d_t5_SN&pk", "ok": True})
-    d = hub.diag(5)
-    assert d["http_count"] == 1 and d["mqtt_count"] == 1
-    assert d["last_state_report"]["body"]["sandPercent"] == 40
-    assert d["last_property"]["payload"]["params"]["x"] == 1
-    assert d["last_connect"]["ok"] is True
-
-
-def test_mqtt_event_carries_an_expandable_detail():
-    """A log row is expandable in the panel only when its event has a `detail`;
-    an MQTT frame published without one shows a topic and nothing else."""
-    hub = EventHub()
-    hub.record_mqtt(5, "/sys/pk/d_t5_SN/thing/event/property/post",
-                    {"params": {"x": 1}}, client="d_t5_SN")
-    ev = hub.recent()[-1]
-    assert ev["summary"] == "from d_t5_SN: event/property/post"
-    assert ev["detail"]["direction"] == "device → server"
-    assert ev["detail"]["client"] == "d_t5_SN"
-    assert ev["detail"]["topic"] == "/sys/pk/d_t5_SN/thing/event/property/post"
-    assert json.loads(ev["detail"]["payload"]) == {"params": {"x": 1}}
-
-
-def test_outbound_mqtt_is_logged_but_not_counted_as_device_traffic():
-    """`mqtt_count` answers "is this device talking to us" — our own commands
-    must not answer yes on its behalf."""
-    hub = EventHub()
-    hub.record_mqtt(5, "/sys/pk/d_t5_SN/thing/service/property/set",
-                    {"method": "thing.service.property.set"},
-                    outbound=True, client="d_t5_SN")
-    ev = hub.recent()[-1]
-    assert ev["summary"] == "to d_t5_SN: service/property/set"
-    assert ev["detail"]["direction"] == "server → device"
-    assert hub.diag(5)["mqtt_count"] == 0
-    assert "last_mqtt" not in hub.diag(5)
-
-
-def test_a_relayed_cloud_frame_names_the_device_as_its_destination():
-    """Proxy mode's downstream frames are outbound but not OURS.
-
-    Passing the cloud as `client` rendered "to the real cloud" for a frame
-    arriving FROM it — the direction read exactly backwards in the log.
-    """
-    hub = EventHub()
-    hub.record_mqtt(5, "/sys/pk/d_t5_SN/thing/service/start", {"method": "thing.service.start"},
-                    outbound=True, client="d_t5_SN", origin="the real cloud")
-    ev = hub.recent()[-1]
-    assert ev["summary"] == "to d_t5_SN (relayed from the real cloud): service/start"
-    assert ev["detail"]["direction"] == "the real cloud → server → device"
-    assert ev["detail"]["origin"] == "the real cloud"
-
-
-def test_a_wire_payload_is_decoded_not_repred():
-    """Proxy mode relays the cloud's frame as bytes; `json.dumps` refuses those,
-    and the repr fallback rendered `b'{...}'` — unreadable and no longer JSON
-    for the panel to expand."""
-    hub = EventHub()
-    hub.record_mqtt(5, "/sys/pk/d_t5_SN/thing/service/start", b'{"method": "thing.service.start"}',
-                    outbound=True, client="d_t5_SN", origin="the real cloud")
-    payload = hub.recent()[-1]["detail"]["payload"]
-    assert json.loads(payload) == {"method": "thing.service.start"}
-
-
-def test_mqtt_payload_is_capped():
-    """The ring keeps these in memory and ships each one to every open browser."""
-    hub = EventHub()
-    hub.record_mqtt(5, "/sys/pk/dn/thing/event/property/post", {"blob": "x" * 20_000})
-    payload = hub.recent()[-1]["detail"]["payload"]
-    assert len(payload) < 5000
-    assert "truncated" in payload
-
-
-def test_mqtt_payload_that_is_not_json_still_renders():
-    hub = EventHub()
-    hub.record_mqtt(5, "/sys/pk/dn/thing/event/x/post", {"o": object()})
-    assert hub.recent()[-1]["detail"]["payload"]
-
-
-def test_short_topic_leaves_an_unexpected_shape_alone():
-    hub = EventHub()
-    hub.record_mqtt(5, "some/other/topic", {})
-    assert hub.recent()[-1]["summary"].endswith("some/other/topic")
-
-
 # --- panel API ---
 
 class FakeBridge:
@@ -187,12 +81,17 @@ async def test_index_renders_template_and_links_assets():
         # ...and the CSS/JS are now external, not inline.
         assert "<style>" not in html and "<script>\n" not in html
         # RELATIVE, so they resolve under whatever opaque prefix Ingress uses;
-        # an absolute /static/... would escape it and 404. The `?v=` is
-        # cache-busting and must not turn them into absolute URLs.
+        # an absolute /static/... would escape it and 404. Cache-busting must
+        # not turn them into absolute URLs either.
+        #
+        # The stylesheet carries its version in a query, the entry module in a
+        # PATH SEGMENT. An ES module's `import './core.js'` resolves against the
+        # module's own URL, so a query on the entry point versions only the
+        # entry point; a path segment is inherited by all nineteen imports.
         from petkit_local.web import panel as panel_mod
         assert _asset_hrefs(html) == [
             f"static/styles.css?v={panel_mod.ASSET_VERSION}",
-            f"static/app.js?v={panel_mod.ASSET_VERSION}",
+            f"asset/{panel_mod.ASSET_VERSION}/js/main.js",
         ]
     finally:
         await c.close()
@@ -205,9 +104,14 @@ async def test_static_assets_are_served():
         css = await c.get("/static/styles.css")
         assert css.status == 200 and css.headers["Content-Type"].startswith("text/css")
         assert "--accent" in await css.text()
-        js = await c.get("/static/app.js")
+        js = await c.get("/static/js/main.js")
         assert js.status == 200 and "javascript" in js.headers["Content-Type"]
-        assert "const BASE = location.pathname" in await js.text()
+        # The entry point reaches the rest by relative path, so every module it
+        # names has to be served from the same directory too.
+        assert "import { loadDevices } from './devices.js'" in await js.text()
+        core = await c.get("/static/js/core.js")
+        assert core.status == 200
+        assert "const BASE = location.pathname" in await core.text()
     finally:
         await c.close()
 
@@ -254,7 +158,7 @@ async def test_frontend_has_no_inline_event_handlers():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         html = await (await c.get("/")).text()
         inline = re.compile(r"""\bon[a-z]+\s*=\s*["']""", re.I)
         assert not inline.search(js), inline.search(js).group(0)
@@ -273,7 +177,7 @@ async def test_devices_tab_is_one_collapsible_panel_per_device():
     c = await _mk_client(app)
     try:
         html = await (await c.get("/")).text()
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert 'id="devPanels"' in html
         assert 'id="devGrid"' not in html and 'id="devDetail"' not in html
         # Open state is remembered per device AND per section, or expanding
@@ -292,7 +196,7 @@ async def test_no_element_id_is_shared_between_device_panels():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert "id=\"cmdOut\"" not in js and "getElementById('cmdOut')" not in js
         assert "id=\"cmdRaw\"" not in js and "getElementById('cmdRaw')" not in js
         assert "cmd-out" in js and "cmd-raw" in js
@@ -318,13 +222,13 @@ async def test_every_published_entity_component_has_somewhere_to_render():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         table = js[js.index("const ENTITY_SECTION = {"):]
         table = table[: table.index("};")]
         for component in sorted(published):
             assert f"{component}:" in table, (
                 f"{component} entities are published to HA but ENTITY_SECTION "
-                f"in app.js does not route them to a card"
+                f"in devices.js does not route them to a card"
             )
     finally:
         await c.close()
@@ -342,7 +246,7 @@ async def test_the_accessory_panel_renders_every_component_an_accessory_has():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         body = js[js.index("function accBody("):]
         body = body[: body.index("\nfunction ")]
         for t in BLE_TYPES:
@@ -394,7 +298,7 @@ async def test_esc_escapes_every_markup_breaking_character():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         for ch, ent in [("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"),
                         ('"', "&quot;"), ("'", "&#39;"), ("/", "&#x2F;")]:
             assert ent in js, f"esc() does not map {ch!r} to {ent}"
@@ -596,7 +500,7 @@ async def test_provision_ui_has_ble_protocol():
     try:
         html = await (await c.get("/")).text()
         assert "Provision via Bluetooth" in html
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         # PetKit Ingenic framed JSON.
         assert "0000aaa0-0000-1000-8000-00805f9b34fb" in js  # service
         assert "0000aaa2-0000-1000-8000-00805f9b34fb" in js  # RX (write)
@@ -655,7 +559,7 @@ async def test_the_timeline_filters_by_pet_with_chips_not_a_dropdown():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert 'id="tlPet"' not in js, "the pet dropdown is back"
         assert 'data-action="tl-pet"' in js and "petChip" in js
         # The mugshot comes from the pets API's own face list, not a second
@@ -681,7 +585,7 @@ async def test_the_capture_tab_warns_what_is_in_a_capture():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert "Every capture is sensitive" in js
         assert "SSID" in js and "credential" in js.lower()
         # No per-file "sensitive" badge: singling some out implies the rest are
@@ -697,7 +601,7 @@ async def test_the_capture_tab_no_longer_describes_capture_as_an_addon_option():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert "--capture" not in js
         assert "restart the add-on" not in js
     finally:
@@ -788,7 +692,7 @@ async def test_the_capture_tab_offers_delete_next_to_download():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert 'data-action="delete-capture"' in js
         # Irreversible, so it must confirm first.
         assert "deleteCapture" in js and "confirm(" in js
@@ -1036,19 +940,20 @@ async def test_assets_are_revalidated_not_heuristically_cached():
     """Without Cache-Control a browser may reuse a cached asset WITHOUT asking.
 
     That is not theoretical: after an add-on update the panel kept running the
-    previous app.js, so a deployed feature was invisible with nothing in the
+    previous panel script, so a deployed feature was invisible with nothing in
+    the
     logs to say so. `no-cache` still permits storage — the ETag makes the
     revalidation a 304 — it only forbids using it unasked.
     """
     app, _reg, _hub = _panel()
     c = await _mk_client(app)
     try:
-        for path in ("/", "/static/app.js", "/static/styles.css"):
+        for path in ("/", "/static/js/main.js", "/static/styles.css"):
             r = await c.get(path)
             assert r.status == 200, path
             assert r.headers.get("Cache-Control") == "no-cache", path
         # The ETag survives, so revalidation stays cheap.
-        r = await c.get("/static/app.js")
+        r = await c.get("/static/js/main.js")
         assert r.headers.get("ETag")
     finally:
         await c.close()
@@ -1072,7 +977,7 @@ async def test_the_index_says_no_cache_whatever_its_path_looks_like():
         # And the document says which build it is, stamped by the same value
         # that versions the asset URLs.
         assert f'window.PANEL_ASSET_V = "{panel_mod.ASSET_VERSION}"' in body
-        assert f"app.js?v={panel_mod.ASSET_VERSION}" in body
+        assert f"asset/{panel_mod.ASSET_VERSION}/js/main.js" in body
     finally:
         await c.close()
 
@@ -1091,7 +996,7 @@ async def test_a_stale_page_can_tell_that_it_is_stale():
     try:
         info = await (await c.get("/api/info")).json()
         assert info["asset_version"] == panel_mod.ASSET_VERSION
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         # The comparison, and something visible when it fails — a check whose
         # result goes nowhere is the same as no check.
         assert "PANEL_ASSET_V" in js
@@ -1291,6 +1196,18 @@ def _static(name: str) -> str:
             / name).read_text()
 
 
+def _panel_js() -> str:
+    """Every panel module's source, concatenated.
+
+    The frontend is a graph of ES modules under `static/js/`, so a test that
+    wants to know something about "the panel's JavaScript" has to look at all
+    of them — which file a given helper landed in is exactly the detail these
+    tests must not depend on.
+    """
+    js_dir = Path(__file__).resolve().parents[1] / "petkit_local" / "web" / "static" / "js"
+    return "\n".join(p.read_text() for p in sorted(js_dir.glob("*.js")))
+
+
 def test_every_hub_kind_the_proxy_publishes_has_a_colour():
     """web/hub.py's kinds are rendered as `.k.<kind>`; one with no CSS rule is
     an unstyled grey blob in the Log tab."""
@@ -1302,7 +1219,7 @@ def test_every_hub_kind_the_proxy_publishes_has_a_colour():
 def test_proxy_dependent_controls_are_gated_on_proxy_mode():
     """Everything that only means something with proxy on must be hidden or
     greyed out when it is off."""
-    js = _static("app.js")
+    js = _panel_js()
     css = _static("styles.css")
 
     # The guards render through a helper that greys them out with proxy mode.
@@ -1321,8 +1238,8 @@ def test_the_photo_cap_agrees_with_the_store():
     real, so a drift means the UI invites an upload the API then rejects."""
     from petkit_local.events.store import MAX_FACES_PER_PET
 
-    m = re.search(r"const MAX_FACES\s*=\s*(\d+)", _static("app.js"))
-    assert m, "app.js no longer declares MAX_FACES"
+    m = re.search(r"const MAX_FACES\s*=\s*(\d+)", _panel_js())
+    assert m, "the panel no longer declares MAX_FACES"
     assert int(m.group(1)) == MAX_FACES_PER_PET
 
 
@@ -1390,7 +1307,7 @@ async def test_provision_refuses_a_bluetooth_only_accessory():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         for prefix in ("Petkit_W5", "Petkit_CTW3", "Petkit_K3"):
             assert prefix in js, prefix
         assert "BLE accessories" in js
@@ -1404,7 +1321,7 @@ async def test_provision_does_not_claim_success_for_a_write_that_returned():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert "the device never answered" in js
         # And the link is no longer torn down before a reply can arrive.
         assert "}, 1500);" not in js
@@ -1567,7 +1484,7 @@ async def test_the_accessory_panel_is_its_own_panel_and_is_trimmed():
     app, reg, hub = _panel()
     c = await _mk_client(app)
     try:
-        js = await (await c.get("/static/app.js")).text()
+        js = _panel_js()
         assert "accpanel" in js and "accSummary" in js and "accBody" in js
         assert "relayed by" in js
         # A transport badge that is true of an accessory. `linkBadge`'s two
@@ -1609,5 +1526,51 @@ async def test_the_panel_can_ask_for_a_reading_now():
         reg.get(10).mqtt_connected = False
         r = await c.post("/api/ble/700/poll")
         assert r.status == 409
+    finally:
+        await c.close()
+
+
+async def test_every_js_module_is_reachable_under_the_versioned_path():
+    """The entry module is the only one the markup names; the other nineteen are
+    reached by relative import from it, so a route that serves one but not the
+    rest fails only in a browser."""
+    from petkit_local.web import panel as panel_mod
+
+    app, _reg, _hub = _panel()
+    c = await _mk_client(app)
+    try:
+        names = sorted(p.name for p in (panel_mod.STATIC_DIR / "js").glob("*.js"))
+        assert len(names) > 1, "expected the panel's JS to be split"
+        for name in names:
+            r = await c.get(f"/asset/{panel_mod.ASSET_VERSION}/js/{name}")
+            assert r.status == 200, (name, r.status)
+    finally:
+        await c.close()
+
+
+async def test_the_versioned_asset_path_cannot_escape_the_js_directory():
+    app, _reg, _hub = _panel()
+    c = await _mk_client(app)
+    try:
+        for name in ("../styles.css", "..%2fstyles.css", "main.js.bak"):
+            r = await c.get(f"/asset/deadbeef/js/{name}")
+            assert r.status == 404, (name, r.status)
+    finally:
+        await c.close()
+
+
+async def test_a_hash_versioned_module_is_cacheable_forever():
+    """The opposite of every other asset here, and for the same reason: the hash
+    is in the URL, so the content behind it cannot change. Revalidating twenty
+    modules on every page load buys nothing."""
+    from petkit_local.web import panel as panel_mod
+
+    app, _reg, _hub = _panel()
+    c = await _mk_client(app)
+    try:
+        r = await c.get(f"/asset/{panel_mod.ASSET_VERSION}/js/main.js")
+        assert "immutable" in r.headers.get("Cache-Control", "")
+        css = await c.get("/static/styles.css")
+        assert css.headers.get("Cache-Control") == "no-cache"
     finally:
         await c.close()

@@ -105,4 +105,4 @@ jobs:
       # enforcing that was a line in CLAUDE.md asking people to run it by hand.
       # No package.json needed — npx matches how it is run locally.
       - name: Check panel formatting
-        run: npx prettier@3 --check petkit_local/web/static/app.js petkit_local/web/static/styles.css
+        run: npx prettier@3 --check petkit_local/web/static/js/*.js petkit_local/web/static/styles.css

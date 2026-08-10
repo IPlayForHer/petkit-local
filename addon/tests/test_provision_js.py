@@ -1,4 +1,4 @@
-"""The provisioning decoders in `web/static/app.js`, run for real.
+"""The provisioning decoders in `web/static/js/provision.js`, run for real.
 
 Everything else about the panel's JavaScript is tested by asserting on its
 source text, which catches a deleted feature and nothing else. These functions
@@ -6,9 +6,12 @@ are the exception worth the machinery: they decode a binary protocol off real
 hardware, three device reports disagree about the details, and a wrong offset
 here reads as "your device never answered" rather than as an error.
 
-So the pure helpers are lifted out of `app.js` — they touch no DOM — and
-exercised in node against the exact frames the reports describe. Skipped where
-node is absent; CI has it, because the prettier check runs through `npx`.
+So the module is imported in node and its exported helpers — all pure, all
+DOM-free — are exercised against the exact frames the reports describe. They
+used to be lifted out of the monolithic `app.js` by matching braces around each
+declaration, because importing that file whole reached for `document` on load;
+`provision.js` exports them by name, so nothing has to be parsed here. Skipped
+where node is absent; CI has it, because the prettier check runs through `npx`.
 """
 from __future__ import annotations
 
@@ -19,12 +22,13 @@ from pathlib import Path
 
 import pytest
 
-APP_JS = Path(__file__).resolve().parent.parent / "petkit_local" / "web" / "static" / "app.js"
+PROVISION_JS = (Path(__file__).resolve().parent.parent / "petkit_local" / "web" / "static"
+                / "js" / "provision.js")
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None,
                                 reason="node is needed to run the panel's JavaScript")
 
-#: Lifted from app.js by name. All pure, all DOM-free.
+#: Imported from provision.js by name. All pure, all DOM-free.
 FUNCTIONS = ("pkCrc16", "pkFrame", "pkParse", "pkBytes", "pkJoined", "pkJoinFailed", "pkJoinWarn",
              "pkJoinState", "blufiExplain", "provisionUrlWarning")
 CONSTANTS = ("PK_MAGIC", "PK_TAIL", "PK_TYPE_OUT", "PK_JOIN_STATES", "PK_JOIN_DONE", "PK_JOIN_FAILED",
@@ -32,44 +36,28 @@ CONSTANTS = ("PK_MAGIC", "PK_TAIL", "PK_TYPE_OUT", "PK_JOIN_STATES", "PK_JOIN_DO
              "BLUFI_DATA_WIFI_REP", "BLUFI_DATA_ERROR_INFO")
 
 
-def _extract(src: str, name: str) -> str:
-    """One top-level `function name(...) {...}`, by matching its braces.
-
-    A regex cannot do this — the bodies contain braces — and importing app.js
-    whole is not an option, since the rest of it reaches for `document` on load.
-    """
-    start = src.index(f"function {name}(")
-    i = src.index("{", start)
-    depth = 0
-    while True:
-        if src[i] == "{":
-            depth += 1
-        elif src[i] == "}":
-            depth -= 1
-        i += 1
-        if depth == 0:
-            return src[start:i]
-
-
 def _harness(body: str) -> str:
-    """The extracted helpers, plus a script that exercises them."""
-    src = APP_JS.read_text()
-    out = []
-    for const in CONSTANTS:
-        line = next(ln for ln in src.splitlines() if ln.startswith(f"const {const} = "))
-        # A multi-line constant (the join-state table) runs to its closing brace.
-        if line.rstrip().endswith(("{", "[")):
-            idx = src.index(line)
-            end = src.index("\n};\n" if line.rstrip().endswith("{") else "\n];\n", idx)
-            line = src[idx:end + 3]
-        out.append(line)
-    out += [_extract(src, fn) for fn in FUNCTIONS]
-    out.append(body)
-    return "\n".join(out)
+    """The imported helpers, plus a script that exercises them.
+
+    Two globals, because importing this module evaluates the two it depends on:
+    `core.js` builds `BASE` from `location` and `delegate.js` binds the
+    delegation listeners to `document`. Neither is touched below — a decoder
+    that needed a DOM would not belong in here.
+
+    The import is DYNAMIC so it runs after those stubs exist; a static one is
+    hoisted to the top of the module and would evaluate first.
+    """
+    names = ", ".join(FUNCTIONS + CONSTANTS)
+    return (
+        "globalThis.location = {pathname: '/'};\n"
+        "globalThis.document = {addEventListener() {}};\n"
+        f"const {{{names}}} = await import({PROVISION_JS.as_uri()!r});\n"
+        + body
+    )
 
 
 def _run(body: str) -> dict:
-    """Run `body` against the extracted helpers; it prints one JSON object."""
+    """Run `body` against the imported helpers; it prints one JSON object."""
     proc = subprocess.run(["node", "--input-type=module", "-e", _harness(body)],
                           capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr

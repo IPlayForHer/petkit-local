@@ -16,7 +16,7 @@ from __future__ import annotations
 from petkit_local.events.migrations import backfill_event_rows
 from petkit_local.events.normalize import (CATEGORY_CLOUD_DOUBLE, CATEGORY_HEALTH,
                                            CATEGORY_TO_CAPABILITY, CATEGORY_WASTE_CHECK,
-                                           CONTENT_KEYS, EVENT_ID_KEYS, EVENT_TYPE_DETAIL,
+                                           CONTENT_KEYS, EVENT_ID_KEYS,
                                            EVENT_TYPE_KEYS, KIND_TO_ENTITY,
                                            MQTT_ENVELOPE_KEYS, STATE_KEYS, _as_dict,
                                            _extract_pet_ref, _extract_score,
@@ -43,7 +43,6 @@ __all__ = [
     "CONTENT_KEYS",
     "CYCLE_TAIL_WINDOW_SEC",
     "EVENT_ID_KEYS",
-    "EVENT_TYPE_DETAIL",
     "EVENT_TYPE_KEYS",
     "KIND_TO_ENTITY",
     "MQTT_ENVELOPE_KEYS",

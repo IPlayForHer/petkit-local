@@ -23,7 +23,11 @@ import urllib.parse
 
 from aiohttp import web
 
+from petkit_local.devices.state_parsers import (
+    apply_consumable_state, normalize_property_params, parse_state_report,
+)
 from petkit_local.http.handlers._common import device_id, request_device
+from petkit_local.utils.capture import capture_record
 from petkit_local.utils.timeutil import cloud_timestamp
 
 log = logging.getLogger(__name__)
@@ -91,7 +95,6 @@ async def handle_state_report(request: web.Request) -> web.Response:
     config = request.app["config"]
     capture_dir = config.get("capture_dir", "/data/capture")
     if config.get("capture"):
-        from petkit_local.utils.capture import capture_record
         capture_record(capture_dir, "state_report_raw", {
             "id": petkit_id,
             "type": request.get("device_type", ""),
@@ -115,7 +118,6 @@ async def handle_state_report(request: web.Request) -> web.Response:
     body = _extract_state(text)
 
     if config.get("capture") and body:
-        from petkit_local.utils.capture import capture_record
         capture_record(capture_dir, "state_report", {"id": petkit_id, "body": body})
 
     hub = request.app.get("event_hub")
@@ -123,9 +125,6 @@ async def handle_state_report(request: web.Request) -> web.Response:
         hub.set_state_report(petkit_id, body)
 
     if device and body:
-        from petkit_local.devices.state_parsers import (
-            apply_consumable_state, normalize_property_params, parse_state_report,
-        )
         # The T5 posts a NESTED structure (litter{}, wifi{}, err{}) — same as the
         # MQTT property post — so normalize it to the flat keys the entities read.
         # parse_state_report still handles any device that sends flat keys.

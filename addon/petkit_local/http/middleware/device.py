@@ -8,6 +8,7 @@ that cannot be identified must still get a valid answer.
 from __future__ import annotations
 
 import re
+from urllib.parse import parse_qs
 
 from aiohttp import web
 
@@ -29,7 +30,6 @@ def parse_x_device(header: str) -> dict | None:
     """
     if not header:
         return None
-    from urllib.parse import parse_qs
     parsed = parse_qs(header, keep_blank_values=True)
     result = {k: v[0] for k, v in parsed.items() if v}
     if "id" not in result:
@@ -72,7 +72,6 @@ async def parse_form_body(request: web.Request) -> dict[str, str]:
         return {}
     if not raw:
         return {}
-    from urllib.parse import parse_qs
     try:
         parsed = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
     except Exception:  # noqa: BLE001 - device input never raises

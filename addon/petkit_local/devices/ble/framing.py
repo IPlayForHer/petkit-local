@@ -96,8 +96,8 @@ def _ble_unframe(raw: bytes) -> tuple[int | None, bytes]:
     already IS the DATA payload; in the latter case the command is None and the
     caller falls back to the `cmd` the JSON carried alongside it.
     """
-    if len(raw) >= 9 and raw[:3] == BLE_FRAME_HEADER:
-        return raw[3], raw[8:-1]
+    if len(raw) >= BLE_FRAME_HEADER_LEN + 1 and raw[:3] == BLE_FRAME_HEADER:
+        return raw[3], raw[BLE_FRAME_HEADER_LEN:-1]
     return None, raw
 
 

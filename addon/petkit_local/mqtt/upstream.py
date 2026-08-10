@@ -52,10 +52,12 @@ import ssl
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from petkit_local.http.redact import redact_mqtt
 from petkit_local.mqtt.auth import compute_aliyun_sign
 from petkit_local.mqtt.topics import (
     is_server_published, ota_upgrade_topic, parse_topic, rewrite_topic,
 )
+from petkit_local.utils.capture import capture_record
 from petkit_local.utils.jsonio import atomic_write_json, read_json
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -327,7 +329,7 @@ class UpstreamMQTT:
         cloud connection is normal, and must cost a retry rather than a task.
         """
         try:
-            import aiomqtt
+            import aiomqtt  # noqa: PLC0415 - optional dependency, probed at use
         except ImportError:
             log.warning("aiomqtt not installed - upstream MQTT bridge disabled")
             return
@@ -454,7 +456,7 @@ class UpstreamMQTT:
         if parsed is not None and not is_server_published(parsed):
             log.warning("Refusing to relay a device-direction frame from upstream "
                         "for device %d on %s: %s",
-                        device.petkit_id, topic, _text(raw)[:200])
+                        device.petkit_id, topic, _text_or_empty(raw)[:200])
             return
 
         local_topic = rewrite_topic(topic, device.mqtt_product_key, device.mqtt_device_name)
@@ -470,10 +472,9 @@ class UpstreamMQTT:
                 # here can rewrite that shape yet, and whether the cloud
                 # actually uses it is the open question.
                 log.info("Unmapped upstream frame for device %d on %s: %s",
-                         device.petkit_id, topic, _text(raw)[:300])
+                         device.petkit_id, topic, _text_or_empty(raw)[:300])
             return
 
-        from petkit_local.http.redact import redact_mqtt
         result = redact_mqtt(raw, topic=topic, policy=self._policy_factory(device))
 
         if self._hub is not None:
@@ -508,7 +509,7 @@ class UpstreamMQTT:
         log.info("Cloud -> device %d: %s (cloud qos=%s retain=%s) %s",
                  device.petkit_id, local_topic,
                  getattr(message, "qos", 0), getattr(message, "retain", False),
-                 _text(result.body)[:160])
+                 _text_or_empty(result.body)[:160])
         await self._publish_local(local_topic, result.body)
 
         # Logged here rather than left to the bridge: this lands on a topic the
@@ -531,12 +532,12 @@ class UpstreamMQTT:
         if self._hub is not None:
             self._hub.record_redaction(device.petkit_id, "ota",
                                        f"blocked OTA push on {topic}",
-                                       detail={"topic": topic, "payload": _text(raw)},
+                                       detail={"topic": topic, "payload": _text_or_empty(raw)},
                                        blocked=True)
         if self._event_store is not None:
             await self._event_store.add_blocked_attempts([{
                 "device_id": device.petkit_id, "kind": "ota", "transport": "mqtt",
-                "endpoint": topic, "field_path": "", "payload_json": _text(raw),
+                "endpoint": topic, "field_path": "", "payload_json": _text_or_empty(raw),
                 "detail_json": {"note": "firmware push over MQTT"},
             }])
         self._capture(device, "down", "", topic, raw, ["ota"], blocked=True)
@@ -557,13 +558,12 @@ class UpstreamMQTT:
         """Append one relayed frame to the proxy capture stream, if enabled."""
         if not (self._live_config.get("capture") and self._live_config.get("proxy_mode")):
             return
-        from petkit_local.utils.capture import capture_record
         capture_record(self._live_config.get("capture_dir", "/data/capture"), "proxy_mqtt", {
             "device_id": device.petkit_id,
             "direction": direction,
             "local_topic": local_topic,
             "upstream_topic": upstream_topic,
-            "payload": _text(_as_bytes(payload)),
+            "payload": _text_or_empty(_as_bytes(payload)),
             "redactions": rules,
             "blocked": blocked,
         })
@@ -578,8 +578,15 @@ def _as_bytes(payload: Any) -> bytes:
     return json.dumps(payload).encode()
 
 
-def _text(raw: bytes | None) -> str:
-    """Decode a frame for a log or a capture, never raising on a binary one."""
+def _text_or_empty(raw: bytes | None) -> str:
+    """Decode a frame for a log or a capture, never raising on a binary one.
+
+    None collapses to "" rather than passing through: every caller here either
+    slices the result for a log line or drops it into a JSON field, and neither
+    has anything to say about the difference between an absent frame and an
+    empty one. `http/middleware/logging.py::_text_or_none` keeps that difference
+    because a proxied HTTP exchange does turn on it.
+    """
     if raw is None:
         return ""
     return bytes(raw).decode("utf-8", "replace")

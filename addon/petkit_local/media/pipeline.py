@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from petkit_local.events import ingest
 from petkit_local.media import crypto, layout, transcode
+from petkit_local.utils.jsonio import read_bytes
 
 if TYPE_CHECKING:
     from petkit_local.ai.pets import PetRegistry
@@ -125,14 +126,8 @@ def _remove_quietly(path: str) -> None:
         pass
 
 
-# Whole-file reads/writes: a clip is a few MB, so this is real blocking I/O
-# and every caller hands it to `asyncio.to_thread`.
-def _read_bytes(path: str) -> bytes:
-    """Read a whole file (blocking — call via a thread)."""
-    with open(path, "rb") as f:
-        return f.read()
-
-
+# Whole-file writes: a clip is a few MB, so this is real blocking I/O and every
+# caller hands it to `asyncio.to_thread`.
 def _write_bytes(path: str, data: bytes) -> None:
     """Write a whole file, creating its parent directories (blocking — call
     via a thread)."""
@@ -263,7 +258,7 @@ async def process_file_info(device: Device, info: dict, config: dict, store: Eve
         return None
 
     try:
-        data = await asyncio.to_thread(_read_bytes, src)
+        data = await asyncio.to_thread(read_bytes, src)
     except OSError as e:
         log.warning("Could not read raw upload %s: %s", src, e)
         await store.upsert_media({"file_id": row["file_id"], "status": "error"})
@@ -284,7 +279,7 @@ async def process_file_info(device: Device, info: dict, config: dict, store: Eve
         paired = await store.event_by_related(row["related_event"])
         if paired:
             event_kind = paired.get("event_kind")
-    label = layout.event_label(flags, event_kind)
+    label = layout.media_filename_label(flags, event_kind)
     index = await _gallery_index(store, row)
 
     ext = "mp4" if is_video else "jpg"

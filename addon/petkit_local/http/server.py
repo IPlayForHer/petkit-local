@@ -60,6 +60,7 @@ from petkit_local.http.handlers.stubs import (
     handle_empty_list,
     handle_attire_over,
 )
+from petkit_local.patchers.common import STAGE_DIR
 from petkit_local.utils.paths import UnsafePathError, safe_join
 
 if TYPE_CHECKING:
@@ -157,8 +158,6 @@ async def _drain_media_tasks(app: web.Application) -> None:
 
 async def handle_patcher_download(request: web.Request) -> web.Response:
     """Serve staged patched files for the device to wget."""
-    from petkit_local.patchers.common import STAGE_DIR
-
     try:
         path = safe_join(STAGE_DIR, request.match_info["filename"])
     except UnsafePathError:

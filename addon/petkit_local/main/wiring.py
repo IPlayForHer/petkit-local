@@ -21,6 +21,7 @@ from petkit_local.devices.ble import BLERegistry
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.events.store import EventStore
 from petkit_local.ha.publisher import HAPublisher
+from petkit_local.http.redact import RedactionPolicy
 from petkit_local.http.server import create_app
 from petkit_local.main.lifecycle import BACKGROUND_TASKS
 from petkit_local.media.crypto import resolve_key_string
@@ -86,7 +87,6 @@ def _proxy_policy(app_config: dict[str, Any], device: Device):
     Rebuilt per frame, from the same live config the HTTP side reads, so
     a guard toggled in the panel applies to MQTT too.
     """
-    from petkit_local.http.redact import RedactionPolicy
     return RedactionPolicy(
         device=device,
         api_url=app_config.get("api_url", ""),

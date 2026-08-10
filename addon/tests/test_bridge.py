@@ -13,6 +13,7 @@ from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.devices.ble import BLERegistry
 from petkit_local.mqtt import bridge as bridge_module
 from petkit_local.mqtt.bridge import MQTTBridge
+from tests._fakes import FakeMessage, FakeMqttClient
 
 
 class FakePublisher:
@@ -89,20 +90,12 @@ async def test_non_event_property_still_publishes_state():
     assert dev.petkit_id in pub.states
 
 
-class FakeMqttClient:
-    def __init__(self):
-        self.published = []  # (topic, payload)
-
-    async def publish(self, topic, payload, **kw):
-        self.published.append((topic, payload))
-
-
 async def test_ble_poll_sent_to_parent_connect_topic():
     reg, dev, ble, pub, bridge = _setup()
     ble.register(ble_type="w5", petkit_id=700, mac="CC:DD", link_with=10, interval=240)
     bridge._client = FakeMqttClient()
     await bridge._handle_event(dev, "property", {"params": {"sandPercent": 30}})
-    topics = [t for t, _ in bridge._client.published]
+    topics = [t for t, _, _ in bridge._client.published]
     assert any(t.endswith("/thing/service/connect") for t in topics)
     # throttled: a second property post within the interval sends no new poll
     n = len(bridge._client.published)
@@ -120,7 +113,7 @@ async def test_a_command_is_published_as_compact_json():
     await bridge.publish_to_device(
         dev, "start", {"method": "thing.service.start",
                        "id": "1", "params": {"start_action": 0}, "version": "1.0.0"})
-    _topic, payload = bridge._client.published[-1]
+    _topic, payload, _kw = bridge._client.published[-1]
     assert ", " not in payload and ": " not in payload, payload
     assert payload == ('{"method":"thing.service.start","id":"1",'
                        '"params":{"start_action":0},"version":"1.0.0"}')
@@ -131,7 +124,7 @@ async def test_user_get_and_post_reply_are_also_compact():
     reg, dev, ble, pub, bridge = _setup()
     bridge._client = FakeMqttClient()
     await bridge._handle_event(dev, "data_get", {"params": {"dataType": "dev_multi_config"}})
-    _t, payload = bridge._client.published[-1]
+    _t, payload, _kw = bridge._client.published[-1]
     assert ", " not in payload and ": " not in payload, payload
 
 
@@ -141,7 +134,7 @@ async def test_data_get_replies_on_user_get():
     await bridge._handle_event(dev, "data_get", {"params": {"dataType": "dev_multi_config"}})
     pubs = bridge._client.published
     assert pubs, "expected a user/get publish"
-    topic, payload = pubs[-1]
+    topic, payload, _kw = pubs[-1]
     assert topic.endswith("/user/get")
     assert "result" in json.loads(payload)
 
@@ -149,12 +142,6 @@ async def test_data_get_replies_on_user_get():
 # --- message-loop resilience -------------------------------------------------
 # The bridge holds one wildcard subscription for every device, so a failure on
 # one message used to disconnect (and rediscover) all of them.
-
-
-class FakeMessage:
-    def __init__(self, topic, payload):
-        self.topic = topic
-        self.payload = payload
 
 
 async def _stream(*messages):

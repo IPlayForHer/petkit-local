@@ -12,9 +12,16 @@ import logging
 
 from aiohttp import web
 
+from petkit_local.http.dns import loops_back
 from petkit_local.http.handlers._common import request_device
+from petkit_local.http.handlers.heartbeat import carries_commands
+from petkit_local.http.handlers.iot_device_info import self_mqtt_host
 from petkit_local.http.middleware import API_PREFIX, PROXY_OUTCOME, Handler
-from petkit_local.http.middleware.logging import _short, _text
+from petkit_local.http.middleware.logging import _short, _text_or_none
+from petkit_local.http.proxy import forward, resolve_upstream
+from petkit_local.http.redact import RedactionPolicy
+from petkit_local.media.crypto import resolve_key_string
+from petkit_local.utils.capture import capture_record
 
 log = logging.getLogger(__name__)
 
@@ -114,19 +121,12 @@ def _endpoint_selected(request: web.Request, config: dict) -> bool:
 
 
 def _build_policy(request: web.Request, device):
-    """The redaction policy for one request, from the live config and device.
-
-    Imported lazily along with the proxy machinery: this runs on every request
-    and must cost nothing while proxy mode is off.
-    """
-    from petkit_local.http.redact import RedactionPolicy
-    from petkit_local.media.crypto import resolve_key_string
-
+    """The redaction policy for one request, from the live config and device."""
     config = request.app["config"]
     return RedactionPolicy(
         device=device,
         api_url=config.get("api_url", ""),
-        mqtt_host=_self_mqtt_host(config),
+        mqtt_host=self_mqtt_host(config),
         bucket_endpoint=config.get("bucket_endpoint", ""),
         aes_key=resolve_key_string(config),
         block_rce=config.get("proxy_block_run_cmd", True),
@@ -134,17 +134,6 @@ def _build_policy(request: web.Request, device):
         block_log_upload=config.get("proxy_block_log_upload", True),
         media_to_real_oss=config.get("proxy_media_real_oss", False),
     )
-
-
-def _self_mqtt_host(config: dict) -> str:
-    """Our broker's hostname, derived from `api_url` exactly as the handler does.
-
-    Same derivation as `handlers/iot_device_info.py::_self_mqtt_host`, and for
-    the same reason: the device opens a separate MQTT connection, so the value
-    has to be an address it can reach on its own rather than our request's Host.
-    """
-    from urllib.parse import urlparse
-    return urlparse(config.get("api_url", "")).hostname or ""
 
 
 @web.middleware
@@ -205,7 +194,6 @@ async def proxy_middleware(request: web.Request, handler: Handler) -> web.Stream
     local = await handler(request)
 
     if _is_heartbeat(request.path):
-        from petkit_local.http.handlers.heartbeat import carries_commands
         if carries_commands(local):
             log.debug("Not forwarding %s: it is delivering a queued command",
                       request.path)
@@ -238,9 +226,6 @@ async def proxy_middleware(request: web.Request, handler: Handler) -> web.Stream
         return local
 
     try:
-        from petkit_local.http.dns import loops_back
-        from petkit_local.http.proxy import forward, resolve_upstream
-
         upstream = resolve_upstream(config.get("proxy_upstream", ""))
         dns_server = config.get("proxy_dns", "")
 
@@ -321,7 +306,7 @@ def _note_outcome(request: web.Request, exchange) -> None:
         "outcome": outcome,
         "served": "upstream" if exchange.usable else "local",
         "redactions": [r.rule for r in exchange.records],
-        "upstream_body": _short(_text(exchange.upstream_body)),
+        "upstream_body": _short(_text_or_none(exchange.upstream_body)),
     }
 
     hub = request.app.get("event_hub")
@@ -383,7 +368,6 @@ def _capture_exchange(request: web.Request, exchange, *,
     if not config.get("capture"):
         return
 
-    from petkit_local.utils.capture import capture_record
     capture_dir = config.get("capture_dir", "/data/capture")
 
     capture_record(capture_dir, "proxy_http", {
@@ -392,13 +376,13 @@ def _capture_exchange(request: web.Request, exchange, *,
         "query": dict(request.query),
         "headers": {h: request.headers[h] for h in _FORWARDED_HEADERS
                     if h in request.headers},
-        "req_body": _text(body),
+        "req_body": _text_or_none(body),
         "upstream_url": exchange.url,
         "upstream_status": exchange.status,
-        "upstream_body": _text(exchange.upstream_body),
-        "sent_body": _text(exchange.body),
+        "upstream_body": _text_or_none(exchange.upstream_body),
+        "sent_body": _text_or_none(exchange.body),
         "local_status": local.status,
-        "local_body": _text(getattr(local, "body", None)),
+        "local_body": _text_or_none(getattr(local, "body", None)),
         "redactions": [r.rule for r in exchange.records],
     })
 

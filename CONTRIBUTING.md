@@ -59,7 +59,7 @@ nothing about whether the image builds.
 The panel's JavaScript and CSS are prettier-formatted, and CI checks it:
 
 ```sh
-npx prettier@3 --write addon/petkit_local/web/static/{app.js,styles.css}
+npx prettier@3 --write addon/petkit_local/web/static/js/*.js addon/petkit_local/web/static/styles.css
 ```
 
 Please run the tests before opening a PR.

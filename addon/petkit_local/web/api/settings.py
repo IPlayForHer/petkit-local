@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 from aiohttp import web
 
+from petkit_local.http.proxy import DEFAULT_UPSTREAM, UPSTREAM_PRESETS
 from petkit_local.utils.coerce import to_int
 from petkit_local.utils.const import (
     DEVICE_NAMES, DEVICE_TYPES_AI, VERSION,
@@ -91,8 +92,6 @@ def _valid_upstream(value: str) -> bool:
     a typo'd URL would be saved happily and then produce a connection error per
     device request with nothing in the panel to say why.
     """
-    from petkit_local.http.proxy import UPSTREAM_PRESETS
-
     value = (value or "").strip()
     if not value or value in UPSTREAM_PRESETS:
         return True
@@ -240,7 +239,7 @@ async def api_info(request: web.Request) -> web.Response:
     # Imported in the call rather than at module scope: `panel.py` renders the
     # page this hash is stamped into, and it imports this module for its route
     # table — so the dependency only runs one way at import time.
-    from petkit_local.web.panel import ASSET_VERSION
+    from petkit_local.web.panel import ASSET_VERSION  # noqa: PLC0415
 
     cfg = request.app["cfg"]
     reg = request.app["registry"]
@@ -303,8 +302,6 @@ def _upstream_choices() -> list[dict[str, str | bool]]:
     setting resolves to, so the picker can show it selected without having to
     know which key that is.
     """
-    from petkit_local.http.proxy import DEFAULT_UPSTREAM, UPSTREAM_PRESETS
-
     return [{"key": k, "url": v, "default": k == DEFAULT_UPSTREAM}
             for k, v in UPSTREAM_PRESETS.items()]
 

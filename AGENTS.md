@@ -157,7 +157,7 @@ cd addon && pytest --firmware        # also the patcher tests, if tests/firmware
 ruff check petkit_local/ tests/      # narrow lint gate; CI runs it too
 # The panel's CSS/JS are prettier-formatted (.prettierrc at the repo root).
 # CI checks this, so run it before pushing rather than after:
-npx prettier@3 --write addon/petkit_local/web/static/{app.js,styles.css}
+npx prettier@3 --write addon/petkit_local/web/static/js/*.js addon/petkit_local/web/static/styles.css
 pytest tests/test_media_stitch.py    # one module
 # deploy to a HAOS box — code/Dockerfile only. If config.yaml itself changed, the Supervisor
 # caches it by mtime: rsync, `touch` it, `ha supervisor restart`, `ha addons update <addon>`.

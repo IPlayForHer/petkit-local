@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
+from petkit_local.events import codes
 from petkit_local.utils.const import device_display_name
 from petkit_local.utils.paths import sanitize_filename
 
@@ -82,14 +83,19 @@ _EVENT_LABELS = (
 )
 
 _KIND_LABELS = {
-    "toilet_visit": "Toilet visit", "cleaning": "Cleaning",
-    "pet": "Appeared", "motion": "Motion",
-    "error": "Error", "feeding": "Feeding",
+    codes.KIND_TOILET: "Toilet visit", codes.KIND_CLEANING: "Cleaning",
+    codes.KIND_PET: "Appeared", codes.KIND_MOTION: "Motion",
+    codes.KIND_ERROR: "Error", codes.KIND_FEEDING: "Feeding",
 }
 
 
-def event_label(content: dict | None = None, event_kind: str | None = None) -> str:
+def media_filename_label(content: dict | None = None, event_kind: str | None = None) -> str:
     """The human words that go in a media filename, e.g. "Toilet visit".
+
+    Not `events/decode.py::event_label`, which builds the Timeline's rich
+    sentence for one event code: this is the `{EventLabel}` of the path shapes
+    in the module header, so it must stay short, stable and one of a handful of
+    values — it is what a folder of files sorts and reads as.
 
     `content`'s per-file flags win over `event_kind` because they describe
     THIS file, whereas `event_kind` is the surrounding event's classification

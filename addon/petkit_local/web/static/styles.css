@@ -27,7 +27,7 @@
 :root {
   color-scheme: light dark;
   /* Timeline time column. Overridden to a wider value by `sizeTimeColumn()` in
-     app.js when the viewer's locale renders 12-hour times, which are 3-4
+     timeline.js when the viewer's locale renders 12-hour times, which are 3-4
      characters longer and used to overrun this track onto the row's content. */
   --tl-time-w: 70px;
   --bg: #f4f6f8;
@@ -230,7 +230,7 @@ main {
    `pointer-events: none`: the fields carry the `?` help buttons that explain
    what each one is for, and those stay useful — arguably more so — while the
    form cannot be submitted. The fields themselves are given a real `disabled`
-   attribute in app.js, so keyboard and screen-reader users get the same
+   attribute in the JS, so keyboard and screen-reader users get the same
    answer as the dimming gives everyone else. */
 .card.blocked h3,
 .card.blocked .sub,
@@ -1814,7 +1814,7 @@ table.tl-dbgt td:first-child {
 
 /* ==== HELP ==== */
 /* Inline help: a `?` beside a label, and the popover it opens. The popover is
-   parented to <body> (see `help()` in app.js), so it must out-stack every card
+   parented to <body> (see `help()` in js/help.js), so it must out-stack every card
    and the sticky nav. */
 button.help {
   font-size: 10px;

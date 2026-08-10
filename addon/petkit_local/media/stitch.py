@@ -323,7 +323,7 @@ async def _merged_path(store: EventStore, episode: dict, media_root: str,
     chunks = episode["chunks"]
     first = chunks[0]
     event = await store.event_by_related(episode["related_event"])
-    label = layout.event_label(None, event.get("event_kind") if event else None)
+    label = layout.media_filename_label(None, event.get("event_kind") if event else None)
     return layout.build_media_path(
         media_root, device_type, episode["device_id"], episode["category"],
         first.get("start_ts") or first.get("created_at"), label, "mp4",

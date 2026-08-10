@@ -18,12 +18,18 @@ from aiohttp import web
 
 from petkit_local.http.handlers._common import device_id, request_device
 from petkit_local.http.middleware import API_PREFIX, PROXY_OUTCOME, Handler
+from petkit_local.utils.capture import capture_record
 
 log = logging.getLogger(__name__)
 
 
-def _text(raw: bytes | None) -> str | None:
-    """Decode a captured body, never raising on a binary one."""
+def _text_or_none(raw: bytes | None) -> str | None:
+    """Decode a captured body, never raising on a binary one.
+
+    None passes through as None, which is what `_short` below preserves too:
+    a proxy capture has to keep "there was no body" distinct from "the body was
+    empty", and those are different facts about what the cloud answered.
+    """
     if raw is None:
         return None
     return bytes(raw).decode("utf-8", "replace")
@@ -98,7 +104,6 @@ async def logging_middleware(request: web.Request, handler: Handler) -> web.Stre
 
         config = request.app.get("config", {})
         if config.get("capture"):
-            from petkit_local.utils.capture import capture_record
             capture_record(config.get("capture_dir", "/data/capture"), "requests", {
                 "method": request.method,
                 "path": request.path,

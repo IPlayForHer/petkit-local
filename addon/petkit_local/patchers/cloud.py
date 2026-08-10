@@ -96,7 +96,7 @@ def _find_upload_connect_to(data: bytes) -> int:
 def _get_function_range(data: bytes, func_name: str) -> tuple[int, int] | None:
     """Get (file_start, file_end) for a named function via ELF symbols."""
     try:
-        from elftools.elf.elffile import ELFFile
+        from elftools.elf.elffile import ELFFile  # noqa: PLC0415 - optional, falls back to a scan
         elf = ELFFile(io.BytesIO(data))
         for section_name in (".dynsym", ".symtab"):
             section = elf.get_section_by_name(section_name)

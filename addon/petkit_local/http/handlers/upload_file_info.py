@@ -24,6 +24,8 @@ from aiohttp import web
 
 from petkit_local.events import ingest
 from petkit_local.http.handlers._common import request_device
+from petkit_local.media import pipeline
+from petkit_local.utils.capture import capture_record
 
 if TYPE_CHECKING:
     from petkit_local.devices.base import Device
@@ -120,7 +122,6 @@ async def handle_upload_file_info(request: web.Request) -> web.Response:
 
     config = request.app["config"]
     if config.get("capture"):
-        from petkit_local.utils.capture import capture_record
         capture_record(config.get("capture_dir", "/data/capture"), "upload_file_info",
                         {"id": petkit_id, "infos": infos})
 
@@ -171,10 +172,9 @@ async def _process(
             because each may legitimately be None (a bucket-only run, a build
             without HA) and the pipeline is what checks.
     """
-    from petkit_local.media.pipeline import process_file_info
     try:
-        await process_file_info(device, info, config, store, hub=hub,
-                                 ha_publisher=ha_publisher, pet_registry=pet_registry)
+        await pipeline.process_file_info(device, info, config, store, hub=hub,
+                                         ha_publisher=ha_publisher, pet_registry=pet_registry)
     except asyncio.CancelledError:
         # Shutdown cancelled us; nothing to report, and re-raising keeps the
         # task's state as cancelled rather than "completed successfully".

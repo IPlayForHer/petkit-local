@@ -18,6 +18,7 @@ from typing import Any
 from aiohttp import web
 
 from petkit_local.devices.base import Device, split_bucket_authority
+from petkit_local.http.proxy import resolve_upstream
 from petkit_local.utils.coerce import to_int
 
 log = logging.getLogger(__name__)
@@ -174,7 +175,6 @@ def _cloud_upstream(request: web.Request) -> str:
     changing the upstream in Setup moves this too, and there is never a second
     place that has to be kept in step.
     """
-    from petkit_local.http.proxy import resolve_upstream
     return resolve_upstream(_live(request).get("proxy_upstream", ""))
 
 

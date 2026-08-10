@@ -57,6 +57,22 @@ def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
         raise
 
 
+def read_bytes(path: str | os.PathLike[str]) -> bytes:
+    """Read a whole file into memory (blocking — call via a thread).
+
+    The callers read a TLS certificate and a multi-megabyte media clip, both on
+    the one asyncio loop the whole add-on shares, so neither may touch the file
+    directly.
+
+    Raises:
+        OSError: unhandled on purpose — unlike `read_json` there is no sensible
+            default for "the bytes you asked for", and both callers already
+            treat a failed read as a failed operation.
+    """
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def atomic_write_text(path: str | os.PathLike[str], text: str, *, encoding: str = "utf-8") -> None:
     """Replace `path` with `text`, atomically. See `atomic_write_bytes`."""
     atomic_write_bytes(path, text.encode(encoding))

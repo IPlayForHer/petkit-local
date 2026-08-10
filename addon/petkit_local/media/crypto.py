@@ -107,7 +107,12 @@ def decrypt_aes(data: bytes, key: bytes, iv_hex: str) -> bytes:
     """AES-128-CBC decrypt. Tolerant of a non-padded/truncated tail (the
     device may not PKCS7-pad a live-streamed clip) — only full 16-byte blocks
     are decrypted; any partial trailing block is appended unmodified."""
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    # `cryptography` is optional everywhere else it is used here (mqtt/broker.py
+    # starts without a TLS listener when it is absent), so importing it at module
+    # scope would take the whole device-facing stub table down with it.
+    from cryptography.hazmat.primitives.ciphers import (  # noqa: PLC0415
+        Cipher, algorithms, modes,
+    )
 
     iv_hex = (iv_hex or "").strip()
     if iv_hex[:2].lower() == "0x":

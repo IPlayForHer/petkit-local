@@ -33,19 +33,19 @@ def test_role_folder_mapping():
     assert layout.role_folder("unknownType") == "Other"
 
 
-def test_event_label_prefers_content_flags():
+def test_media_filename_label_prefers_content_flags():
     # petEvent alone = the pet was seen; only toiletEvent means a visit
-    assert layout.event_label({"petEvent": True}, "cleaning") == "Appeared"
-    assert layout.event_label({"toiletEvent": True}) == "Toilet visit"
-    assert layout.event_label({"petEvent": True, "toiletEvent": True}) == "Toilet visit"
-    assert layout.event_label({"cleanEvent": True}) == "Cleaning"
-    assert layout.event_label({"cvrEvent": True}) == "Motion"
+    assert layout.media_filename_label({"petEvent": True}, "cleaning") == "Appeared"
+    assert layout.media_filename_label({"toiletEvent": True}) == "Toilet visit"
+    assert layout.media_filename_label({"petEvent": True, "toiletEvent": True}) == "Toilet visit"
+    assert layout.media_filename_label({"cleanEvent": True}) == "Cleaning"
+    assert layout.media_filename_label({"cvrEvent": True}) == "Motion"
 
 
-def test_event_label_falls_back_to_event_kind():
-    assert layout.event_label(None, "toilet_visit") == "Toilet visit"
-    assert layout.event_label({}, "error") == "Error"
-    assert layout.event_label({}, None) == "Event"
+def test_media_filename_label_falls_back_to_event_kind():
+    assert layout.media_filename_label(None, "toilet_visit") == "Toilet visit"
+    assert layout.media_filename_label({}, "error") == "Error"
+    assert layout.media_filename_label({}, None) == "Event"
 
 
 def test_build_media_path_shape():

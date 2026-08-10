@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
+from petkit_local.events.ingest import _MODULE_TYPE_TO_CATEGORY, backfill_event_rows
 from petkit_local.http.bucket import create_bucket_app
 from petkit_local.http.handlers.upload_file_info import wait_for_pending as wait_for_media_tasks
 from petkit_local.media.retention import RetentionSweeper
@@ -99,7 +100,6 @@ async def start_background(services: Services, app_instance: web.Application) ->
     # bridge, the panel, the sweepers — starts only after this hook
     # returns, so this is the one point where the DB is guaranteed to be
     # migrated before a single reader exists.
-    from petkit_local.events.ingest import _MODULE_TYPE_TO_CATEGORY, backfill_event_rows
     await event_store.connect()
     # Correct any rows stored under an older, wrong moduleType->category
     # mapping before anything reads them (notably the stitcher, which must

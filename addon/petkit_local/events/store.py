@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from petkit_local.events import codes
 from petkit_local.events.models import Base, BlockedAttempt, Event, Media, Pet, PetFace
 from petkit_local.utils.timeutil import local_day_start
 
@@ -865,7 +866,7 @@ class EventStore:
         """
         now = now if now is not None else time.time()
         day_start = local_day_start(now)
-        visit = (Event.pet_id == pet_id, Event.event_kind == "toilet_visit")
+        visit = (Event.pet_id == pet_id, Event.event_kind == codes.KIND_TOILET)
 
         async with self._read() as session:
             latest_row = await session.scalar(

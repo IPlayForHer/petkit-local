@@ -62,7 +62,7 @@ def _find_via_dynsym(data: bytes) -> int | None:
     back to the scan".
     """
     try:
-        from elftools.elf.elffile import ELFFile
+        from elftools.elf.elffile import ELFFile  # noqa: PLC0415 - optional, falls back to a scan
     except ImportError:
         return None
     try:

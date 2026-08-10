@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from petkit_local.patchers.camera import STREAM_PATHS
+from petkit_local.patchers.camera import STREAM_PATHS, stream_urls
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from petkit_local.devices.base import Device
@@ -402,8 +402,6 @@ def stream_urls_with_rtsp(device: Device, supervisor: Any | None) -> dict[str, s
     Kept out of `patchers/camera.py` so that module stays about the patch and
     knows nothing about go2rtc.
     """
-    from petkit_local.patchers.camera import stream_urls
-
     urls = dict(stream_urls(device))
     rtsp = supervisor.stream_url_for(device) if supervisor is not None else ""
     if rtsp:

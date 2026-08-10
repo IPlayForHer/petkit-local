@@ -21,20 +21,25 @@ from petkit_local.http.handlers._common import (
 log = logging.getLogger(__name__)
 
 
-def _self_mqtt_host(request: web.Request) -> str:
+def self_mqtt_host(config: dict) -> str:
     """Return the broker hostname to hand devices — the box they already reach.
 
     Derived from the configured `api_url`, not from the request's Host header:
     the device opens a separate MQTT connection, so the value has to be an
     address it can reach on its own.
 
+    Takes the config rather than the request because proxy mode's redaction
+    policy needs the same answer with no request in hand, and the two must not
+    be able to disagree: redaction rewrites the upstream cloud's broker address
+    to whatever this returns, so a second derivation that drifted would hand a
+    device an address it is not listening on.
+
     Returns:
         The hostname, or "" when `api_url` has none to give. Empty is a working
         outcome, not a failure — the device then falls back to the HTTP
         heartbeat, which is slower but needs no broker.
     """
-    api_url = request.app["config"].get("api_url", "")
-    return urlparse(api_url).hostname or ""
+    return urlparse(config.get("api_url", "")).hostname or ""
 
 
 def _resolve_or_create_device(request: web.Request) -> Device | None:
@@ -76,7 +81,7 @@ async def handle_iot_device_info(request: web.Request) -> web.Response:
     device = _resolve_or_create_device(request)
     if not device:
         return no_device_response()
-    mqtt_host = device.resolve_mqtt_host(_self_mqtt_host(request))
+    mqtt_host = device.resolve_mqtt_host(self_mqtt_host(request.app["config"]))
     log.info("IoT device info: id=%d -> pk=%s dn=%s mqttHost=%s",
              device.petkit_id, device.mqtt_product_key, device.mqtt_device_name, mqtt_host)
     return web.json_response(payloads.to_iot_device_info(device, mqtt_host))
@@ -93,7 +98,7 @@ async def handle_iot_device_info_flat(request: web.Request) -> web.Response:
     device = _resolve_or_create_device(request)
     if not device:
         return no_device_response()
-    mqtt_host = device.resolve_mqtt_host(_self_mqtt_host(request))
+    mqtt_host = device.resolve_mqtt_host(self_mqtt_host(request.app["config"]))
     log.info("IoT device info (flat): id=%d -> pk=%s dn=%s mqttHost=%s",
              device.petkit_id, device.mqtt_product_key, device.mqtt_device_name, mqtt_host)
     return web.json_response(payloads.to_iot_device_info_flat(device, mqtt_host))

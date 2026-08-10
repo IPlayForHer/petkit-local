@@ -35,6 +35,9 @@ import urllib.parse
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from petkit_local.devices.state_parsers import (apply_consumable_state,
+                                                normalize_property_params,
+                                                parse_state_report)
 from petkit_local.events import codes, decode
 from petkit_local.utils.coerce import to_float, to_int
 from petkit_local.utils.dicts import first_of
@@ -45,10 +48,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 # --- event_kind classification --------------------------------------------
-# The tables themselves are in events/codes.py; the names below are re-exported
-# so every existing caller and test keeps its import path.
-
-EVENT_TYPE_DETAIL = codes.DETAIL_CODES
+# The tables themselves are in events/codes.py.
 
 _warned_event_types: set[str] = set()
 
@@ -431,9 +431,6 @@ def apply_state_snapshot(device: Device, state: Any) -> bool:
     if not isinstance(state, dict) or not state:
         return False
 
-    from petkit_local.devices.state_parsers import (apply_consumable_state,
-                                                    normalize_property_params,
-                                                    parse_state_report)
     device.state.update(state)  # raw, for the panel's Debug info and the echoes
     device.state.update(parse_state_report(device.device_type, state))
     device.state.update(normalize_property_params(device.device_type, state))

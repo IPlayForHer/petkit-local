@@ -11,6 +11,7 @@ from __future__ import annotations
 from aiohttp import web
 
 from petkit_local.devices import payloads
+from petkit_local.devices.base import Device
 from petkit_local.http.handlers._common import request_device
 
 
@@ -31,7 +32,6 @@ async def handle_serverinfo(request: web.Request) -> web.Response:
     if device:
         return web.json_response(payloads.to_serverinfo(device, api_url))
 
-    from petkit_local.devices.base import Device
     return web.json_response(
         payloads.to_serverinfo(
             Device(device_type=request.get("device_type", "unknown"), petkit_id=0),

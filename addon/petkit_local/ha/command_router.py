@@ -18,8 +18,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, AsyncIterable, Iterable
 
+from petkit_local.devices.ble import ble_command_for
 from petkit_local.ha.commands import Refused, handle_ha_command
 from petkit_local.utils.coerce import to_int
+from petkit_local.utils.logtext import excerpt
 
 if TYPE_CHECKING:
     from petkit_local.devices.ble import BLERegistry
@@ -31,15 +33,6 @@ log = logging.getLogger(__name__)
 
 # A retained command payload can be arbitrarily large — bound what is logged.
 PAYLOAD_LOG_CHARS = 120
-
-
-def _excerpt(payload: object, limit: int = PAYLOAD_LOG_CHARS) -> str:
-    """Render a raw MQTT payload as bounded, log-safe text."""
-    if isinstance(payload, (bytes, bytearray)):
-        text = bytes(payload).decode("utf-8", errors="replace")
-    else:
-        text = str(payload)
-    return (text[:limit] + "...") if len(text) > limit else text
 
 
 def _ble_command_value(entity: Any, payload: str) -> int | None:
@@ -140,8 +133,8 @@ class CommandRouter:
             except fatal:
                 raise
             except Exception:
-                log.exception("Dropped HA command on %s: %s",
-                              message.topic, _excerpt(getattr(message, "payload", b"")))
+                log.exception("Dropped HA command on %s: %s", message.topic,
+                              excerpt(getattr(message, "payload", b""), PAYLOAD_LOG_CHARS))
 
     async def _handle_ble_command(self, ble_id: int, entity: Any, message: Any) -> None:
         """Apply one HA command to a BLE accessory, through its parent.
@@ -154,8 +147,6 @@ class CommandRouter:
         because from Home Assistant they look identical: the switch flips back
         and nothing happens.
         """
-        from petkit_local.devices.ble import Refused, ble_command_for
-
         ble_dev = self._ble_registry.get(ble_id) if self._ble_registry else None
         if ble_dev is None:
             log.warning("Command for unknown accessory %d", ble_id)
@@ -239,9 +230,11 @@ class CommandRouter:
         except UnicodeDecodeError:
             # Not mojibake-repaired on purpose: a `text` entity would persist the
             # replacement characters into device config and serve them back.
-            log.warning("Ignoring non-UTF-8 HA command on %s: %s", topic, _excerpt(raw))
+            log.warning("Ignoring non-UTF-8 HA command on %s: %s", topic,
+                        excerpt(raw, PAYLOAD_LOG_CHARS))
             return
-        log.info("HA command %s=%s for device %d", suffix, _excerpt(payload), device_id)
+        log.info("HA command %s=%s for device %d", suffix,
+                 excerpt(payload, PAYLOAD_LOG_CHARS), device_id)
 
         try:
             result = handle_ha_command(device, entity, payload)

@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from petkit_local.devices import defaults
@@ -31,9 +32,11 @@ from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.ha.command_router import CommandRouter
 from petkit_local.ha.entities.ble import get_ble_entities
+from petkit_local.ha.entities.pet import PET_SENSORS
 from petkit_local.ha.discovery import build_discovery_payload, discovery_topic
 from petkit_local.devices.state_parsers import apply_consumable_state
 from petkit_local.ha.commands import LOCAL_DEFAULTS
+from petkit_local.utils.jsonio import read_bytes
 
 if TYPE_CHECKING:
     from petkit_local.devices.ble import BLEDevice, BLERegistry
@@ -42,12 +45,6 @@ if TYPE_CHECKING:
     from petkit_local.web.hub import EventHub
 
 log = logging.getLogger(__name__)
-
-
-def _read_bytes(path: str) -> bytes:
-    """Read a whole file. Called via asyncio.to_thread — never on the loop."""
-    with open(path, "rb") as f:
-        return f.read()
 
 
 def device_is_stale(device: Device, now: float, timeout: int) -> bool:
@@ -151,7 +148,7 @@ class HAPublisher:
                         "is detected automatically; any other broker has to be named.")
             return
         try:
-            import aiomqtt
+            import aiomqtt  # noqa: PLC0415 - optional dependency, probed at use
         except ImportError:
             log.warning("aiomqtt not installed - HA MQTT publishing disabled")
             return
@@ -348,7 +345,7 @@ class HAPublisher:
             # Snapshots run to a few MB and arrive in bursts (the waste gallery
             # is ~5 photos per cleaning), so the read goes off the event loop.
             try:
-                data = await asyncio.to_thread(_read_bytes, path)
+                data = await asyncio.to_thread(read_bytes, path)
             except OSError as e:
                 log.warning("Could not read media file for HA snapshot push (%s): %s", path, e)
             else:
@@ -376,8 +373,6 @@ class HAPublisher:
         """Announce a pet as its own virtual HA device (see ai/pets.py)."""
         if not self._client or not self._connected:
             return
-        from petkit_local.ha.entities.pet import PET_SENSORS
-
         identifiers = self._pet_identifiers(pet["id"])
         state_topic = f"petkit-local/pet/{pet['id']}/state"
         avail_topic = f"petkit-local/pet/{pet['id']}/availability"
@@ -415,7 +410,6 @@ class HAPublisher:
 
         last_visit_iso = None
         if stats.get("last_visit_ts"):
-            from datetime import datetime, timezone
             last_visit_iso = datetime.fromtimestamp(stats["last_visit_ts"], tz=timezone.utc).isoformat()
 
         state = {

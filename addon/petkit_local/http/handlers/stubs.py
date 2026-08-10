@@ -24,10 +24,16 @@ import time
 from aiohttp import web
 
 from petkit_local.devices import payloads
+from petkit_local.devices.base import Device
+from petkit_local.events.ingest import (
+    apply_derived_state, apply_state_snapshot, entity_for_event, from_event_report,
+    parse_event_report_form,
+)
 from petkit_local.http.handlers._common import (
     device_id, no_device_response, request_device,
 )
 from petkit_local.media.crypto import resolve_key_string as _get_aes_key
+from petkit_local.utils.capture import capture_record
 
 
 async def handle_sync_time(request: web.Request) -> web.Response:
@@ -93,7 +99,6 @@ async def handle_oss_sts(request: web.Request) -> web.Response:
     # (see the docstring on why an unidentified caller gets a full block), and
     # minting a registry entry from an unidentified request is exactly what
     # `handlers/_common.py` refuses to do.
-    from petkit_local.devices.base import Device
     x_dev = request.get("x_device", {})
     fallback = Device(device_type=x_dev.get("type", "unknown"), petkit_id=device_id(request) or 0)
     return web.json_response(payloads.to_oss_sts(fallback, bucket_endpoint, aes_key))
@@ -177,10 +182,6 @@ async def handle_event_report(request: web.Request) -> web.Response:
     raw = await request.read()
     text = raw.decode("utf-8", "replace")
 
-    from petkit_local.events.ingest import (
-        apply_derived_state, apply_state_snapshot, entity_for_event, from_event_report,
-        parse_event_report_form,
-    )
     form = parse_event_report_form(text)
     row = from_event_report(device, form)
     state = row.pop("_state", None)
@@ -188,7 +189,6 @@ async def handle_event_report(request: web.Request) -> web.Response:
 
     config = request.app["config"]
     if config.get("capture"):
-        from petkit_local.utils.capture import capture_record
         capture_record(config.get("capture_dir", "/data/capture"), "event_report",
                         {"id": petkit_id, "form": form})
 

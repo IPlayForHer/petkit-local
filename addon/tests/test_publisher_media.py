@@ -5,14 +5,7 @@ from pathlib import Path
 
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.ha.publisher import HAPublisher
-
-
-class FakeMqttClient:
-    def __init__(self):
-        self.published = []  # (topic, payload, kwargs)
-
-    async def publish(self, topic, payload, **kw):
-        self.published.append((topic, payload, kw))
+from tests._fakes import FakeMqttClient
 
 
 def _setup(media_root):

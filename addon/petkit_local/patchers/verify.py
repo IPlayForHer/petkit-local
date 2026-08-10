@@ -36,7 +36,6 @@ EM_MIPS = 8
 EM_ARM = 40
 
 MIPS_ELF_BASE = 0x400000
-ARM_ELF_BASE = 0x10000
 
 #: Enough bytes to read `e_machine`, which is the last field we look at.
 _MIN_ELF_HEADER = 20
@@ -137,7 +136,7 @@ def assert_arm_elf(data: bytes, what: str, *, exec_only: bool = False) -> None:
     """Raise unless `data` is an ARM 32-bit little-endian ELF.
 
     The ARM twin of `assert_mips_elf`, and `exec_only` carries the same weight:
-    a virtual address is converted to a file offset with `vaddr - ARM_ELF_BASE`,
+    a virtual address is converted to a file offset with `vaddr - 0x10000`,
     which only holds for a fixed-load-address ET_EXEC. A PIE binary would be
     patched at a wrong offset without complaining.
 

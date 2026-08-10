@@ -58,7 +58,7 @@ from petkit_local.http.middleware.device import (
     parse_form_body,
     parse_x_device,
 )
-from petkit_local.http.middleware.logging import _short, _text, logging_middleware
+from petkit_local.http.middleware.logging import _short, _text_or_none, logging_middleware
 from petkit_local.http.middleware.proxy import (
     _build_policy,
     _capture_exchange,
@@ -69,7 +69,6 @@ from petkit_local.http.middleware.proxy import (
     _record_exchange,
     _remember_upstream_credentials,
     _reports_a_local_log_upload,
-    _self_mqtt_host,
     _FORWARDED_HEADERS,
     GUARDED_LOCAL_ENDPOINTS,
     LOCAL_ONLY_ENDPOINTS,
@@ -101,9 +100,8 @@ __all__ = [
     "_record_exchange",
     "_remember_upstream_credentials",
     "_reports_a_local_log_upload",
-    "_self_mqtt_host",
     "_short",
-    "_text",
+    "_text_or_none",
 ]
 
 

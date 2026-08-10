@@ -27,8 +27,9 @@ with their own certificate in front of `web_port`.
 Frontend
 --------
 The single-page app itself is no longer inlined here: `templates/index.html` is
-rendered by `handle_index` and links `static/app.js` + `static/styles.css`, both
-shipped inside the package (see `TEMPLATE_DIR` / `STATIC_DIR`). The JS consumes
+rendered by `handle_index` and links `static/js/main.js` (an ES module, which
+imports the rest of `static/js/`) + `static/styles.css`, both shipped inside
+the package (see `TEMPLATE_DIR` / `STATIC_DIR`). The JS consumes
 the exact key names the handlers in `web/api/` emit, so response shapes are a
 contract: adding a key is safe, renaming or removing one is not.
 """
@@ -37,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,6 +46,8 @@ from typing import TYPE_CHECKING, Any
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
+
+from petkit_local.utils.paths import UnsafePathError, safe_join
 
 from petkit_local.web.api.ble import (
     api_ble_accessories, api_ble_command, api_ble_delete, api_ble_import, api_ble_poll,
@@ -96,7 +100,7 @@ async def _no_heuristic_caching(request: web.Request, response: web.StreamRespon
     response with neither `Cache-Control` nor `Expires` is one a browser may
     reuse WITHOUT asking, for a heuristic period derived from how old
     `Last-Modified` is. The practical effect after an add-on update is that the
-    panel keeps running the previous `app.js` — new UI is deployed, served, and
+    panel keeps running the previous script — new UI is deployed, served, and
     invisible, with nothing in the logs to say so.
 
     `no-cache` does not mean "do not store": the file stays cached and the
@@ -113,8 +117,13 @@ async def _no_heuristic_caching(request: web.Request, response: web.StreamRespon
     mechanism starts, so it does not get to depend on a path match.
     """
     # Substring, not prefix: behind HA Ingress the panel is mounted under an
-    # opaque path, so "/static/" is not guaranteed to be at position 0.
-    if "/static/" in request.path:
+    # opaque path, so neither segment is guaranteed to be at position 0.
+    if "/asset/" in request.path:
+        # The hash is IN this URL, so its content cannot change under it. Say so
+        # and the browser stops revalidating twenty modules on every page load —
+        # a new build asks for new URLs instead.
+        response.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+    elif "/static/" in request.path:
         response.headers.setdefault("Cache-Control", "no-cache")
 
 
@@ -169,6 +178,13 @@ def create_panel_app(registry: DeviceRegistry, ble_registry: BLERegistry | None,
     # Served under the app's own prefix, so the relative `static/...` URLs in
     # index.html resolve correctly whatever path Ingress mounts us at.
     app.router.add_static("/static", str(STATIC_DIR), name="static")
+    # The same files again, under a path segment carrying the asset hash. An ES
+    # module's `import './core.js'` resolves against the MODULE's URL, not the
+    # document's, so a `?v=` on the entry point alone leaves the other nineteen
+    # on URLs that never change — and `no-cache` is exactly what turned out not
+    # to be enough here (see `_no_heuristic_caching`). A version in the path is
+    # inherited by every relative import for free.
+    app.router.add_get("/asset/{v}/js/{name}", handle_versioned_js)
     app.on_response_prepare.append(_no_heuristic_caching)
     app.router.add_get("/api/info", api_info)
 
@@ -306,8 +322,8 @@ def asset_version() -> str:
     `_no_heuristic_caching`) and is correct, but it only binds whoever chooses
     to honour it. Behind Home Assistant Ingress the panel is an iframe on HA's
     own origin, under a service worker and a proxy that are not ours, and in
-    practice a deployed `app.js` kept being served from cache there even after
-    a hard refresh -- which the same build does not do when the panel is
+    practice a deployed panel script kept being served from cache there even
+    after a hard refresh -- which the same build does not do when the panel is
     reached directly on its own port.
 
     A changed URL cannot be answered from a cache keyed on the old one, so this
@@ -315,21 +331,50 @@ def asset_version() -> str:
     mtime: a rebuild that changes nothing keeps the URL, and the browser keeps
     its copy.
 
+    EVERY module, not just the entry point: only `js/main.js` carries the `?v=`
+    in the document, and it imports the rest by bare relative path -- so a
+    changed submodule that left this hash alone would ship under an unchanged
+    URL and be answered from cache, which is the exact staleness this exists to
+    prevent. Sorted by name, and the name is hashed with the bytes: a directory
+    listing has no order to rely on, and a rename with identical content still
+    has to move the hash.
+
     Computed once at import. The files ship inside the image and cannot change
     under a running process, so re-hashing per request would buy nothing.
     """
     h = hashlib.sha256()
-    for name in ("app.js", "styles.css"):
-        try:
-            h.update((STATIC_DIR / name).read_bytes())
-        except OSError:
-            # Never fail to render the panel over a cache hint. A missing file
-            # is a much louder problem two lines later.
+    try:
+        modules = sorted((STATIC_DIR / "js").glob("*.js"))
+        if not modules:
             return "dev"
+        for path in (STATIC_DIR / "styles.css", *modules):
+            h.update(path.name.encode())
+            h.update(path.read_bytes())
+    except OSError:
+        # Never fail to render the panel over a cache hint. A missing file is a
+        # much louder problem two lines later.
+        return "dev"
     return h.hexdigest()[:12]
 
 
 ASSET_VERSION = asset_version()
+
+
+async def handle_versioned_js(request: web.Request) -> web.StreamResponse:
+    """Serve `static/js/{name}` from a URL whose path carries the asset hash.
+
+    The hash segment is not checked against `ASSET_VERSION`: an older page is
+    entitled to keep loading the modules it was built against for as long as it
+    is open, and a mismatch is a stale document rather than an error. The
+    segment exists to make the URL change, nothing more.
+    """
+    try:
+        path = safe_join(str(STATIC_DIR / "js"), request.match_info["name"])
+    except UnsafePathError:
+        return web.json_response({"error": "not found"}, status=404)
+    if not path.endswith(".js") or not os.path.isfile(path):
+        return web.json_response({"error": "not found"}, status=404)
+    return web.FileResponse(path)
 
 
 async def handle_index(request: web.Request) -> web.Response:

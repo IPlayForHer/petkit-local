@@ -13,14 +13,17 @@ the client that joins them.
 from __future__ import annotations
 
 import datetime
+import ipaddress
 import logging
 import os
+import socket
 import ssl
 from typing import TYPE_CHECKING
 
 from amqtt.broker import Broker, BrokerConfig
 from amqtt.contexts import ListenerConfig
 
+from petkit_local.config import _supervisor_host_ip
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.mqtt.auth import AliyunAuthPlugin, parse_client_id
 
@@ -40,14 +43,12 @@ def _get_host_ip() -> str | None:
     isn't verifying the hostname, so failing here must not stop the broker.
     """
     try:
-        from petkit_local.config import _supervisor_host_ip
         ip = _supervisor_host_ip()
         if ip:
             return ip
     except Exception:
         pass
     try:
-        import socket
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
@@ -74,11 +75,10 @@ def ensure_self_signed(cert_path: str, key_path: str) -> bool:
     if os.path.exists(cert_path) and os.path.exists(key_path):
         return True
     try:
-        from cryptography import x509
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import rsa
-        from cryptography.x509.oid import NameOID
-        import ipaddress
+        from cryptography import x509  # noqa: PLC0415 - optional dependency, probed at use
+        from cryptography.hazmat.primitives import hashes, serialization  # noqa: PLC0415
+        from cryptography.hazmat.primitives.asymmetric import rsa  # noqa: PLC0415
+        from cryptography.x509.oid import NameOID  # noqa: PLC0415
 
         host_ip = _get_host_ip()
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
