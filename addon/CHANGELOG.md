@@ -1,5 +1,80 @@
 # Changelog
 
+## 2.0.0 — 2026-08-10
+
+Mostly a tidying release: no new device support, no new entities, and — apart
+from the port fix below — nothing a working install will notice. The version is
+2.0.0 because one option is gone and a lot of code moved.
+
+### A remapped port is honoured now
+
+Changing the add-on's Network mapping for `80/tcp` — to 8080, or anything else —
+left every device unable to reach the server. `dev_serverinfo`'s `apiServers` is
+the only thing that tells a device where we are, and it was built without a
+port, so it always said 80. Reported by @strxno.
+
+The Supervisor knows the real mapping, so the address handed out now carries the
+host port, and the media bucket follows its own `9000/tcp` mapping the same way.
+A port mapped to nothing is reported in the log instead of being advertised
+anyway, and a remapped MQTT port is reported too — that one cannot be fixed from
+here, because the firmware dials it from its own build and no response overrides
+it.
+
+An explicit `api_url` is still used exactly as written. Prefer host 80 anyway:
+a device redirected by DNS dials 80 with nowhere to tell it otherwise.
+
+### `bucket_endpoint` is an option
+
+It existed only as a command-line flag, so nobody running the add-on could set
+it. Set it when uploads have to go through a different hostname, port or
+TLS-terminating proxy than the API.
+
+### `mqtt_host` is gone
+
+Nothing ever read that option. The broker address a device is given is derived
+per request from the address it reached us on, which is what lets one instance
+serve devices that see it under different addresses. Setting `mqtt_host`
+validated, did nothing, and looked like a broken add-on.
+
+Updating is safe: a value left over in your options is ignored rather than
+rejected — tested on an install that had one. Delete the line when you next
+edit the options, or leave it.
+
+### Fixes
+
+- The panel's capture listing and device-log listing read every file on the
+  event loop that also serves the devices. A large capture could stall the HTTP
+  server and the MQTT bridge.
+- A backend error rendered in the panel as "No devices connected yet", which
+  told people with working devices to go and provision one.
+- The panel's WebSocket retried every two seconds forever; it now backs off, and
+  survives a malformed frame.
+- Nine panel endpoints answered 500 instead of 400 to a malformed request body.
+- Proxy mode could leak the sockets of a replaced upstream session.
+- A failed video thumbnail answered 500, which the Timeline has no fallback for,
+  so the tile broke instead of showing the poster still.
+- A `number` entity that declares no bounds is no longer given 0..100 and told
+  to refuse anything outside it.
+- An optimistic write to a BLE accessory honours the section its field lives in.
+- Face photos and the go2rtc config are written off the event loop.
+
+### Installing no longer means building
+
+The add-on pulls a published image now — one multi-architecture package on
+GHCR — instead of compiling everything on your own machine. On a Raspberry Pi
+that turns a first install from many minutes of building `cryptography` into a
+download. `docker-compose.yml` uses the same image, and its two site-specific
+values moved to a `.env` file so they cannot be committed by accident.
+
+### Underneath
+
+Eleven files that had grown past what anyone reads in one sitting were split
+along seams they already documented — the BLE protocol, event ingestion,
+redaction, the middlewares, startup, the device payloads, the BLE relay, the
+command sink, the panel. The device layer no longer imports Home Assistant's.
+There is an `ARCHITECTURE.md` now, which is what the README and CONTRIBUTING
+point a human at instead of the file written for AI agents.
+
 ## 1.10.0 — 2026-08-09
 
 Two settings maps arrived, built from captures of PetKit's own app talking to a
