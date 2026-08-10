@@ -57,7 +57,7 @@ mechanism codes to the operation they belong to::
 code 5 (cleaning done), the action=9 episode in code 7 (reset done), and
 action=2 occurs exactly 23 times against 23 toilet visits. Code 8 co-occurs
 with action=2 in 23 of 23 episodes and never with any other mode, which is why
-it is "Deodorizing" and not the "Cleaning started" this codebase used to claim.
+it is "Deodorizing" and not "Cleaning started".
 """
 from __future__ import annotations
 
@@ -244,8 +244,8 @@ LITTER_HTTP_CODES: dict[str, EventCode] = {
         role=ROLE_START, mode_from="action",
         firmware="pk_event_pack_work_start", families=LITTER_NEXT_GEN,
         note="Opens a work cycle of whatever mode `action` names -- cleaning, "
-             "odor removal or maintenance. It is NOT cleaning-specific, which "
-             "is what the old flat 'Cleaning (mechanism)' label got wrong.",
+             "odor removal or maintenance. It is NOT cleaning-specific: a flat "
+             "'Cleaning (mechanism)' label misreads every other mode.",
     ),
     "4": EventCode(
         kind=KIND_CLEANING, label="Mechanism step", grade=CONFLICTED,
@@ -288,9 +288,9 @@ LITTER_HTTP_CODES: dict[str, EventCode] = {
         done_word="deodorizing",
         firmware="pk_event_pack_spray_and_liquid_reset_over", families=LITTER,
         note="Co-occurs with action=2 (odor removal) in 23 of 23 episodes and "
-             "never with any other mode. This codebase previously labelled it "
-             "'Cleaning started', which was a guess and was wrong. The RE's "
-             "`key` field is absent from all 23 captures.",
+             "never with any other mode, which rules out the tempting "
+             "'Cleaning started' reading. The RE's `key` field is absent from "
+             "all 23 captures.",
     ),
     "9": EventCode(
         kind=KIND_TOILET, label="Weight check", detail=True, role=ROLE_STEP,
@@ -358,8 +358,8 @@ LITTER_HTTP_CODES: dict[str, EventCode] = {
              "with a 115s automatic cycle. The manual pair recorded from the "
              "panel ran 14s because it was switched off by hand.\n\n"
              "The 3.8s median of `ts - start_time` is REPORT LATENCY, not the "
-             "cycle length -- an earlier note here read it as the cycle and "
-             "matched it to the firmware's 'need wait 3s', which was wrong. "
+             "cycle length; its closeness to the firmware's 'need wait 3s' is "
+             "a coincidence, not a reading of the cycle. "
              "`from_clear` is 1 on 44 of 47 and may be the `light_open_reason` "
              "the RE calls `key`, but it discriminates nothing we can check, "
              "so it stays a guess.",

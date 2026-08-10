@@ -74,8 +74,8 @@ _BLOCKED_COLUMNS = _writable(BlockedAttempt)
 #: What a device will accept before its own "Too many face picture" guard
 #: trips. The firmware has the guard but its limit was not recoverable from the
 #: strings; the official app's own upload grid is a 3x2 of six slots, so six is
-#: what PetKit itself considers the maximum. (Four was an earlier guess, from
-#: the one capture where this household had filled four of the six.)
+#: what PetKit itself considers the maximum. A capture showing four faces is no
+#: evidence against it: that is simply how many slots the household had filled.
 MAX_FACES_PER_PET = 6
 
 
@@ -859,9 +859,9 @@ class EventStore:
         the pet does (see ha/publisher.py::publish_pet_state).
 
         `visits_today` counts from LOCAL midnight, which is the boundary the
-        owner means by "today". It used to count from UTC midnight, so on a
-        UTC+2 install a visit at 00:30 was still credited to the previous day
-        and the sensor read low every morning until the offset had passed.
+        owner means by "today". Counting from UTC midnight instead credits a
+        00:30 visit on a UTC+2 install to the previous day, and the sensor
+        reads low every morning until the offset has passed.
         """
         now = now if now is not None else time.time()
         day_start = local_day_start(now)

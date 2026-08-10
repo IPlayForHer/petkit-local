@@ -120,10 +120,10 @@ class HAPublisher:
     def connected(self) -> bool:
         """Whether entities are actually reaching Home Assistant right now.
 
-        Public because the panel reports it and had been reporting something
-        else: it read the DEVICE-facing bridge's client, which is up whenever
-        the embedded broker is, and labelled it "Bridge -> HA". So the one
-        indicator that answers "is HA getting my data?" stayed green with HA
+        Public because the panel reports it, and it has to be THIS client that
+        it reports: the DEVICE-facing bridge's client is up whenever the
+        embedded broker is, so an indicator reading that one and labelled
+        "Bridge -> HA" answers a different question and stays green with HA
         publishing switched off entirely.
         """
         return bool(self._client and self._connected)

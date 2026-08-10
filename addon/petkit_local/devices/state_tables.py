@@ -20,17 +20,6 @@ from __future__ import annotations
 #   N50  the PASSIVE one: sits in the waste bin and needs no mechanism.
 #        Manufacturer's replacement interval is 30 days.
 #
-# SPRAY_TOTAL_DAYS is CONFIRMED: PetKit's own cloud answers `dev_device_info`
-# with `sprayDays: 45` alongside `sprayResetTime`, captured in proxy mode, and
-# it is the same 45 the manufacturer's replacement interval gives. It is also
-# what `payloads.to_device_info` advertises to the device, which the firmware
-# stores (`set sprayDays (%d)` in `ctrl`), so both sites must read this
-# constant. They were once independently hardcoded to 45 and 30, and HA burned
-# down a cartridge the device had been told was a third longer.
-#
-# DEODORANT_TOTAL_DAYS is the manufacturer's interval only, and the field it
-# counts from never arrives -- see the N50 note below.
-#
 # Mind the vocabulary, which is inverted from the products: `deodorantLeftDays`
 # is the N50 even though the N60 is the active deodorant, and `sprayLeftDays` is
 # the N60. Those are pypetkitapi's cloud names, kept because they are already
@@ -48,23 +37,35 @@ from __future__ import annotations
 # `battery`/`liquid` LEVELS on its parent's report (`bridge._update_linked_k3`),
 # never a reset date, so these date-based countdowns cannot be fed from a K3 and
 # a K3-equipped box cannot be assumed to populate them.
-# The N50 has NO representation in the device protocol, established by
-# experiment on a T5 (2026-07-30). Resetting the N60 from PetKit's app sends
-# `thing.service.start {"start_action":10}`, the box answers `liquid_reset_over`
-# and its `sprayResetTime` becomes the reset moment. Resetting the N50 from the
-# app sends ONLY `thing.service.errState {"show":1,"err_state":1}` -- no start,
-# no date, no device reply, and `liquidReset` does not move. PetKit's own
-# `dev_device_info` reply carries no N50 field either: just `sprayDays`,
-# `sprayResetTime` and the `deodorantTip`/`purificationTip` notify flags. So
-# PetKit keeps the N50 replacement date in their account database and only tells
-# the box what to display.
-#
-# Consequence: `deodorantLeftDays` can never be filled from telemetry. Its
-# source `liquidReset` has been 0 in every one of 983+ captured reports and
-# nothing in any transport ever writes it. For "N50 Days Left" to read anything
-# we have to record the replacement date ourselves -- being the cloud is the
-# whole point of this add-on, and this is one of the places that has to mean it.
+
+#: The N60's lifetime, CONFIRMED: PetKit's own cloud answers `dev_device_info`
+#: with `sprayDays: 45` alongside `sprayResetTime` (captured in proxy mode), the
+#: same 45 the manufacturer's replacement interval gives. It is also what
+#: `payloads.to_device_info` advertises to the device, which the firmware stores
+#: (`set sprayDays (%d)` in `ctrl`) — so both sites must read THIS constant and
+#: neither may hardcode a number of its own. Independent literals drift, and HA
+#: then burns a cartridge down on a schedule the device was never told about.
 SPRAY_TOTAL_DAYS = 45
+
+#: The N50's lifetime: the manufacturer's interval and nothing more, because the
+#: field it would count from never arrives.
+#:
+#: The N50 has NO representation in the device protocol, established by
+#: experiment on a T5 (2026-07-30). Resetting the N60 from PetKit's app sends
+#: `thing.service.start {"start_action":10}`, the box answers `liquid_reset_over`
+#: and its `sprayResetTime` becomes the reset moment. Resetting the N50 from the
+#: app sends ONLY `thing.service.errState {"show":1,"err_state":1}` -- no start,
+#: no date, no device reply, and `liquidReset` does not move. PetKit's own
+#: `dev_device_info` reply carries no N50 field either: just `sprayDays`,
+#: `sprayResetTime` and the `deodorantTip`/`purificationTip` notify flags. So
+#: PetKit keeps the N50 replacement date in their account database and only tells
+#: the box what to display.
+#:
+#: Consequence: `deodorantLeftDays` can never be filled from telemetry. Its
+#: source `liquidReset` has been 0 in every one of 983+ captured reports and
+#: nothing in any transport ever writes it. For "N50 Days Left" to read anything
+#: we have to record the replacement date ourselves -- being the cloud is the
+#: whole point of this add-on, and this is one of the places that has to mean it.
 DEODORANT_TOTAL_DAYS = 30
 
 #: Where a replacement date WE recorded lives, inside `Device.config`. It has to

@@ -42,7 +42,7 @@ def _locate_raw_file(raw_root: str, info: dict) -> str | None:
     `fileUrl` is attacker/device-controlled (any client can POST
     dev_upload_file_info_v2), so its path component is resolved and checked
     against `raw_root` before use — same containment check as
-    web/panel.py::_safe_media_path — to rule out a `../` escape that would
+    web/api/media.py::_safe_media_path — to rule out a `../` escape that would
     otherwise let a crafted request read (and then delete, see
     process_file_info) an arbitrary file the process can access. The
     boundary check resolves symlinks (`realpath`) but the *returned* path is

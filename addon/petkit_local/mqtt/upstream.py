@@ -86,27 +86,21 @@ def build_tls_context() -> ssl.SSLContext:
         1 s:C=CN, ..., O=Aliyun IoT, OU=IoT Platform, CN=Aliyun
         Verify return code: 20 (unable to get local issuer certificate)
 
-    That intermediate is issued by `CN=Aliyun IoT Root CA`, a private root: it
-    is in no public trust store, the server never sends it, and the chain
-    carries no AIA extension to fetch it from. So the default context — which
-    is what `aiomqtt.TLSParameters()` asks for — fails EVERY connection with
-    CERTIFICATE_VERIFY_FAILED, and the bridge retries forever without ever
-    exchanging a frame.
+    That intermediate is issued by `CN=Aliyun IoT Root CA`, a private root: in
+    no public trust store, never sent, and with no AIA extension to fetch it
+    from. A default context — what `aiomqtt.TLSParameters()` asks for — therefore
+    fails EVERY connection with CERTIFICATE_VERIFY_FAILED and the bridge retries
+    forever without exchanging a frame. The device cannot verify it either
+    (`/app/bin/ctrl` embeds only GlobalSign Root CA, for the HTTPS API, and the
+    whole T5 rootfs holds no copy of the Aliyun root), so this matches the
+    posture of the firmware being impersonated rather than relaxing something it
+    enforces.
 
-    The device cannot verify it either: `/app/bin/ctrl` embeds exactly one
-    anchor, GlobalSign Root CA (for the HTTPS API), which does not validate
-    this chain, and a search of the whole T5 rootfs finds no copy of the Aliyun
-    root anywhere. Its own session to the real cloud is therefore unverified
-    too, so this matches the posture of the device being impersonated rather
-    than relaxing something the firmware enforces.
-
-    What this does NOT weaken, because none of it rests on the server's
-    identity: the OTA push is blocked on arrival (`_block_ota`), every
-    downstream frame is redacted by content (`http/redact/`), and only frames
-    a device originates go up (`_is_from_device`). What it does cost is real —
-    anything on the path can pose as the cloud and have its `thing/service/*`
-    commands relayed down to the box — and that is the accepted trade for
-    having an upstream bridge at all.
+    The cost is real and accepted: anything on the path can pose as the cloud
+    and have its `thing/service/*` commands relayed down to the box. Nothing
+    else here rests on server identity — the OTA block (`_block_ota`), the
+    content-keyed redaction (`http/redact/`) and the rule that only frames a
+    device originates go up (`_is_from_device`) all hold regardless.
 
     `check_hostname` is cleared BEFORE `verify_mode`: the reverse order raises
     ValueError, since hostname checking cannot be left on without verification.

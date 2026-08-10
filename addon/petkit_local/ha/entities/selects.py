@@ -19,18 +19,14 @@ LITTER_SELECTS = [
     # SECONDS, despite the field being named for minutes. PetKit's own app was
     # captured writing `autoIntervalMin` on a T6: 300 at the UI's minimum of
     # 5 min and 7200 at its maximum of 2 h, with 0 while the feature was being
-    # switched off. This list used to hold the minute counts the name implies,
-    # which meant "5min" asked the box for a five-SECOND interval.
+    # switched off. Listing the minute counts the name implies has "5min" ask
+    # the box for a five-SECOND interval.
     #
     # The capture is from ONE model. `autoIntervalMin` is also in the T4 image
     # (`parse item autoIntervalMin=%d,time=%d` in userbin_2602003.bin), but
     # nobody has read the unit there, so applying the T6 reading to the ESP32
     # boxes is a deliberate choice rather than an established fact: one field
     # name, one meaning, until something contradicts it.
-    #
-    # A box still holding a value from the old list (5, 10, ...) renders as the
-    # raw number, because it is no longer an `option_values` entry. Nothing is
-    # migrated: those were never intervals anybody chose.
     EntityDef(component="select", key="cleaning_interval", name="Avoid Repeat Interval",
               value_path="settings.autoIntervalMin", icon="mdi:timer-sand",
               options=["disabled", "5min", "10min", "15min", "30min", "45min",

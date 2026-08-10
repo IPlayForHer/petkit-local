@@ -109,9 +109,9 @@ def cleaning_label(event_type: str, content: dict | None = None,
                    device_type: str | None = None) -> str:
     """The specific label for an event, decoded from its sub-fields.
 
-    Retained under its original name for existing callers. The behaviour is
-    no longer cleaning-specific -- `decode.event_label` labels every code --
-    so new code should prefer that directly.
+    A thin alias kept for its callers, and narrower in name than in behaviour:
+    `decode.event_label` labels every code, not just the cleaning ones, so new
+    code should prefer that directly.
     """
     return decode.event_label(event_type, content, device_type)
 
@@ -321,12 +321,11 @@ def from_event_report(device: Device, form: dict) -> dict:
     Confirmed from a real T5 capture (2026-07-22): the top-level `event_id`
     is a **session/episode key shared by multiple distinct event_type
     reports** (e.g. "9" then "10" both carry the same event_id for one
-    visit) — it is NOT a report's own unique id, and it plays the role this
-    code originally expected `content.related_event` to play (that key
-    doesn't exist; the real field, seen once, is `content.relate_event` —
-    singular "relate" — and it's a *cross-episode* reference, e.g. a
-    cleaning episode pointing back at the visit that triggered it, not a
-    same-episode grouping key). So: `related_event` = the raw `event_id`
+    visit) — it is NOT a report's own unique id, and it is what groups an
+    episode, not `content.related_event` (a key that does not exist; the real
+    field, seen once, is `content.relate_event` — singular "relate" — and it
+    is a *cross-episode* reference, e.g. a cleaning episode pointing back at
+    the visit that triggered it). So: `related_event` = the raw `event_id`
     (groups same-episode reports for the Timeline), and `event_uid` (the
     EventStore dedup key) = `event_id + event_type` so distinct reports in
     the same episode don't overwrite each other."""
@@ -448,13 +447,13 @@ def apply_derived_state(device: Device, event_type: str, content: dict) -> None:
 
     Four entities -- Last Clean, Last Visit, Last Feed and Pet Weight -- have no
     field in any state report; they exist only as a consequence of something
-    happening. This used to live in `mqtt/bridge.py` alone, so on every device
-    reporting over HTTP (each ESP32 model, and every Ingenic device until the
-    `mqtt` patcher is applied) all four read unknown forever.
+    happening. BOTH transports call this, and it has to stay that way: living on
+    the MQTT path alone, it would leave every device that reports over HTTP --
+    each ESP32 model, and every Ingenic device until the `mqtt` patcher is
+    applied -- with all four reading unknown forever.
 
-    Both transports call this, and it dispatches through `codes.lookup`, which
-    resolves either namespace -- so the two cannot drift apart again the way
-    they did.
+    Dispatch goes through `codes.lookup`, which resolves either namespace, so
+    the two transports cannot drift apart.
     """
     code = codes.lookup(event_type, device.device_type)
     if code is None:
@@ -527,10 +526,10 @@ def from_mqtt(device: Device, event_type: str, params: dict) -> dict:
         # Kept for the panel's Debug info so an MQTT row shows what an HTTP one
         # shows. Not returned as `_state`, because on this path `bridge.py`
         # applies the snapshot itself via `apply_state_snapshot` before the row
-        # is even built. It used to be dropped instead, on the theory that the
-        # `property` stream refreshes everything anyway — the T5 disproved that:
-        # an N60 reset moved `sprayResetTime` and said so only inside
-        # `liquid_reset_over`, with no `property` post for 74 minutes around it.
+        # is even built. Dropping it on the theory that the `property` stream
+        # refreshes everything anyway does not hold: on a T5 an N60 reset moved
+        # `sprayResetTime` and said so only inside `liquid_reset_over`, with no
+        # `property` post for 74 minutes around it.
         "state_json": json.dumps(state) if state else None,
     }
 
@@ -549,51 +548,46 @@ _AES_IV_KEYS = ("aesIv", "aes_iv")
 _ENCRYPT_KEYS = ("encrypt",)
 _SIZE_KEYS = ("size", "fileSize", "file_size")
 
-# `fileInfos[]` entries have NO `cycleType` field on a real T5 (confirmed
-# 2026-07-22 capture) — the original assumption was wrong. The capability
-# category has to come from `moduleType` instead. Mapping confirmed by cross-
-# referencing against the *actual* upload path the device used once it had
-# re-polled our per-capability STS pathPrefix (devices/payloads.py::to_oss_sts):
-# it truncates each cycleType to 4 chars for the path segment ("fullVideo"
-# -> ".../full/...", "eventImage" -> ".../even/...", "dynamicVideo" ->
-# ".../dyna/..."), and those segments lined up exactly with these moduleTypes
-# in the same capture. "highLight" (-> "high") wasn't exercised in this
-# capture (no highlight-worthy visit happened), so it's not in the table yet.
+# The category comes from `moduleType`, because `fileInfos[]` entries have NO
+# `cycleType` field on a real T5 (confirmed 2026-07-22 capture). Each mapping
+# below was cross-referenced against the *actual* upload path the device used
+# once it had re-polled our per-capability STS pathPrefix
+# (devices/payloads.py::to_oss_sts): it truncates each cycleType to 4 chars for
+# the path segment ("fullVideo" -> ".../full/...", "eventImage" ->
+# ".../even/...", "dynamicVideo" -> ".../dyna/..."), and those segments lined up
+# exactly with these moduleTypes in the same capture. "highLight" (-> "high")
+# was not exercised there — no highlight-worthy visit happened — so it is not in
+# the table yet.
 #
-# CLOUD_DOUBLE is a ~4x TIME-LAPSE of the same span the main recording
-# covers, not a second half of it and not a plain low-res mirror — measured
-# on real files: CLOUD_STORAGE is 1056x1056 @25fps with AAC in ~4s chunks;
-# CLOUD_DOUBLE is 528x528, silent, and packs ~1s of footage per ~4s of wall
-# clock (a stitched pair covered 74s of reality in 20s of video). That is why
-# it looks "sped up" — inherent to the stream, not something we do to it.
-# Mapping both to `fullVideo` (an earlier mistake) mixed two incompatible
-# streams into one folder and would concatenate into garbage. It gets its own
-# category so it stays separate and stitches only against its own kind; it is deliberately
-# NOT one of the four STS capabilities, since the device never asks for it
-# by name (see CATEGORY_TO_CAPABILITY below).
-#
-# SHIT_PICTURE is the app's **"Check waste" gallery** — ~5 photos per cleaning
-# cycle. It shares the `even`/eventImage prefix with EVENT_PREVIEW but is a
-# different thing entirely: EVENT_PREVIEW is ONE poster image for an event,
-# SHIT_PICTURE is the multi-shot waste set. Leaving it unmapped (the original
-# omission) sent all five to an "Other" folder under one colliding filename
-# and made the gallery invisible in the timeline.
-#
-# HEALTH_PRED is the T5's stool-health-analysis photo (it runs poop analysis
-# on the NPU). Confirmed as the 6th and final moduleType from the firmware
-# `cloud`/`ctrl` binaries (`HEALTH_PRED:local_name(%s) cloud_name(%s)`), which
-# emit exactly {CLOUD_STORAGE, CLOUD_DOUBLE, EVENT_PREVIEW, EVENT_VIDEO,
-# SHIT_PICTURE, HEALTH_PRED} — so with this the set is exhaustively covered.
+# The set is exhaustive: the firmware `cloud`/`ctrl` binaries
+# (`HEALTH_PRED:local_name(%s) cloud_name(%s)`) emit exactly these six names.
 CATEGORY_CLOUD_DOUBLE = "cloudDouble"
 CATEGORY_WASTE_CHECK = "wasteCheck"
 CATEGORY_HEALTH = "healthPic"
 
 _MODULE_TYPE_TO_CATEGORY = {
+    # The main recording: 1056x1056 @25fps with AAC, in ~4s chunks.
     "CLOUD_STORAGE": "fullVideo",
+    # A ~4x TIME-LAPSE of the same span CLOUD_STORAGE covers — not a second half
+    # of it and not a plain low-res mirror. Measured on real files: 528x528,
+    # silent, ~1s of footage per ~4s of wall clock (a stitched pair covered 74s
+    # of reality in 20s of video). That is why it looks "sped up": inherent to
+    # the stream, not something we do to it. Mapping it to `fullVideo` as well
+    # mixes two incompatible streams into one folder, where they concatenate
+    # into garbage — hence a category of its own, stitched only against its own
+    # kind. It is deliberately NOT one of the four STS capabilities, since the
+    # device never asks for it by name (see CATEGORY_TO_CAPABILITY below).
     "CLOUD_DOUBLE": CATEGORY_CLOUD_DOUBLE,
+    # ONE poster image per event. Shares the `even`/eventImage path prefix with
+    # SHIT_PICTURE and is a different thing entirely.
     "EVENT_PREVIEW": "eventImage",
     "EVENT_VIDEO": "dynamicVideo",
+    # The app's **"Check waste" gallery** — ~5 photos per cleaning cycle, the
+    # multi-shot set to EVENT_PREVIEW's single poster. Unmapped, all five land in
+    # an "Other" folder under one colliding filename and the gallery is
+    # invisible in the timeline.
     "SHIT_PICTURE": CATEGORY_WASTE_CHECK,
+    # The T5's stool-health-analysis photo; it runs poop analysis on the NPU.
     "HEALTH_PRED": CATEGORY_HEALTH,
 }
 

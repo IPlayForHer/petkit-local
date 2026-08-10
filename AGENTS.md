@@ -1,9 +1,12 @@
 # petkit-local
 
 A Home Assistant add-on that impersonates the PetKit cloud: a litter box, feeder or fountain
-connects to it over HTTP + MQTT instead of PetKit's servers (the Pura Air purifiers are BLE-only
-and reach it through a parent device), and petkit-local answers as the official API, stores events
-and media locally, and publishes entities via MQTT discovery.
+is pointed at it instead of PetKit's servers (the Pura Air purifiers are BLE-only and reach it
+through a parent device), and petkit-local answers as the official API, stores events and media
+locally, and publishes entities via MQTT discovery.
+
+A device speaks HTTP **or** MQTT, not both: it starts on HTTP and stops polling the heartbeat once
+it reaches the broker. Neither transport is dedicated to a kind of message — see `ARCHITECTURE.md`.
 
 It is an add-on **repository** — `repository.yaml` at the root, the add-on in `addon/`, the package
 in `addon/petkit_local/`. It also runs as a plain container or bare process (`docker-compose.yml`
@@ -29,7 +32,7 @@ Two rules about placement that the map does not make obvious:
 
 ## Invariants — do not break these
 
-- **All protocol knowledge lives in `events/codes.py`** — six namespaces, each row graded
+- **All protocol knowledge lives in `events/codes.py`** — seven namespaces, each row graded
   (`confirmed`/`inferred`/`unverified`/`conflicted`) and carrying the firmware function behind it.
   Add a code there, not in a private set somewhere: the nine parallel collections this replaced are
   exactly why seven real codes were classified by none of them. `events/decode.py` renders values;

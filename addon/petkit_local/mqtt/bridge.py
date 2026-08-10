@@ -1,11 +1,15 @@
 """MQTT bridge: subscribes to device topics on the embedded broker,
 parses Aliyun IoT events, and publishes state to HA MQTT.
 
-This is the real-time half of the device conversation. HTTP (`http/handlers/`)
-carries registration, polling and file uploads; MQTT carries everything that
-must not wait for the next ~15s heartbeat — property posts, visit and cleaning
-events, BLE relay frames — plus the only path for pushing a command to a device
-the moment a user flips a control in HA (`publish_to_device`).
+MQTT and HTTP are two transports for the same conversation, not two channels
+for different kinds of message. A device that reaches the broker STOPS polling
+the HTTP heartbeat, so from that point everything it has to say — state, visit
+and cleaning events, BLE relay frames — arrives here instead of at
+`http/handlers/`, and `events/normalize.py` turns either form into the same row.
+
+One thing is genuinely MQTT-only, and it is the reason to want a device here:
+a command can be pushed the moment a user flips a control in HA
+(`publish_to_device`), rather than waiting for the device to ask.
 
 The bridge is a client of the EMBEDDED broker (`mqtt/broker.py`), not of Home
 Assistant's; it hands what it parses to `ha/publisher.py`, which owns the HA

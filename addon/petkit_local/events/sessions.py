@@ -357,10 +357,10 @@ def _cards_from_orphan_cleanings(events: list[dict],
     """A card per cleaning episode that no visit claimed, headed by that
     episode's own completion step."""
     # Whatever pass 2 could not place: a cleaning or maintenance cycle that
-    # neither linked to a visit nor happened near one used to explode into
-    # one bare row per step — seven of them for a single maintenance
-    # session. Its completion step heads a card instead, with the mechanism
-    # steps folded underneath like any other cycle.
+    # neither linked to a visit nor happened near one. Left ungrouped it is
+    # one bare row per step — seven of them for a single maintenance session
+    # — so its completion step heads a card instead, with the mechanism steps
+    # folded underneath like any other cycle.
     orphan_episodes: dict[str, list[dict]] = {}
     for e in events:
         rel = e.get("related_event")

@@ -183,11 +183,11 @@ FOUNTAIN_SWITCHES = [
 # none, and `payloads.to_device_info` serves settings back to the device — so an
 # invented bound is not a display detail, it is a value we would push.
 #
-# `flushCycle`, `flushTime`, `waterChangeCycle` and `waterChangeTime` used to be
-# on that list for the same reason, and are no longer: a second map (supplied
-# 2026-08-09, from a capture of the app's own writes) gives their encodings —
-# cycles count DAYS, times are SECONDS since midnight. They live in
-# `numbers.py::FOUNTAIN_W7H_NUMBERS` and `times.py::FOUNTAIN_W7H_TIMES`.
+# `flushCycle`, `flushTime`, `waterChangeCycle` and `waterChangeTime` escape that
+# rule only because their encodings are known: a second map (supplied 2026-08-09,
+# from a capture of the app's own writes) gives them — cycles count DAYS, times
+# are SECONDS since midnight. They live in `numbers.py::FOUNTAIN_W7H_NUMBERS` and
+# `times.py::FOUNTAIN_W7H_TIMES`.
 #
 # None of these are seeded in `devices/defaults.py` for the same reason: the honest
 # state is unknown until the device reports one. See `UNSEEDED_BY_DESIGN` in

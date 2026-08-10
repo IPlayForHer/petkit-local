@@ -38,7 +38,7 @@ class Refused(ValueError):
 
     Lives here rather than in `ha/commands.py` because a BLE accessory refuses
     writes too (`devices/ble/`), and `devices/` cannot import `ha/`. Two
-    classes of one name reaching the same `except` in `web/panel.py` is the
+    classes of one name reaching the same `except` in `web/api/` is the
     trap this avoids.
     """
 
@@ -58,7 +58,7 @@ def encode_multi_range(key: str, value: Any) -> str:
 
     `schedule` is NOT this shape, despite travelling the same way: it is a
     plain JSON string of the array, with no wrapping key. See
-    `web/panel.py::api_save_schedule`.
+    `web/api/schedules.py::api_save_schedule`.
     """
     return json.dumps({key: value}, separators=(",", ":"))
 

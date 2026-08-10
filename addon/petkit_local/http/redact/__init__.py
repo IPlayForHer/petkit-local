@@ -65,7 +65,7 @@ class Redaction:
     `original` is kept in full: it is the payload worth reading afterwards, and
     for a blocked attempt it is the entire point of the record. Callers that
     surface these outside `/data` are responsible for masking it — see
-    `web/panel.py`'s `/api/blocked`.
+    `web/api/settings.py`'s `/api/blocked`.
     """
 
     rule: str

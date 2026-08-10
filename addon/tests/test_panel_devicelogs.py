@@ -11,7 +11,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.web.hub import EventHub
-from petkit_local.web.panel import MAX_LOG_LINE_CHARS, MAX_LOG_LINES, create_panel_app
+from petkit_local.web.api.logs import MAX_LOG_LINE_CHARS, MAX_LOG_LINES
+from petkit_local.web.panel import create_panel_app
 
 
 def _panel(tmp, bucket_endpoint="https://192.0.2.199:9000"):

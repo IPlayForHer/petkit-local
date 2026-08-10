@@ -167,7 +167,7 @@ class BlockedAttempt(Base):
 
     `payload_json` holds what was blocked, verbatim and unmasked — it is the
     whole point of the record. Anything serving these outside `/data` is
-    responsible for masking it (`web/panel.py`'s `/api/blocked`), because they
+    responsible for masking it (`web/api/settings.py`'s `/api/blocked`), because they
     can contain a real device secret or a media AES key.
     """
 

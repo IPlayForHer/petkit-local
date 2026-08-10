@@ -18,10 +18,9 @@ K3_ENTITIES = [
 
 #: W5 / W4 / CTW2. One protocol serves the whole family, so one list does too.
 #:
-#: `w5_power` is a switch and used to be a binary sensor. A switch shows the
-#: state AND sets it, so keeping both would put the same fact on screen twice;
-#: the cost is that an existing `binary_sensor.…_w5_power` is orphaned, which
-#: is a real break for anyone already running one and is in the changelog.
+#: `w5_power` is a switch rather than a binary sensor, and deliberately not
+#: both: a switch shows the state AND sets it, so shipping the pair would put
+#: the same fact on screen twice.
 #:
 #: The settings half — light, brightness, do-not-disturb, child lock, both
 #: smart-cycle times — is only ever populated by a cmd-211 frame, which nothing

@@ -103,28 +103,28 @@ def make_mqtt_property_set(params: dict) -> dict[str, Any]:
 #   CLEANING=0 DUMPING=1 ODOR_REMOVAL=2 RESETTING=3 LEVELING=4 CALIBRATING=5
 #   RESET_DEODOR=6 LIGHT=7 RESET_N50_DEODOR=8 MAINTENANCE=9 RESET_N60_DEODOR=10
 #
-# Code 10 is now CONFIRMED against the real cloud on a T5. An N60 reset issued
-# from PetKit's app arrived as, byte for byte in shape, what `_litter_start(10)`
-# builds:
+# Code 10 is CONFIRMED against the real cloud on a T5: an N60 reset issued from
+# PetKit's app arrived as, byte for byte in shape, what `_litter_start(10)`
+# builds --
 #   topic   /sys/{pk}/{dn}/thing/service/start
 #   payload {"method":"thing.service.start","id":"1732816215",
 #            "params":{"start_action":10},"version":"1.0.0"}
-# The device answered within one second with `work_start` (content `action:10`,
-# `reason:2`) then `liquid_reset_over`, and its `sprayResetTime` became the
-# moment of the reset. So the N60 countdown is `sprayResetTime` -- note the
-# event is named for the liquid while the field is named for the spray.
+# -- and the device answered within a second with `work_start` (content
+# `action:10`, `reason:2`) then `liquid_reset_over`, its `sprayResetTime`
+# becoming the moment of the reset. So the N60 countdown is `sprayResetTime`:
+# the event is named for the liquid while the field is named for the spray.
 #
 # Code 8 is CONTRADICTED for the N50, and `reset_n50` is very likely a no-op.
 # Resetting the N50 from PetKit's app was watched on the wire twice: the cloud
 # sent ONLY `thing.service.errState {"show":1,"err_state":1}` -- never a `start`,
-# never code 8 -- and the box answered nothing. Sending code 8 ourselves to the
-# same box also drew no reply, where code 10 produced two events in a second.
-# PetKit's own `dev_device_info` carries no N50 field at all, so the replacement
-# date lives in their account database and the box is only told what to display.
-# The button is left exposed because the enum comes from pypetkitapi, which
-# models PetKit's CLOUD api where an N50 reset is a real call -- but on the
-# device protocol it has no evidenced counterpart. Do not read its silence as a
-# delivery failure, and do not build the N50 countdown on it.
+# never code 8 -- and the box answered nothing. Code 8 sent by us to the same box
+# also drew no reply, where code 10 produced two events in a second. PetKit's own
+# `dev_device_info` carries no N50 field at all, so that replacement date lives
+# in their account database and the box is only told what to display. The button
+# stays exposed because the enum comes from pypetkitapi, which models PetKit's
+# CLOUD api where an N50 reset is a real call -- but on the device protocol it
+# has no evidenced counterpart. Do not read its silence as a delivery failure,
+# and do not build the N50 countdown on it.
 
 #: Button key -> the consumable whose replacement date it stamps. Both still
 #: send their device command as well; this only adds the record we keep.
@@ -153,11 +153,11 @@ def _litter_ctrl(action_key: str, code: int) -> Command:
 def _device_power(on: bool) -> Command:
     """Turn the device itself off or on.
 
-    A SERVICE, not a setting. `pause_fountain`/`resume_fountain` used to write
-    `{"power": 0|1}` through `property.set` and were removed for it: `power` is
-    not among the W7H's set handlers, so those commands were delivered, accepted
-    by the broker and dropped. `parse_service_invoke_msg` does accept a `power`
-    service carrying `power_action`, on a code path of its own — that is this.
+    A SERVICE, not a setting, and it must not be turned back into one: `power`
+    is not among the W7H's `property.set` handlers, so `{"power": 0|1}` written
+    that way is delivered, accepted by the broker and dropped without a word.
+    `parse_service_invoke_msg` does accept a `power` service carrying
+    `power_action`, on a code path of its own — that is this.
 
     Confirmed on a T6 by a capture of the app (`{"power_action": 0}` / `1`), and
     present as an accepted service name in the D4SH and W7H `ctrl` binaries. The
@@ -217,8 +217,7 @@ def _feed_id(now: float | None = None) -> str:
     puts in its own `feed_over` content as `time`, next to a `day` of
     `20260801` — so both halves of the id are local, and a UTC one would
     disagree with the device's own reading of the same feed for most of the
-    world. This used to be `random.randint(1000, 9999)`, which is the right
-    shape and the wrong number.
+    world.
     """
     now = time.time() if now is None else now
     n = int(now - local_day_start(now))
@@ -394,10 +393,9 @@ def _coerce_number(payload: str) -> int | float | None:
 
     Returns:
         None for anything non-numeric — the caller logs and drops the command.
-        Since moving to `to_float`, this now also covers infinities and NaN,
-        which bare `float()` used to accept: they serialise as bare
-        `Infinity`/`NaN`, which is not valid JSON, and no setpoint the device
-        understands is non-finite.
+        Infinities and NaN count as non-numeric here, though bare `float()`
+        accepts them: they serialise as bare `Infinity`/`NaN`, which is not
+        valid JSON, and no setpoint the device understands is non-finite.
     """
     number = to_float(payload, None)
     if number is None:

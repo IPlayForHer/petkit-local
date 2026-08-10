@@ -145,11 +145,9 @@ async def send_run_cmd(device: Device, command: str, bridge: Any = None) -> str:
     carries the same `msgType` envelope the heartbeat does.
 
     **Confirmed on hardware (2026-07-29): a T5 executes a `user_cmd.run_cmd`
-    delivered this way.** It was shipped as an assumption and has since been
-    tested, so treat this path as working rather than provisional. Worth
-    recording that the real cloud has never been seen doing it — 0 run_cmd
-    frames in 1152 captured proxy records — so this is our use of the transport,
-    not a reproduction of PetKit's.
+    delivered this way.** Worth recording that the real cloud has never been
+    seen doing it — 0 run_cmd frames in 1152 captured proxy records — so this is
+    our use of the transport, not a reproduction of PetKit's.
 
     Returns:
         The transport used, "mqtt" or "heartbeat" — logged by the caller so a

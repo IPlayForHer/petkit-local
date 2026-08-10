@@ -17,7 +17,8 @@ from petkit_local.config import PANEL_LIVE_KEYS
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.devices.ble import BLERegistry
 from petkit_local.web.hub import EventHub
-from petkit_local.web.panel import LIVE_SETTINGS, create_panel_app
+from petkit_local.web.api.settings import LIVE_SETTINGS
+from petkit_local.web.panel import create_panel_app
 
 
 # --- EventHub ---
@@ -886,7 +887,7 @@ async def test_capture_read_tails_file_and_reports_full_total():
 
 def test_capture_path_helper_contains_and_filters():
     with tempfile.TemporaryDirectory() as tmp:
-        from petkit_local.web.panel import _safe_capture_path
+        from petkit_local.web.api.logs import _safe_capture_path
         cap = Path(tmp) / "capture"
         cap.mkdir()
         (cap / "ok.jsonl").write_text("{}\n")
@@ -945,6 +946,7 @@ async def test_background_task_exception_is_retrieved():
 async def test_patcher_run_is_tracked_and_drained_by_app_cleanup():
     """A patcher run outlives its request; it must be pinned and cancelled at
     shutdown rather than left to the garbage collector."""
+    import petkit_local.web.api.patchers as patchers_mod
     import petkit_local.web.panel as panel
 
     reg = DeviceRegistry()
@@ -956,8 +958,8 @@ async def test_patcher_run_is_tracked_and_drained_by_app_cleanup():
         started.set()
         await asyncio.sleep(3600)
 
-    original = panel._patcher_apply
-    panel._patcher_apply = _slow_apply
+    original = patchers_mod._patcher_apply
+    patchers_mod._patcher_apply = _slow_apply
     c = await _mk_client(app)
     try:
         r = await c.post("/api/devices/1/patcher", data=json.dumps({"patcher": "mqtt"}))
@@ -966,7 +968,7 @@ async def test_patcher_run_is_tracked_and_drained_by_app_cleanup():
         tasks = list(app[panel.BACKGROUND_TASKS])
         assert len(tasks) == 1
     finally:
-        panel._patcher_apply = original
+        patchers_mod._patcher_apply = original
         await c.close()  # AppRunner cleanup -> on_cleanup -> cancel_background_tasks
     assert tasks[0].cancelled()
 

@@ -46,7 +46,8 @@ petkit_local/
 │                  store.py SQLAlchemy async · models.py · migrations.py
 ├── media/         pipeline.py decrypt -> remux -> path -> row · stitch.py joins ~4s chunks
 │                  crypto · transcode · layout · retention · go2rtc
-├── web/           panel.py routes + JSON API · hub.py event ring/WS · static/ · templates/
+├── web/           panel.py the application + the whole route table · api/ the JSON handlers
+│                  appkeys.py the app[...] contract · hub.py event ring/WS · static/ · templates/
 ├── patchers/      on-device patches: cacert · mqtt · cloud · camera · ssh
 ├── ai/pets.py     pet CRUD + the face photos the device's NPU matches against
 └── utils/         const · crypto · capture · jsonio · paths · coerce · dicts · timeutil
@@ -54,45 +55,85 @@ petkit_local/
 
 **Layering.** `devices` depends only on `events` and `utils` — it does not know Home Assistant
 exists. `ha` depends on `devices`; asking "which entities does this device publish" is an HA
-question and is answered in `ha/categories.py`. Nothing imports `web` except `main`.
+question and is answered in `ha/categories.py`. Only `main/` imports `web` at runtime: the panel's
+`EventHub` is handed to whatever wants to narrate into it, and everywhere else it is a
+`TYPE_CHECKING`-only import, so nothing outside `main` depends on the panel existing.
 
-## How a device request travels
+## The two transports
 
-```
-device --HTTP--> http/server.py route table
-                   │
-                   ├─ middleware/device.py     identify the caller from X-Device
-                   ├─ middleware/proxy.py      (proxy mode) forward upstream, redact the reply
-                   ├─ middleware/logging.py    record it for the panel
-                   │
-                   └─> handlers/<endpoint>.py
-                         │  reads and mutates one Device
-                         └─> devices/payloads.py builds the body the firmware expects
-```
+A device speaks **either** HTTP **or** MQTT — not both, and not one for requests and the other for
+telemetry. Everything starts on HTTP, because that is where a device registers and asks where the
+server is. If it can then reach the broker, it does, and **stops polling the HTTP heartbeat**
+entirely (confirmed on a T5: quiet over HTTP ~40s after CONNECT, for as long as the session lives).
+From that moment its state reports, its visit and cleaning events and its accessories' frames all
+arrive over MQTT instead — and `events/normalize.py` turns either form into the same row, which is
+why it is called transport-agnostic.
 
-Telemetry takes the other road:
+The same is true in the other direction. A command from Home Assistant is not a third path: it
+goes to the device over whichever transport that device is on, and `Device.mqtt_connected` is what
+decides. Only two things sit outside this: media, which the device uploads to `http/bucket.py`
+under its own credentials, and our own connection to Home Assistant's broker.
 
-```
-device --MQTT--> mqtt/broker.py --> mqtt/auth.py (HMAC, and it SUBSCRIBES the device:
-                                    a T5 sends no SUBSCRIBE of its own)
-                                 --> mqtt/bridge.py
-                                       ├─> events/normalize.py -> events/store.py
-                                       ├─> devices/state_parsers.py -> device.state
-                                       └─> ha/publisher.py -> Home Assistant
-```
+What MQTT actually buys is latency. A command can be pushed the moment you flip a control; over
+HTTP it waits in a queue until the device next polls.
 
-And the way back, when you flip a switch in Home Assistant:
+## Over HTTP
+
+Four middlewares wrap every request, in the order `http/server.py` registers them — outermost
+first. `http/middleware/__init__.py` documents why that order is load-bearing.
 
 ```
-HA --MQTT--> ha/command_router.py --> ha/commands.py builds the device command
-                                        │
-                                        ├─ device on MQTT?  mqtt/bridge.py publishes it
-                                        └─ otherwise        queued for the HTTP heartbeat
+device --HTTP--> http/server.py          route table; /{path:.*} is registered LAST, so
+                   │                     an unknown endpoint is answered, never 404'd
+                   ├─ never_fail         no failure of ours reaches the device as a 5xx
+                   ├─ logging            panel live log, capture file, online/last_seen
+                   ├─ device             X-Device + URL -> request["device_type"], ...
+                   └─ proxy              off: calls the handler and returns its answer
+                        │                on:  calls the handler FIRST and keeps that answer,
+                        │                     then forwards upstream — the cloud's reply is
+                        │                     returned only if it is usable and survives
+                        │                     http/redact/. Every other path returns ours.
+                        └─> handlers/<endpoint>.py
+                              │  reads and mutates one Device; a state or event report
+                              │  goes on to events/normalize.py the same as an MQTT one
+                              └─> devices/payloads.py builds the body the firmware expects
 ```
 
-Which of those two the command takes is decided by `Device.mqtt_connected`, and that flag is
-load-bearing: publishing to a topic nobody subscribes to raises nothing, so a stale `True` does not
-fail — it swallows the command.
+That the local handler runs even in proxy mode is deliberate: it is what makes "the upstream is
+unreachable, slow, or refuses this device" a non-event rather than an outage.
+
+A command for a device on this transport waits in `Device.command_queue` until the device polls
+`dev_heartbeat` and is handed it in the reply.
+
+## Over MQTT
+
+```
+device --MQTT--> mqtt/broker.py (amqtt)
+                   ├─ mqtt/auth.py    HMAC on CONNECT — and it subscribes the device on its
+                   │                  behalf, because a T5 sends no SUBSCRIBE of its own
+                   └─ mqtt/bridge.py  holds one `#` subscription and dispatches each frame:
+                          ├─> devices/state_parsers.py -> device.state
+                          ├─> events/normalize.py -> events/store.py
+                          └─> ha/publisher.py -> Home Assistant
+```
+
+One `#` subscription covers every device, so anything that escapes per-message handling takes the
+bridge down for all of them at once.
+
+## From Home Assistant
+
+```
+HA's broker --MQTT--> ha/publisher.py     owns the one connection to it, subscribes
+                        │                 petkit-local/+/cmd/+ and hands the stream on
+                        └─> ha/command_router.py
+                              └─> ha/commands.py builds the device command
+                                    ├─ device.mqtt_connected?  mqtt/bridge.py publishes it
+                                    └─ otherwise               Device.command_queue, for the
+                                                               next HTTP heartbeat
+```
+
+`Device.mqtt_connected` picking that transport is load-bearing: publishing to a topic nobody
+subscribes to raises nothing, so a stale `True` does not fail — it swallows the command.
 
 ## Media
 
@@ -107,7 +148,7 @@ reading its FLV directly.
 
 Two files carry almost all of the reverse-engineered protocol, and both are deliberately large:
 
-- **`events/codes.py`** — every event code, in six namespaces that must never be merged, each row
+- **`events/codes.py`** — every event code, in seven namespaces that must never be merged, each row
   graded by the evidence behind it and naming the firmware function it came from. It is one file
   because the namespaces collide, and the collisions are only visible when they sit together.
 - **`devices/payloads.py`** — the response bodies. What a device is told about itself, its server,

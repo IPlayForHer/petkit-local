@@ -257,7 +257,7 @@ async def test_retention_sweeper_run_loops_without_a_thread_hand_off():
 
 def test_retention_config_update_ignores_non_numeric_value():
     # `update` is fed the raw JSON body of POST /api/retention, which
-    # web/panel.py::api_retention does not validate. A bare float() raised
+    # web/api/settings.py::api_retention does not validate. A bare float() raised
     # ValueError here -> 500, with earlier fields in the same request already
     # applied because the merge mutates in place.
     cfg = RetentionConfig()

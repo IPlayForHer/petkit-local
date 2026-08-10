@@ -34,7 +34,7 @@ async def handle_schedule_get(request: web.Request) -> web.Response:
     One array carries BOTH of the box's timed jobs — `type: 0` is a cleaning and
     `type: 1` a periodic deodorizing (`events/codes.py::SCHEDULE_TYPES`) — so
     anything that rewrites a stored schedule has to keep the entries it does not
-    own. `web/panel.py::api_save_schedule` is where that is enforced.
+    own. `web/api/schedules.py::api_save_schedule` is where that is enforced.
 
     A stored schedule is served back verbatim, which matters because the shape
     differs by transport: the real cloud's HTTP reply also carries `deviceId` and

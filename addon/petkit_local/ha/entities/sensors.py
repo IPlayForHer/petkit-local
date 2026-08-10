@@ -383,8 +383,8 @@ FOUNTAIN_W7H_BINARY_SENSORS = [
     # Assembly, seated or not. All diagnostic: they answer "why won't it run".
     #
     # `stg*` is the TRAY and `wt*` is the WASTE tank — the opposite of what the
-    # prefixes suggest and of what this file claimed until 1.4.0. Both writers
-    # were read out of W7H 456 `ctrl`: `stgInstall` is given the return of the
+    # prefixes suggest, so do not "correct" them. Both writers were read out of
+    # W7H 456 `ctrl`: `stgInstall` is given the return of the
     # predicate at 0x62766, the same one that guards the "Not work water tary
     # unstall" refusal, and `wtInstall` the return of 0x9d334, the predicate
     # behind "Not work dirty tank unstall".

@@ -132,7 +132,7 @@ class RetentionConfig:
         pollute the config.
 
         The patch is the raw JSON body of `POST /api/retention` (see
-        `web/panel.py::api_retention`, which does not validate it), so every
+        `web/api/settings.py::api_retention`, which does not validate it), so every
         value goes through `to_float`:
 
         * bare `float()` raises on `"abc"` or a list — a 500 from the endpoint,

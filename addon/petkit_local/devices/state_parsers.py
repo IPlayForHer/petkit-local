@@ -147,9 +147,9 @@ def _extract_feeder_next_gen(body: dict[str, Any], state: dict[str, Any],
     `_extract_fountain_w7h`: a mapping added to only one of them works on
     whichever frames happen to carry it and silently does nothing on the other.
     A D4SH publishes `thing/event/property/post` (the topic is in its firmware),
-    and that path reaches `normalize_property_params` alone -- which used to
-    carry not one feeder field, so the device's main state channel dropped every
-    hopper level, the bowl and the feeding flags.
+    and that path reaches `normalize_property_params` alone -- so a feeder field
+    missing there is missing from the device's main state channel, taking the
+    hopper levels, the bowl and the feeding flags with it.
 
     Gated on the models whose firmware was actually read. The ESP32 feeders
     report none of these keys, and absence is skipped rather than defaulted.

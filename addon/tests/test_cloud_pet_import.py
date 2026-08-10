@@ -238,8 +238,8 @@ async def test_something_that_is_not_a_jpeg_is_refused_after_download(
 async def test_an_oversized_photo_is_refused_without_being_kept(
         pet_registry: PetRegistry, event_store, monkeypatch):
     """A Content-Length is not a promise, so the cap is enforced while reading."""
-    import petkit_local.web.panel as panel
-    monkeypatch.setattr(panel, "MAX_FACE_DOWNLOAD_BYTES", 1024)
+    import petkit_local.web.api.pets as pets
+    monkeypatch.setattr(pets, "MAX_FACE_DOWNLOAD_BYTES", 1024)
     handler, _ = _cloud_with([1], photo=JPEG_BYTES + b"B" * 5000)
     up, base = await _serve(handler)
     c = await _panel(pet_registry, event_store, base)

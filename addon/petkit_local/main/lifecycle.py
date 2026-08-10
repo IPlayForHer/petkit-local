@@ -115,12 +115,13 @@ async def start_background(services: Services, app_instance: web.Application) ->
     await registry.start()
     await ble_registry.start()
 
-    # Web panel, over HTTP only. It used to be served a SECOND time on
-    # 8098 over HTTPS with a self-signed certificate and no authentication,
-    # purely so Web Bluetooth had a top-level secure context — which put
-    # every device setting, command, pet record and on-device patcher on
-    # the LAN for anyone who could reach the port. Provisioning now asks
-    # the operator for a real certificate instead (see the Provision tab).
+    # Web panel, over HTTP only, and deliberately not served a SECOND time on
+    # an HTTPS port of its own. A self-signed listener with no authentication
+    # — which is what Web Bluetooth's demand for a top-level secure context
+    # tempts you into — puts every device setting, command, pet record and
+    # on-device patcher on the LAN for anyone who can reach the port.
+    # Provisioning asks the operator for a real certificate instead (see the
+    # Provision tab).
     panel_config = {
         "api_url": config.api_url,
         "mqtt_port": config.mqtt_port, "mqtt_tls": config.mqtt_tls,
@@ -183,11 +184,11 @@ async def start_background(services: Services, app_instance: web.Application) ->
     # Bucket needs TLS: cloud parses the PAR URL as https:// and crashes
     # on http://. Reuse the same self-signed cert as the MQTT TLS listener.
     # Only the CERTIFICATE work is fallible here. The bind must stay outside
-    # the try: this used to wrap `.start()` too, so an EADDRINUSE on 9000 —
-    # another add-on, a MinIO container — was "handled" by binding the same
-    # port again, which raised again and escaped `start_background`. A
-    # degradable condition became a crash loop, and the log line blaming TLS
-    # was never written.
+    # the try: wrap `.start()` in it as well and an EADDRINUSE on 9000 —
+    # another add-on, a MinIO container — is "handled" by binding the same
+    # port again, which raises again and escapes `start_background`. A
+    # degradable condition becomes a crash loop, and the log line blaming TLS
+    # is never written.
     bkt_ctx = None
     try:
         bkt_key = config.mqtt_key or f"{config.data_dir}/certs/broker.key"

@@ -143,9 +143,9 @@ async def split_by_stream(paths: list[str]) -> tuple[list[str], list[str]]:
     """Split chunks into the majority stream shape and everything else.
 
     Real-world data isn't always uniform: a single foreign chunk among 26
-    good ones (seen on a live device, where an earlier categorisation bug let
-    the low-res substream overwrite a main-stream file of the same name) is
-    enough to truncate the whole join. Rather than discard the episode,
+    good ones (seen on a live device, where the low-res substream had
+    overwritten a main-stream file of the same name) is enough to truncate
+    the whole join. Rather than discard the episode,
     concatenate the dominant stream and leave the odd ones out — reported by
     the caller, never deleted."""
     by_key: dict[str, list[str]] = {}

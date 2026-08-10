@@ -142,7 +142,7 @@ def test_the_countdowns_are_ready_before_the_device_says_anything():
     reporting first, or "N50 Days Left" is unknown after every restart. Both
     document builders recompute, which also keeps the number honest as the
     calendar moves under a device that has gone quiet."""
-    from petkit_local.web.panel import _state_doc
+    from petkit_local.web.api.devices import _state_doc
 
     dev = _dev()
     record_consumable_reset(dev, "n50", time.time() - 4 * 86400)

@@ -11,9 +11,9 @@ the handshake returns a non-zero error, and the Aliyun Link SDK reports
 succeed; mbedtls_ssl_get_verify_result (post-handshake readback) then returns 0
 naturally because ssl_parse_certificate stored the zeroed flags.
 
-Verified: patching verify_with_profile alone is sufficient. The earlier attempt
-patching only get_verify_result failed because that function is behind the
-handshake gate — it is never reached when the handshake itself fails.
+Verified: patching verify_with_profile alone is sufficient, and patching only
+get_verify_result does NOT work — that function is behind the handshake gate and
+is never reached when the handshake itself fails.
 
 The function is statically linked into ctrl (no shared library).
 """
