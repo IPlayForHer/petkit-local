@@ -27,7 +27,8 @@ services:
     #   :dev      the last commit on main. Untested by definition; use it to try
     #             a fix before it ships, with `docker compose up -d --pull always`
     #             (a moving tag is cached by digest, so Compose will not refetch
-    #             it on its own).
+    #             it on its own). To hold one exact build, use its digest:
+    #             ghcr.io/alex-so-3/petkit-local@sha256:...
     image: ghcr.io/alex-so-3/petkit-local:latest
     #
     # To build it yourself instead — a local change, or an architecture nobody

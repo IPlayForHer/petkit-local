@@ -95,11 +95,14 @@ docker-compose can use, since Compose has no `{arch}` substitution.
 package instead of building the Dockerfile on the user's machine. It pulls
 `<image>:<version>`, taking the version from the same file.
 
-**A push to `main` publishes `dev` and `sha-<short>` only.** `dev` always points
-at the last commit, which is what makes it useful for trying a change before it
-ships; `sha-<short>` never moves, so a specific build can be pinned while
-bisecting. The version tag is what the Supervisor pulls, so it is a promise that
-the version is released, and it is cut by a git tag and nothing else. The workflow refuses a `v*` tag whose
+**A push to `main` publishes `dev` and nothing else.** It always points at the
+last commit, which is what makes it useful for trying a change before it ships.
+To pin one particular build, use its digest — `image@sha256:...`, which is
+permanent — rather than adding a tag for it; `org.opencontainers.image.revision`
+on the image says which commit it came from.
+
+The version tag is what the Supervisor pulls, so it is a promise that the
+version is released, and it is cut by a git tag and nothing else. The workflow refuses a `v*` tag whose
 version does not match `addon/config.yaml`, because an image under a version the
 Supervisor never asks for is worse than no image.
 

@@ -2,9 +2,9 @@ name: publish
 
 # Home Assistant's Supervisor pulls `image:` from config.yaml at the add-on's
 # own version, so a tag named after a version is a PROMISE that that version is
-# released. Pushes to main therefore publish only `dev` (moving, always the last
-# commit) and `sha-<short>` (fixed, for pinning one build); the version and
-# `latest` are cut by a `v*` git tag and nothing else. Without that split,
+# released. Pushes to main therefore publish only `dev`, which always points at
+# the last commit; the version and `latest` are cut by a `v*` git tag and
+# nothing else. Without that split,
 # working on main would overwrite the released version's image with unreleased
 # code, and every user updating would get it.
 #
@@ -129,8 +129,15 @@ jobs:
             primary="$version"
             tags="-t ${image}:${version} -t ${image}:latest"
           else
+            # Just the one moving tag. A per-commit tag would be a second name
+            # for something the digest already identifies permanently, and it
+            # would leave a tagged version behind on every push -- which GitHub
+            # then shows as the package's headline, offering a `docker pull` of
+            # an unreleased build to anyone who lands on the page.
+            # `org.opencontainers.image.revision` on the image itself is what
+            # maps a build back to its commit.
             primary="dev"
-            tags="-t ${image}:dev -t ${image}:sha-${GITHUB_SHA::7}"
+            tags="-t ${image}:dev"
           fi
 
           sources=""
