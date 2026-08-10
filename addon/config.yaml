@@ -32,7 +32,7 @@ ports:
   8554/tcp: null
   9000/tcp: 9000
 ports_description:
-  80/tcp: "PetKit device API (plain HTTP). Keep it on host 80: an ESP32 model provisioned with another port reaches Wi-Fi and then fails to reach the server, and one redirected by DNS dials 80 with nowhere to tell it otherwise."
+  80/tcp: "PetKit device API (plain HTTP). A remap is honoured — the host port is put in the address devices are handed — but prefer host 80 anyway: a device redirected by DNS dials 80 with nowhere to tell it otherwise, and an ESP32 model provisioned with another port reaches Wi-Fi and then fails to reach the server."
   443/tcp: "PetKit device MQTT over TLS. Port is inferred from localkit; change mqtt_tls_port + this mapping if your device dials a different one (e.g. 1883)."
   1883/tcp: "Optional: expose the plain MQTT listener (internal by default; map a host port only if a device connects plaintext)."
   8099/tcp: "Optional: expose the web panel directly on the LAN (no HA auth) for debugging/curl. Leave unmapped to use auth-only Ingress."
@@ -53,11 +53,17 @@ map:
   - share:rw
   - media:rw
 options:
-  # Leave api_url/mqtt_host empty to auto-detect the HA host's LAN IP (embedded
-  # devices can't resolve mDNS, so a `.local` name won't work). Override only if
-  # the device should reach the add-on at a specific address/port.
+  # Leave api_url empty to auto-detect the HA host's LAN IP and the host port
+  # 80/tcp is published on (embedded devices can't resolve mDNS, so a `.local`
+  # name won't work). Set it only if the device should reach the add-on at an
+  # address the mapping cannot express — a reverse proxy, another interface.
+  # An explicit value is used verbatim, so include the port if it is not 80.
   api_url: ""
   mqtt_host: ""
+  # Where devices upload photos and video. Empty derives it from the host IP and
+  # the port 9000/tcp is published on. Set it when uploads must go through a
+  # different hostname, port or TLS-terminating proxy.
+  bucket_endpoint: ""
   # Home Assistant's MQTT broker, for publishing device entities. Auto-detected
   # from the Supervisor if you run the Mosquitto add-on; otherwise set your
   # broker here (external broker, or anonymous). Leave host empty to skip HA
@@ -78,6 +84,7 @@ options:
 schema:
   api_url: str?
   mqtt_host: str?
+  bucket_endpoint: str?
   ha_mqtt_host: str?
   ha_mqtt_port: port
   ha_mqtt_user: str?

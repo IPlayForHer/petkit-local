@@ -497,7 +497,7 @@ BLE_TYPE_REQUEST = 0x01
 # they were different, and reading it that way makes 222 look like a value
 # nobody has.
 CMD_GET_STATE = 210         # short status block, on request
-CMD_GET_CONFIG = 211        # settings block. A CTW3 never answers it.
+CMD_GET_CONFIG = 211        # settings block. A CTW3 answers it over the relay.
 CMD_SET_MODE = 220          # power / mode. CTW3 adds a suspend byte.
 CMD_SET_CONFIG = 221        # the settings block, written whole
 CMD_RESET_FILTER = 222      # filter life back to 100%
@@ -836,9 +836,9 @@ def parse_ctw3_ble_response(content: Any) -> dict[str, dict[str, Any]]:
     Same contract as `parse_w5_ble_response`: an empty dict means nothing was
     decodable, and the caller leaves the previous state alone.
 
-    cmd 211 is deliberately not handled. On the W5 family it is the settings
-    block; a CTW3 does not answer it at all, and its settings arrive as the tail
-    of a long cmd-230 instead.
+    cmd 211 is the settings block, as on the W5 family, and a CTW3 does answer
+    it over the relay — see the capture in the branch below. Its settings also
+    arrive as the tail of a long cmd-230, so both paths decode the same block.
     """
     result: dict[str, dict[str, Any]] = {"states": {}, "consumables": {}}
     for cmd, data in _iter_ble_frames(content):

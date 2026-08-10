@@ -63,7 +63,11 @@ class EntityDef:
         option_values: device-side values corresponding 1:1 to `options`, for
             selects whose device enum is not a plain 0-based index (e.g. the
             minute intervals 0/5/10/15...). Empty means "use the option index".
-        min_value, max_value, step: `number` bounds.
+        min_value, max_value, step: `number` bounds. Either bound may be None,
+            meaning the entity declares none on that side: `ha/commands.py`
+            enforces a bound as a hard refusal, so a made-up default would
+            reject legal values, and HA reads an absent `min`/`max` as
+            unbounded.
         payload_on, payload_off: `switch` payloads, used for BOTH the command
             payload and the state HA matches against.
     """
@@ -78,8 +82,8 @@ class EntityDef:
     entity_category: str = ""
     options: list[str] = field(default_factory=list)
     option_values: list = field(default_factory=list)
-    min_value: float = 0
-    max_value: float = 100
+    min_value: float | None = None
+    max_value: float | None = None
     step: float = 1
     payload_on: str = "ON"
     payload_off: str = "OFF"
@@ -147,7 +151,8 @@ def build_discovery_payload(
         (topic + online/offline payloads). Read-only components additionally
         carry `state_topic` + `value_template`; settable ones carry
         `command_topic` plus their component-specific keys (switch payloads,
-        number min/max/step, select options, text max, event event_types); the
+        number step and whichever of min/max the entity declares, select
+        options, text max, event event_types); the
         the image component replaces `state_topic` with its own
         `topic`/`image_topic`. Optional `device_class`, `unit_of_measurement`,
         `icon` and `entity_category` appear only when set on the entity —
@@ -201,8 +206,10 @@ def build_discovery_payload(
 
     elif entity.component == "number":
         payload["command_topic"] = cmd
-        payload["min"] = entity.min_value
-        payload["max"] = entity.max_value
+        if entity.min_value is not None:
+            payload["min"] = entity.min_value
+        if entity.max_value is not None:
+            payload["max"] = entity.max_value
         payload["step"] = entity.step
 
     elif entity.component == "select":

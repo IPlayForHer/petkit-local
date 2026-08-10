@@ -1,7 +1,8 @@
 import time
 
-from petkit_local.devices.state_parsers import (WORK_MODE_IDLE, _days_left_from_reset,
-                                                normalize_property_params, parse_state_report)
+from petkit_local.devices.state_parsers import (DEODORANT_TOTAL_DAYS, WORK_MODE_IDLE,
+                                                _days_left_from_reset, normalize_property_params,
+                                                parse_state_report)
 
 
 def test_mqtt_property_post_normalizes_to_flat_keys():
@@ -232,14 +233,14 @@ def test_days_left_from_reset_survives_non_finite_device_value():
     # put one in sprayResetTime. The old isinstance((int, float)) guard let it
     # through and int(total_days - days_since) raised OverflowError, taking the
     # whole dev_state_report handler down with it.
-    assert _days_left_from_reset(float("inf")) is None
-    assert _days_left_from_reset(float("-inf")) is None
-    assert _days_left_from_reset(float("nan")) is None
+    assert _days_left_from_reset(float("inf"), DEODORANT_TOTAL_DAYS) is None
+    assert _days_left_from_reset(float("-inf"), DEODORANT_TOTAL_DAYS) is None
+    assert _days_left_from_reset(float("nan"), DEODORANT_TOTAL_DAYS) is None
     # int is unbounded; time.time() - 10**400 raises OverflowError.
-    assert _days_left_from_reset(10 ** 400) is None
-    assert _days_left_from_reset("garbage") is None
-    assert _days_left_from_reset(None) is None
-    assert _days_left_from_reset(0) is None
+    assert _days_left_from_reset(10 ** 400, DEODORANT_TOTAL_DAYS) is None
+    assert _days_left_from_reset("garbage", DEODORANT_TOTAL_DAYS) is None
+    assert _days_left_from_reset(None, DEODORANT_TOTAL_DAYS) is None
+    assert _days_left_from_reset(0, DEODORANT_TOTAL_DAYS) is None
 
 
 def test_days_left_from_reset_computes_from_a_real_timestamp():
@@ -248,10 +249,10 @@ def test_days_left_from_reset_computes_from_a_real_timestamp():
     # from a whole-day boundary so the assertion does not depend on which side
     # of it the clock lands.
     reset = time.time() - 10.5 * 86400
-    assert _days_left_from_reset(reset) == 20
+    assert _days_left_from_reset(reset, DEODORANT_TOTAL_DAYS) == 20
     # The field sometimes arrives as a numeric string; the old isinstance
     # guard silently returned None for it.
-    assert _days_left_from_reset(str(int(reset))) == 20
+    assert _days_left_from_reset(str(int(reset)), DEODORANT_TOTAL_DAYS) == 20
 
 
 def test_mqtt_property_post_derives_the_consumable_countdowns():

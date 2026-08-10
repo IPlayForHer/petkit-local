@@ -106,9 +106,10 @@ def test_every_time_entity_reads_a_settings_field():
 
 
 def test_a_time_is_not_bound_by_the_number_range():
-    """`min_value`/`max_value` default to 0..100 on every EntityDef, and a time
-    of day is far outside that. The number branch's range check must not be
-    reached — 46800 is not "out of range", it is one o'clock."""
+    """`min_value`/`max_value` mean nothing on a `time` entity, and a time of
+    day in seconds is far outside any plausible number range. The number
+    branch's check must not be reached — 46800 is not "out of range", it is one
+    o'clock."""
     d, idx = _fountain()
     try:
         handle_ha_command(d, idx["flush_time"], "13:00:00")

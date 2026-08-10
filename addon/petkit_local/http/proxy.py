@@ -115,6 +115,11 @@ _SESSION_DNS: weakref.WeakKeyDictionary[web.Application, str] = (
     weakref.WeakKeyDictionary()
 )
 
+# Strong references to the background closes started by `get_proxy_session`.
+# The event loop only holds a weak one, so a task nothing else names can be
+# collected mid-close, leaving the old connector's sockets open.
+_CLOSING: set[asyncio.Task[None]] = set()
+
 
 @dataclass
 class Exchange:
@@ -212,7 +217,9 @@ def get_proxy_session(app: web.Application, dns_server: str = "") -> aiohttp.Cli
     """
     session = _SESSIONS.get(app)
     if session is not None and not session.closed and _SESSION_DNS.get(app, "") != dns_server:
-        asyncio.ensure_future(session.close())
+        closing = asyncio.ensure_future(session.close())
+        _CLOSING.add(closing)
+        closing.add_done_callback(_CLOSING.discard)
         session = None
 
     if session is None or session.closed:

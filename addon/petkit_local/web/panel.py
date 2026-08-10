@@ -58,7 +58,7 @@ from collections import deque
 from collections.abc import Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 import aiohttp_jinja2
@@ -416,6 +416,60 @@ def _live(request: web.Request) -> dict[str, Any]:
     return request.app.get("live_config") or {}
 
 
+def _refuse(status: type[web.HTTPException], error: str) -> web.HTTPException:
+    """A JSON `{"error": ...}` refusal, shaped exactly like a returned one.
+
+    Raised rather than returned so the checks below read as one line at the top
+    of a handler. There is no middleware on this app to swallow it.
+    """
+    return status(text=json.dumps({"error": error}),
+                  content_type="application/json")
+
+
+def _path_id(request: web.Request) -> int:
+    """The `{id}` path segment as an integer.
+
+    Raises:
+        web.HTTPBadRequest: the segment is not a number.
+    """
+    try:
+        return int(request.match_info["id"])
+    except ValueError:
+        raise _refuse(web.HTTPBadRequest, "bad id") from None
+
+
+def _device_or_404(request: web.Request) -> Device:
+    """The device the `{id}` path segment names.
+
+    Raises:
+        web.HTTPBadRequest: the id is not a number.
+        web.HTTPNotFound: no device has that id.
+    """
+    device = request.app["registry"].get(_path_id(request))
+    if not device:
+        raise _refuse(web.HTTPNotFound, "not found")
+    return device
+
+
+async def _json_body(request: web.Request) -> dict[str, Any]:
+    """The request body as a JSON object.
+
+    A body that is JSON but not an object is refused here too: every caller
+    reads it with `.get`, so a list would reach that call as an AttributeError
+    and answer 500 to what is a malformed request.
+
+    Raises:
+        web.HTTPBadRequest: the body is not a JSON object.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise _refuse(web.HTTPBadRequest, "bad json") from None
+    if not isinstance(body, dict):
+        raise _refuse(web.HTTPBadRequest, "bad json")
+    return body
+
+
 def _current_settings(request: web.Request) -> dict[str, Any]:
     """The `LIVE_SETTINGS` values as they are right now, all keys always present.
 
@@ -492,10 +546,7 @@ async def api_settings(request: web.Request) -> web.Response:
         # Nothing wired to write into (empty fallback in tests / no device app).
         return web.json_response({"error": "settings not writable in this mode"}, status=400)
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     changed: dict[str, Any] = {}
     for key, val in body.items():
@@ -782,16 +833,9 @@ async def api_device_detail(request: web.Request) -> web.Response:
     of button entities that map to a real command, flagged `destructive` when
     the UI should confirm first.
     """
-    reg = request.app["registry"]
     ble = request.app["ble_registry"]
     hub = request.app["hub"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
 
     entities = get_entities_for_device(d)
     doc = _state_doc(d)
@@ -800,7 +844,7 @@ async def api_device_detail(request: web.Request) -> web.Response:
         "state": d.state,
         "settings": d.config.get("settings", {}),
         "config": {k: v for k, v in d.config.items() if k != "settings"},
-        "diag": hub.diag(did),
+        "diag": hub.diag(d.petkit_id),
         # Where to watch this device. Lives on the DEVICE, not on the patcher
         # that enables it: the patcher card is about applying and undoing a
         # change to the firmware, and once that is done the address belongs
@@ -860,18 +904,9 @@ async def api_send_command(request: web.Request) -> web.Response:
     reg = request.app["registry"]
     hub = request.app["hub"]
     bridge = request.app["bridge"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     # transport: "auto" (default) picks MQTT only when the device has a live
     # session, else the HTTP heartbeat queue. "mqtt"/"heartbeat" force it.
@@ -898,7 +933,7 @@ async def api_send_command(request: web.Request) -> web.Response:
             return web.json_response({"error": str(exc)}, status=400)
         reg.save()
         if result is None:
-            hub.record_command(did, "local", f"{ent.key}={body.get('value')}")
+            hub.record_command(d.petkit_id, "local", f"{ent.key}={body.get('value')}")
             return web.json_response({"ok": True, "delivered": "local", "entity": ent.key})
         suffix, envelope = result
     else:
@@ -1133,18 +1168,9 @@ async def api_save_schedule(request: web.Request) -> web.Response:
     reg = request.app["registry"]
     hub = request.app["hub"]
     bridge = request.app["bridge"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     target = body.get("target")
     known = {t["target"]: t["kind"] for t in d.schedule_targets()}
@@ -1161,7 +1187,7 @@ async def api_save_schedule(request: web.Request) -> web.Response:
         reg.save()
         # Stored and not pushed: no capture shows the cloud writing one, and
         # `dev_feed_get` is where the device reads it on its own clock anyway.
-        hub.record_command(did, "local", "feed_schedule stored")
+        hub.record_command(d.petkit_id, "local", "feed_schedule stored")
         return web.json_response({"ok": True, "delivered": "local", "target": target})
 
     cleaner = {"ranges": _clean_range_list, "weekly": _clean_weekly_list,
@@ -1196,21 +1222,12 @@ async def api_capabilities(request: web.Request) -> web.Response:
     entities there too.
     """
     reg = request.app["registry"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
 
     if request.method == "GET":
         return web.json_response(_capabilities_view(d))
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     caps = d.config.setdefault("capabilities", {})
     for ct in Device.CAPABILITY_TYPES:
@@ -1235,21 +1252,12 @@ async def api_ai_settings(request: web.Request) -> web.Response:
     the value survives if a device is later replaced by one that can.
     """
     reg = request.app["registry"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
 
     if request.method == "GET":
         return web.json_response(_ai_view(d))
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     if "ai_enabled" in body:
         d.config["ai_enabled"] = bool(body["ai_enabled"])
@@ -1267,19 +1275,10 @@ async def api_device_log_settings(request: web.Request) -> web.Response:
     would have expired.
     """
     reg = request.app["registry"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
 
     if request.method == "POST":
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "bad json"}, status=400)
+        body = await _json_body(request)
         if "log_upload_enabled" in body:
             d.config["log_upload_enabled"] = bool(body["log_upload_enabled"])
             reg.save()
@@ -1301,10 +1300,7 @@ async def api_retention(request: web.Request) -> web.Response:
     if request.method == "GET":
         return web.json_response({"retention": retention.data})
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     retention.update(body)
     data_dir = request.app["cfg"].get("data_dir", "/data")
@@ -1389,8 +1385,10 @@ async def api_media_thumb(request: web.Request) -> web.StreamResponse:
 
     Grabs are cached under `{data_dir}/thumbs` keyed by a hash of the source
     path, so the Timeline re-rendering a day costs one ffmpeg run per clip
-    total, not per request. Without ffmpeg there is no video thumbnail at all
-    and this 404s — the UI falls back to a poster still.
+    total, not per request. Every "no thumbnail" outcome answers 404, including
+    a failed grab: that is the only status the UI has a fallback for
+    (`hide-on-error`), and a 500 leaves a broken tile where the poster still
+    would have gone.
     """
     p = _safe_media_path(request, request.match_info["path"])
     if not p:
@@ -1404,11 +1402,12 @@ async def api_media_thumb(request: web.Request) -> web.StreamResponse:
 
     data_dir = request.app["cfg"].get("data_dir", "/data")
     thumbs_dir = os.path.join(data_dir, "thumbs")
-    os.makedirs(thumbs_dir, exist_ok=True)
     thumb_path = os.path.join(thumbs_dir, hashlib.sha1(p.encode()).hexdigest() + ".jpg")
 
-    if not os.path.isfile(thumb_path) and not await _generate_video_thumb(p, thumb_path):
-        return web.json_response({"error": "thumbnail generation failed"}, status=500)
+    if not os.path.isfile(thumb_path):
+        os.makedirs(thumbs_dir, exist_ok=True)
+        if not await _generate_video_thumb(p, thumb_path):
+            return web.json_response({"error": "thumbnail generation failed"}, status=404)
 
     return web.FileResponse(thumb_path)
 
@@ -1633,10 +1632,7 @@ async def api_pets_list_create(request: web.Request) -> web.Response:
     if request.method == "GET":
         return web.json_response({"pets": list((await _pets_by_id(request)).values())})
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     name = str(body.get("name", "")).strip()
     if not name:
@@ -1664,10 +1660,7 @@ async def api_pet_detail(request: web.Request) -> web.Response:
     pet_registry = request.app.get("pet_registry")
     if pet_registry is None:
         return web.json_response({"error": "pet registry not available"}, status=400)
-    try:
-        pid = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
+    pid = _path_id(request)
 
     if request.method == "DELETE":
         return web.json_response({"ok": await pet_registry.delete(pid)})
@@ -1678,10 +1671,7 @@ async def api_pet_detail(request: web.Request) -> web.Response:
             return web.json_response({"error": "not found"}, status=404)
         return web.json_response({"pet": pet})
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     # Read before the update: the alias bookkeeping below needs to know which
     # ids are being REMOVED, and after the write that information is gone.
@@ -1808,10 +1798,7 @@ async def api_pet_faces(request: web.Request) -> web.Response:
     pet_registry = request.app.get("pet_registry")
     if pet_registry is None:
         return web.json_response({"error": "pet registry not available"}, status=400)
-    try:
-        pid = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
+    pid = _path_id(request)
     if await pet_registry.get(pid) is None:
         return web.json_response({"error": "not found"}, status=404)
 
@@ -1974,10 +1961,7 @@ async def api_pets_import(request: web.Request) -> web.Response:
         return web.json_response({"error": "pet registry not available"}, status=503)
     reg = request.app["registry"]
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
     if not isinstance(body, dict):
         return web.json_response({"error": "expected an object"}, status=400)
 
@@ -2204,10 +2188,7 @@ async def api_ble_accessories(request: web.Request) -> web.Response:
         return web.json_response({"error": "no BLE registry"}, status=503)
 
     if request.method == "POST":
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "bad json"}, status=400)
+        body = await _json_body(request)
         if not isinstance(body, dict):
             return web.json_response({"error": "expected an object"}, status=400)
 
@@ -2319,10 +2300,7 @@ async def api_ble_import(request: web.Request) -> web.Response:
     if ble is None:
         return web.json_response({"error": "no BLE registry"}, status=503)
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
     if not isinstance(body, dict):
         return web.json_response({"error": "expected an object"}, status=400)
 
@@ -2443,10 +2421,7 @@ async def api_ble_command(request: web.Request) -> web.Response:
     if dev is None:
         return web.json_response({"error": "not found"}, status=404)
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     entity_key = body.get("entity")
     entity = next((e for e in get_ble_entities(dev.ble_type) if e.key == entity_key), None)
@@ -2537,10 +2512,7 @@ async def api_ble_delete(request: web.Request) -> web.Response:
     ble = request.app["ble_registry"]
     if ble is None:
         return web.json_response({"error": "no BLE registry"}, status=503)
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
+    did = _path_id(request)
     dev = ble.get(did)
     was_k3 = dev is not None and dev.ble_type == "k3"
     parent_id = dev.link_with if dev is not None else 0
@@ -2569,14 +2541,7 @@ async def api_patcher_status(request: web.Request) -> web.Response:
     because a live session is proof the patch took regardless of what was
     recorded.
     """
-    reg = request.app["registry"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
     if not d.is_next_gen:
         return web.json_response({"patchers": {}, "device_ip": "", "supported": False})
 
@@ -2617,22 +2582,14 @@ async def api_patcher_apply(request: web.Request) -> web.Response:
     """
     reg = request.app["registry"]
     hub = request.app["hub"]
-    try:
-        did = int(request.match_info["id"])
-    except ValueError:
-        return web.json_response({"error": "bad id"}, status=400)
-    d = reg.get(did)
-    if not d:
-        return web.json_response({"error": "not found"}, status=404)
+    d = _device_or_404(request)
+    did = d.petkit_id
 
     if not d.is_next_gen:
         return web.json_response(
             {"error": "patchers only supported on Linux devices"}, status=400)
 
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "bad json"}, status=400)
+    body = await _json_body(request)
 
     patcher_id = body.get("patcher")
     action = body.get("action", "apply")
@@ -3078,20 +3035,32 @@ async def api_capture_list(request: web.Request) -> web.Response:
 
     A file that cannot be read is skipped rather than failing the listing —
     a capture in progress is being appended to underneath us.
+
+    Counting the lines means reading every capture file end to end, and nothing
+    prunes them (`api_capture_delete`), so the whole scan goes to a thread: this
+    process also serves the devices, and blocking here stalls their HTTP server
+    and the MQTT bridge with it.
     """
     d = _capture_dir(request)
-    files: list[dict[str, Any]] = []
-    if d and os.path.isdir(d):
-        for name in sorted(os.listdir(d)):
-            if name.endswith(".jsonl"):
-                p = os.path.join(d, name)
-                try:
-                    with open(p) as f:
-                        lines = sum(1 for _ in f)
-                    files.append({"name": name, "size": os.path.getsize(p), "lines": lines})
-                except OSError:
-                    pass
+    files = await asyncio.to_thread(_capture_listing, d) if d else []
     return web.json_response({"dir": d, "files": files, "enabled": _current_settings(request)["capture"]})
+
+
+def _capture_listing(d: str) -> list[dict[str, Any]]:
+    """Name, size and line count of every capture file in `d`."""
+    files: list[dict[str, Any]] = []
+    if not os.path.isdir(d):
+        return files
+    for name in sorted(os.listdir(d)):
+        if name.endswith(".jsonl"):
+            p = os.path.join(d, name)
+            try:
+                with open(p) as f:
+                    lines = sum(1 for _ in f)
+                files.append({"name": name, "size": os.path.getsize(p), "lines": lines})
+            except OSError:
+                pass
+    return files
 
 
 def _safe_capture_path(request: web.Request) -> str | None:
@@ -3153,7 +3122,9 @@ async def api_capture_download(request: web.Request) -> web.StreamResponse:
     p = _safe_capture_path(request)
     if not p:
         return web.json_response({"error": "not found"}, status=404)
-    return web.FileResponse(p, headers={"Content-Disposition": f'attachment; filename="{os.path.basename(p)}"'})
+    return web.FileResponse(p, headers={
+        "Content-Disposition": f"attachment; filename=\"{quote(os.path.basename(p))}\"",
+    })
 
 
 async def api_capture_delete(request: web.Request) -> web.Response:
@@ -3207,6 +3178,34 @@ def _device_log_reason(request: web.Request) -> str:
     return ""
 
 
+def _device_log_listing(root: str) -> list[dict[str, Any]]:
+    """Every uploaded log file under `root`, newest first.
+
+    Walks a tree an unauthenticated listener writes, so it runs in a thread for
+    the same reason `api_device_log_read` does.
+    """
+    files: list[dict[str, Any]] = []
+    if not os.path.isdir(root):
+        return files
+    for dirpath, _dirs, names in os.walk(root):
+        for name in names:
+            p = os.path.join(dirpath, name)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue  # being written to, or vanished mid-walk
+            rel = os.path.relpath(p, root).replace(os.sep, "/")
+            files.append({
+                "rel": rel,
+                "name": name,
+                "device": to_int(rel.split("/")[0], None),
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            })
+    files.sort(key=lambda f: f["mtime"], reverse=True)
+    return files
+
+
 async def api_device_logs(request: web.Request) -> web.Response:
     """List the uploaded device logs, newest first.
 
@@ -3217,24 +3216,7 @@ async def api_device_logs(request: web.Request) -> web.Response:
     """
     root = _device_log_root(request)
     reg = request.app["registry"]
-    files: list[dict[str, Any]] = []
-    if root and os.path.isdir(root):
-        for dirpath, _dirs, names in os.walk(root):
-            for name in names:
-                p = os.path.join(dirpath, name)
-                try:
-                    st = os.stat(p)
-                except OSError:
-                    continue  # being written to, or vanished mid-walk
-                rel = os.path.relpath(p, root).replace(os.sep, "/")
-                files.append({
-                    "rel": rel,
-                    "name": name,
-                    "device": to_int(rel.split("/")[0], None),
-                    "size": st.st_size,
-                    "mtime": st.st_mtime,
-                })
-    files.sort(key=lambda f: f["mtime"], reverse=True)
+    files = await asyncio.to_thread(_device_log_listing, root) if root else []
     want = to_int(request.query.get("device"), None)
     if want is not None:
         files = [f for f in files if f["device"] == want]
@@ -3310,7 +3292,7 @@ async def api_device_log_read(request: web.Request) -> web.StreamResponse:
     if request.query.get("download"):
         return web.FileResponse(path, headers={
             "Content-Type": "text/plain; charset=utf-8",
-            "Content-Disposition": f'attachment; filename="{os.path.basename(path)}"',
+            "Content-Disposition": f'attachment; filename="{quote(os.path.basename(path))}"',
         })
 
     limit = _limit_param(request, 500, MAX_LOG_LINES)

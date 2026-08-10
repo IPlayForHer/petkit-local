@@ -667,8 +667,13 @@ class HAPublisher:
         # away. Reflecting immediately keeps the control from snapping back.
         # A button has no state to reflect — and no `value_path`, so writing one
         # anyway would file it under the empty string.
+        #
+        # The leading segment names the block the accessory's parser fills
+        # (`states` or `consumables`, see devices/ble.py), so the reflection has
+        # to land in that one; an unsectioned path is a `states` field.
         if entity.value_path:
-            ble_dev.state.setdefault("states", {})[entity.value_path.split(".")[-1]] = value
+            section, _, field = entity.value_path.rpartition(".")
+            ble_dev.state.setdefault(section or "states", {})[field] = value
         if self._ble_registry:
             self._ble_registry.mark_dirty()
         await self.publish_ble_state(ble_dev)

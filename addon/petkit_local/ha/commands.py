@@ -457,6 +457,28 @@ def _select_value(entity: EntityDef, payload: str) -> int | float | str | None:
     return _coerce_number(label)
 
 
+def _within_bounds(entity: EntityDef, value: float) -> bool:
+    """True unless `value` breaks a bound the entity actually declared.
+
+    An undeclared bound is not a bound. `min_value`/`max_value` are None until
+    an EntityDef names them, and a `number` may legitimately have only one side
+    or neither — a range invented here is enforced as a refusal below, so it
+    would reject values the device accepts.
+    """
+    if entity.min_value is not None and value < entity.min_value:
+        return False
+    return not (entity.max_value is not None and value > entity.max_value)
+
+
+def _bounds_text(entity: EntityDef) -> str:
+    """The range clause of a refusal, worded for the bounds that exist."""
+    if entity.min_value is not None and entity.max_value is not None:
+        return f"between {entity.min_value} and {entity.max_value}"
+    if entity.min_value is not None:
+        return f"at least {entity.min_value}"
+    return f"at most {entity.max_value}"
+
+
 def handle_ha_command(device: Device, entity: EntityDef, payload: str) -> Command | None:
     """Route one HA command for `entity`, mutating `device` where it applies.
 
@@ -536,10 +558,8 @@ def handle_ha_command(device: Device, entity: EntityDef, payload: str) -> Comman
         if value is None:
             log.warning("Could not coerce payload %r for entity '%s'", payload, entity.key)
             return None
-        if comp == "number" and not (entity.min_value <= value <= entity.max_value):
-            raise Refused(
-                f"{entity.name} must be between "
-                f"{entity.min_value} and {entity.max_value}")
+        if comp == "number" and not _within_bounds(entity, value):
+            raise Refused(f"{entity.name} must be {_bounds_text(entity)}")
         device.config.setdefault("local", {})[field] = value
         log.info("Local %s=%s for device %d (no device command)",
                  field, value, device.petkit_id)
@@ -558,13 +578,10 @@ def handle_ha_command(device: Device, entity: EntityDef, payload: str) -> Comman
         # Clamping would silently write a value nobody asked for, which is the
         # thing this project does not do anywhere else. Refusing leaves the
         # setting as it was and says why.
-        if value is not None and not (entity.min_value <= value <= entity.max_value):
-            log.warning("Refusing %s=%s for device %d: outside %s..%s",
-                        field, value, device.petkit_id,
-                        entity.min_value, entity.max_value)
-            raise Refused(
-                f"{entity.name} must be between "
-                f"{entity.min_value} and {entity.max_value}")
+        if value is not None and not _within_bounds(entity, value):
+            log.warning("Refusing %s=%s for device %d: not %s",
+                        field, value, device.petkit_id, _bounds_text(entity))
+            raise Refused(f"{entity.name} must be {_bounds_text(entity)}")
     elif comp == "time":
         # No range check of its own: `_coerce_time` already refuses anything
         # that is not a time within the day, and `min_value`/`max_value` on a

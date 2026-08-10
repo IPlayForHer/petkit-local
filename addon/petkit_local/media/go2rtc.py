@@ -189,6 +189,14 @@ def render_config(streams: dict[str, str], log_path: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _write_config(path: str, config: str) -> None:
+    """Write the rendered config, creating its directory (blocking — call via
+    a thread)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(config)
+
+
 class Go2rtc:
     """Runs go2rtc for as long as there is a camera worth serving.
 
@@ -331,9 +339,7 @@ class Go2rtc:
             log.info("go2rtc: stream set changed, restarting")
             await self.stop()
 
-        os.makedirs(os.path.dirname(self._config_path) or ".", exist_ok=True)
-        with open(self._config_path, "w", encoding="utf-8") as f:
-            f.write(config)
+        await asyncio.to_thread(_write_config, self._config_path, config)
         self._rendered = config
         await self._start()
 

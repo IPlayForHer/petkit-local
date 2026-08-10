@@ -9,11 +9,15 @@ from petkit_local.config import (
 )
 
 
-def _from_ha_addon_with(options: dict, broker: dict | None = None) -> Config:
+def _from_ha_addon_with(options: dict, broker: dict | None = None,
+                        host_ip: str | None = None,
+                        ports: dict | None = None) -> Config:
     """Run Config.from_ha_addon() against fake /data files.
 
     The real one reads absolute paths and talks to the Supervisor, neither of
-    which exists here, so both are stubbed out for the duration of the call.
+    which exists here, so all three are stubbed out for the duration of the
+    call. `ports` is the Supervisor's own `network` map (`{"80/tcp": 8080}`),
+    and None stands for "the Supervisor said nothing".
     """
     def fake_read_json(path, default):
         name = Path(path).name
@@ -25,14 +29,17 @@ def _from_ha_addon_with(options: dict, broker: dict | None = None) -> Config:
 
     real_read_json = config_mod.read_json
     real_host_ip = config_mod._supervisor_host_ip
+    real_port_map = config_mod._supervisor_port_map
     token = os.environ.pop("SUPERVISOR_TOKEN", None)
     config_mod.read_json = fake_read_json
-    config_mod._supervisor_host_ip = lambda: None
+    config_mod._supervisor_host_ip = lambda: host_ip
+    config_mod._supervisor_port_map = lambda: ports or {}
     try:
         return Config.from_ha_addon()
     finally:
         config_mod.read_json = real_read_json
         config_mod._supervisor_host_ip = real_host_ip
+        config_mod._supervisor_port_map = real_port_map
         if token is not None:
             os.environ["SUPERVISOR_TOKEN"] = token
 
@@ -126,6 +133,64 @@ def test_from_ha_addon_ignores_a_broken_ha_broker_port():
     c = _from_ha_addon_with({}, broker={"host": "10.0.0.9", "port": "kaboom"})
     assert c.ha_mqtt_host == "10.0.0.9"
     assert c.ha_mqtt_port == 1883
+
+
+# --- the address devices are handed -----------------------------------------
+
+def test_the_advertised_api_url_carries_the_published_host_port():
+    """The reported bug: remapping 80/tcp to 8080 left `apiServers` pointing at
+    port 80, where nothing listens."""
+    c = _from_ha_addon_with({}, host_ip="192.168.1.5",
+                            ports={"80/tcp": 8080, "9000/tcp": 9000})
+    assert c.api_url == "http://192.168.1.5:8080/6/"
+
+
+def test_the_default_mapping_stays_portless():
+    c = _from_ha_addon_with({}, host_ip="192.168.1.5",
+                            ports={"80/tcp": 80, "9000/tcp": 9000})
+    assert c.api_url == "http://192.168.1.5/6/"
+
+
+def test_a_supervisor_that_says_nothing_leaves_the_declared_ports():
+    c = _from_ha_addon_with({}, host_ip="192.168.1.5")
+    assert c.api_url == "http://192.168.1.5/6/"
+    assert c.bucket_endpoint == "https://192.168.1.5:9000"
+
+
+def test_an_unpublished_api_port_still_yields_a_usable_url():
+    """Nothing can reach us, but the URL must stay well-formed — the warning is
+    what tells the operator, not a broken config."""
+    c = _from_ha_addon_with({}, host_ip="192.168.1.5", ports={"80/tcp": None})
+    assert c.api_url == "http://192.168.1.5/6/"
+
+
+def test_an_explicit_api_url_is_used_verbatim():
+    c = _from_ha_addon_with({"api_url": "http://10.0.0.2:9999/6/"},
+                            host_ip="192.168.1.5", ports={"80/tcp": 8080})
+    assert c.api_url == "http://10.0.0.2:9999/6/"
+
+
+def test_an_mdns_api_url_is_replaced_by_the_detected_address():
+    c = _from_ha_addon_with({"api_url": "http://homeassistant.local/6/"},
+                            host_ip="192.168.1.5", ports={"80/tcp": 8080})
+    assert c.api_url == "http://192.168.1.5:8080/6/"
+
+
+def test_the_bucket_endpoint_follows_its_published_port():
+    c = _from_ha_addon_with({}, host_ip="192.168.1.5",
+                            ports={"80/tcp": 80, "9000/tcp": 19000})
+    assert c.bucket_endpoint == "https://192.168.1.5:19000"
+
+
+def test_an_explicit_bucket_endpoint_wins():
+    c = _from_ha_addon_with({"bucket_endpoint": "https://uploads.example:443"},
+                            host_ip="192.168.1.5", ports={"9000/tcp": 19000})
+    assert c.bucket_endpoint == "https://uploads.example:443"
+
+
+def test_a_garbage_published_port_reads_as_unpublished():
+    c = _from_ha_addon_with({}, host_ip="192.168.1.5", ports={"80/tcp": "eighty"})
+    assert c.api_url == "http://192.168.1.5/6/"
 
 
 # --- panel overrides --------------------------------------------------------

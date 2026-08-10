@@ -1,5 +1,24 @@
 const BASE = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
-const api = (p, o) => fetch(BASE + 'api/' + p, o).then(r => r.json());
+// Never rejects, and never resolves to something a caller could mistake for
+// data: a dead backend, an Ingress error page and a 500 all come back as the
+// `{error}` shape the server answers failures with. Most call sites carry no
+// `.catch`, so a rejection here leaves a tab showing "Loading…" forever.
+const api = async (p, o) => {
+  let r;
+  try {
+    r = await fetch(BASE + 'api/' + p, o);
+  } catch (e) {
+    return { error: e.message || 'network error' };
+  }
+  let body;
+  try {
+    body = await r.json();
+  } catch (e) {
+    return { error: r.ok ? 'malformed response' : 'HTTP ' + r.status };
+  }
+  if (r.ok) return body;
+  return { error: (body && body.error) || 'HTTP ' + r.status };
+};
 
 // Markup escaping for the two entity-decoding contexts this file builds:
 // TEXT nodes and DOUBLE-QUOTED attribute values. In both, an escaped string can
@@ -263,6 +282,17 @@ document.querySelectorAll('nav button').forEach(b =>
 // position, open sections and half-typed input.
 async function loadDevices() {
   const [ds, bleResp] = await Promise.all([api('devices'), api('ble')]);
+  const box = document.getElementById('devPanels');
+  // `/api/devices` answers a bare array, so an `{error}` is not an empty one:
+  // the onboarding card below would tell someone whose devices are connected
+  // and fine to go and provision one.
+  if (ds.error) {
+    if (box)
+      box.innerHTML =
+        '<div class="empty"><div class="big">⚠</div><b>Cannot load devices</b>' +
+        `<p class="mut">${esc(ds.error)}</p></div>`;
+    return;
+  }
   DEVICES = ds;
   // An accessory is its own device here, not a row in its parent's card: in
   // Home Assistant it already is one, and a CTW3 carries 21 entities and 8
@@ -270,7 +300,6 @@ async function loadDevices() {
   // machinery (counters, queue, patchers, proxy): it has no network of its
   // own, so every one of those would be a zero pretending to be a reading.
   ACCESSORIES = (bleResp && bleResp.accessories) || [];
-  const box = document.getElementById('devPanels');
   if (!box) return;
 
   if (!ds.length) {
@@ -2065,21 +2094,45 @@ function scheduleTimeline() {
   clearTimeout(_timelineT);
   _timelineT = setTimeout(loadTimeline, 400);
 }
+//: Retry delay, doubled per attempt. The cap is a whole Home Assistant restart
+//: long: the endpoint is gone for as long as that takes, and a tab left open
+//: overnight must not keep knocking at the base delay for the rest of it.
+const WS_RETRY_MIN = 2000,
+  WS_RETRY_MAX = 30000;
+let _wsRetry = WS_RETRY_MIN;
 function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + BASE + 'api/ws');
   const st = document.getElementById('wsState');
+  const down = () => {
+    st.textContent = 'reconnecting';
+    st.className = 'pill bad';
+    setTimeout(connectWS, _wsRetry);
+    _wsRetry = Math.min(_wsRetry * 2, WS_RETRY_MAX);
+  };
+  let ws;
+  try {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + BASE + 'api/ws');
+  } catch (e) {
+    // The constructor throws on a URL it cannot parse, and a connection that
+    // never existed has no close event — so this is the only place left that
+    // can re-arm the retry, and without it the pill says "reconnecting" for
+    // the life of the page while nothing is trying.
+    down();
+    return;
+  }
   ws.onopen = () => {
+    _wsRetry = WS_RETRY_MIN;
     st.textContent = 'live';
     st.className = 'pill ok';
   };
-  ws.onclose = () => {
-    st.textContent = 'reconnecting';
-    st.className = 'pill bad';
-    setTimeout(connectWS, 2000);
-  };
+  ws.onclose = down;
   ws.onmessage = ev => {
-    const e = JSON.parse(ev.data);
+    let e;
+    try {
+      e = JSON.parse(ev.data);
+    } catch (_) {
+      return; // one malformed frame must not take the handler down with it
+    }
     if (e.kind === 'ping') {
       loadDevices();
       scheduleDetail(null);

@@ -477,7 +477,7 @@ def _extract_camel(body: dict[str, Any], keys: list[str], state: dict[str, Any])
             state[key] = body[snake]
 
 
-def _days_left_from_reset(reset_ts: Any, total_days: int = 30) -> int | None:
+def _days_left_from_reset(reset_ts: Any, total_days: int) -> int | None:
     """Compute remaining days from a unix reset timestamp (e.g. sprayResetTime).
 
     Rounded UP, because a part-used day is still a day you have: 19.5 days

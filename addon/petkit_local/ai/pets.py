@@ -16,6 +16,7 @@ cached from PetKit's cloud reports that cloud's id until it re-syncs.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -76,6 +77,14 @@ def _safe_photo_filename(pet_id: int, face_id: str | int, ext: str = "jpg") -> s
         max_length=_MAX_EXT_LENGTH,
     )
     return f"pet_{pet_id}_face_{safe_face_id}.{safe_ext}"
+
+
+# A face photo is hundreds of KB, so this is real blocking I/O on a loop that is
+# also answering devices — the caller hands it to `asyncio.to_thread`.
+def _write_photo(path: str, data: bytes) -> None:
+    """Write a whole face photo (blocking — call via a thread)."""
+    with open(path, "wb") as f:
+        f.write(data)
 
 
 #: How many reference photos one imported pet may bring across. The same cap
@@ -274,8 +283,7 @@ class PetRegistry:
             await self._store.delete_pet_face(face_id)
             return None
         try:
-            with open(path, "wb") as f:
-                f.write(data)
+            await asyncio.to_thread(_write_photo, path, data)
         except OSError:
             # Never leave a row pointing at a file that isn't there: the device
             # would be told to fetch a URL that 404s and would retry forever.

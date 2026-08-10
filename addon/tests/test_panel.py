@@ -13,6 +13,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
+from petkit_local.config import PANEL_LIVE_KEYS
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.devices.ble import BLERegistry
 from petkit_local.web.hub import EventHub
@@ -1108,6 +1109,29 @@ def _proxy_settings_app(tmp=None, store=None):
     app = create_panel_app(DeviceRegistry(), BLERegistry(), EventHub(), cfg, None,
                            live_config=live, event_store=store)
     return app, live
+
+
+@pytest.mark.parametrize("body", ["[1, 2]", '"a string"', "17", "not json at all"])
+async def test_a_body_that_is_not_a_json_object_is_a_bad_request(body):
+    """Every handler reads the body with `.get`, so a list used to arrive there
+    as an AttributeError and answer 500 to a malformed request."""
+    with tempfile.TemporaryDirectory() as tmp:
+        app, _live = _proxy_settings_app(tmp)
+        c = await _mk_client(app)
+        try:
+            r = await c.post("/api/settings", data=body,
+                             headers={"Content-Type": "application/json"})
+            assert r.status == 400
+            assert (await r.json())["error"] == "bad json"
+        finally:
+            await c.close()
+
+
+def test_every_panel_setting_is_one_the_config_reads_back():
+    """A key the panel writes but `PANEL_LIVE_KEYS` omits is applied now and
+    silently dropped at the next start — `apply_panel_overrides` reads only that
+    tuple."""
+    assert set(LIVE_SETTINGS) == set(PANEL_LIVE_KEYS)
 
 
 async def test_settings_expose_every_live_key_with_its_default():

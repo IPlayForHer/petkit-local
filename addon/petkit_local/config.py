@@ -116,6 +116,74 @@ def _supervisor_host_ip() -> str | None:
     return None
 
 
+def _supervisor_port_map() -> dict[str, Any]:
+    """This add-on's container-port -> host-port mapping, via the Supervisor API.
+
+    `config.yaml` asks for `80/tcp: 80`, but the operator can remap any port in
+    the add-on's Network settings, and a device only ever learns where we are
+    from the address we hand it. Keys are the `"80/tcp"` form; a value of None
+    means the port is not published to the host at all.
+
+    Returns `{}` when there is no Supervisor or it answers with nothing usable,
+    which leaves every caller on the mapping `config.yaml` declares.
+    """
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return {}
+    try:
+        req = urllib.request.Request(
+            "http://supervisor/addons/self/info",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            network = json.loads(resp.read()).get("data", {}).get("network")
+    except Exception as e:
+        log.warning("Could not read this add-on's port mapping from the Supervisor "
+                    "(%s); assuming the ports config.yaml asks for", e)
+        return {}
+    return network if isinstance(network, dict) else {}
+
+
+def _published_port(ports: dict[str, Any], container_port: int) -> int | None:
+    """The host port `container_port` is published on, or None if it is not.
+
+    A port the Supervisor did not mention resolves to itself: that is the
+    mapping `config.yaml` asks for, and it is what a standalone run has.
+    """
+    spec = f"{container_port}/tcp"
+    if spec not in ports:
+        return container_port
+    if ports[spec] is None:
+        return None
+    return to_int(ports[spec], None)
+
+
+def _auto_api_url(host_ip: str | None, ports: dict[str, Any], http_port: int) -> str:
+    """The address to hand devices, on the HOST side of the port mapping.
+
+    `apiServers` in `dev_serverinfo` is the only thing that tells a device where
+    this server is, and it is read from outside the container — so it has to
+    carry the port the operator actually published, not the one we listen on. A
+    portless URL means 80, and an add-on remapped to 8080 then advertises an
+    address with nothing behind it (reported by a user running that mapping).
+
+    Empty when the host IP is unknown, which leaves the caller on whatever the
+    options said.
+    """
+    if not host_ip:
+        return ""
+    port = _published_port(ports, http_port)
+    if port is None:
+        log.warning("Container port %d/tcp is not published to the host, so no device "
+                    "can reach the API. Map it in the add-on's Network settings.",
+                    http_port)
+        port = 80
+    if port != 80:
+        log.info("The device API is published on host port %d, so devices will be "
+                 "told to use it.", port)
+    return f"http://{host_ip}/6/" if port == 80 else f"http://{host_ip}:{port}/6/"
+
+
 #: Marks that `show_in_sidebar_once` has already run. Lives in the data
 #: directory because that is what survives a restart and an update.
 SIDEBAR_FLAG_FILENAME = "sidebar_offered.flag"
@@ -178,11 +246,11 @@ class Config:
 
     http_port: int = 80
     mqtt_port: int = 1883
-    # Empty means "auto-detect the host's LAN IP", which is what config.yaml
-    # has always defaulted to and what `resolve_api_url` implements. This used
-    # to be a hardcoded LAN address, so a standalone user who omitted
-    # --api-url pointed their device at whatever happened to live at that
-    # address on their network.
+    #: What a device is told to call, and the only thing that tells it where we
+    #: are. Empty means "auto-detect", which the add-on path resolves from the
+    #: Supervisor's host IP and published port (`_auto_api_url`); a standalone
+    #: run has no such source and needs `--api-url`. An explicit value is used
+    #: verbatim, port and all.
     api_url: str = ""
     data_dir: str = "/data"
     log_level: str = "INFO"
@@ -190,8 +258,9 @@ class Config:
     bucket_port: int = 9000
     #: Where the device is told to upload its photos and video. Empty means
     #: "derive it from `api_url`" — see `resolve_bucket_endpoint`, which runs
-    #: after the CLI flags have been applied. Only the add-on path sets this
-    #: directly, from the host IP the Supervisor reports.
+    #: after the CLI flags have been applied. Set it explicitly when the device
+    #: must upload through a different host, port or TLS-terminating proxy than
+    #: it calls the API on.
     bucket_endpoint: str = ""
 
     # Device-facing MQTT TLS (Aliyun securemode=2). The plain listener stays up
@@ -404,12 +473,15 @@ class Config:
 
         # Device-facing host: an embedded PetKit device can't resolve mDNS
         # (`.local`), so auto-detect the HA host's LAN IP when the option is
-        # empty or an mDNS name. An explicit non-.local value is respected.
+        # empty or an mDNS name. An explicit non-.local value is respected, port
+        # and all — it is the escape hatch for anything the mapping cannot say.
         host_ip = _supervisor_host_ip()
+        ports = _supervisor_port_map()
 
         api_opt = (opts.get("api_url") or "").strip()
         if not api_opt or ".local" in api_opt:
-            c.api_url = f"http://{host_ip}/6/" if host_ip else (api_opt or c.api_url)
+            auto = _auto_api_url(host_ip, ports, c.http_port)
+            c.api_url = auto or api_opt or c.api_url
         else:
             c.api_url = api_opt
 
@@ -417,8 +489,27 @@ class Config:
         # device is derived per request from the URL it reached us on
         # (`Device.resolve_mqtt_host`), so one add-on serves devices that see us
         # under different addresses.
-        if host_ip:
-            c.bucket_endpoint = f"https://{host_ip}:{c.bucket_port}"
+        #
+        # The MQTT port cannot be handed over at all: the firmware dials it from
+        # its own build and no response field overrides that, so a remap here can
+        # only be reported.
+        if c.mqtt_tls and _published_port(ports, c.mqtt_tls_port) != c.mqtt_tls_port:
+            log.warning("Container port %d/tcp is not published on host port %d, and a "
+                        "device dials that port from firmware. TLS MQTT will not "
+                        "connect until the mapping matches.", c.mqtt_tls_port,
+                        c.mqtt_tls_port)
+
+        bucket_opt = (opts.get("bucket_endpoint") or "").strip()
+        if bucket_opt:
+            c.bucket_endpoint = bucket_opt
+        elif host_ip:
+            bucket_port = _published_port(ports, c.bucket_port)
+            if bucket_port is None:
+                log.warning("Container port %d/tcp is not published to the host, so no "
+                            "device can upload media. Map it in the add-on's Network "
+                            "settings, or set the bucket_endpoint option.", c.bucket_port)
+                bucket_port = c.bucket_port
+            c.bucket_endpoint = f"https://{host_ip}:{bucket_port}"
         level = str(opts.get("log_level", "INFO")).upper()
         if level not in LOG_LEVELS:
             log.warning("Option 'log_level' is not one of %s (%r); using INFO",
