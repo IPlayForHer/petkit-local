@@ -14,6 +14,29 @@ def _stored(path) -> dict:
     return json.loads(Path(path).read_text())
 
 
+async def _stored_eventually(path, device_id: str, field: str, want: str,
+                             timeout: float = 5.0) -> None:
+    """Wait for the debounced flusher to put `want` on disk.
+
+    A fixed sleep would be asserting how fast a CI runner is, not what the
+    flusher does: the interval these tests use is 10ms, and one slow scheduling
+    round on a loaded machine is enough to miss it. Polls instead, with a
+    deadline long enough that a failure means the write never happened.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        try:
+            if _stored(path)[device_id][field] == want:
+                return
+        except (OSError, KeyError, json.JSONDecodeError):
+            pass
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(
+                f"{device_id}.{field} never reached {want!r} on disk within {timeout}s; "
+                f"file holds {_stored(path).get(device_id, '(no such device)')!r}")
+        await asyncio.sleep(0.01)
+
+
 def test_create_seeds_settings():
     reg = DeviceRegistry()
     d = reg.get_or_create(petkit_id=1, device_type="t5", serial_number="SN")
@@ -238,8 +261,7 @@ async def test_mark_dirty_coalesces_writes_on_the_event_loop():
                 reg.mark_dirty()
             assert _stored(path)["1"]["firmware"] == "", "writes should be coalesced"
 
-            await asyncio.sleep(0.08)
-            assert _stored(path)["1"]["firmware"] == "943"
+            await _stored_eventually(path, "1", "firmware", "943")
         finally:
             await reg.stop()
 
@@ -252,8 +274,7 @@ async def test_get_or_create_update_reaches_disk_via_the_flusher():
         await reg.start()
         try:
             reg.get_or_create(petkit_id=9, device_type="t5", firmware="944")
-            await asyncio.sleep(0.08)
-            assert _stored(path)["9"]["firmware"] == "944"
+            await _stored_eventually(path, "9", "firmware", "944")
         finally:
             await reg.stop()
 
