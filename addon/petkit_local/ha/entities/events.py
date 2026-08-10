@@ -2,14 +2,14 @@
 
 A sensor answers "what is the state now"; these answer "something just
 happened" (a pet visit, a cleaning cycle, a feed), which is what automations
-actually trigger on. `events/ingest.py::entity_for_event` maps each device
+actually trigger on. `events/normalize.py::entity_for_event` maps each device
 event_type onto one of the entities below and fires it non-retained, so an HA
 restart does not replay a visit that happened yesterday.
 
 `options` is the list of event_types HA will accept: an event_type fired but
 not listed here is rejected by HA, so the two must be kept in step. The device
 event_type strings themselves are not capture-confirmed — see
-`events/ingest.py`'s header for what is.
+`events/normalize.py`'s header for what is.
 
 `ha/categories.py` decides which of these lists a given device type gets.
 """
@@ -38,7 +38,7 @@ FEEDER_EVENTS = [
 #: The W7H's events. No other fountain publishes any: the Bluetooth EverSweets
 #: run no jobs, report no drinking, and cannot reach us at all.
 #:
-#: The keys are fixed by `events/ingest.py::KIND_TO_ENTITY`, which dispatches on
+#: The keys are fixed by `events/normalize.py::KIND_TO_ENTITY`, which dispatches on
 #: the event's KIND — so this is `cleaning_event` even though what it fires is a
 #: water-treatment job. `options` is not: HA silently rejects an event_type not
 #: listed, and the litter list (`work_continue`, `dump_over`, ...) names cycles

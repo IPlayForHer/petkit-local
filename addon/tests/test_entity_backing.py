@@ -24,7 +24,7 @@ from petkit_local.utils.const import DEVICE_TYPES_ALL
 #: telemetry — each is derived at runtime, and named here with what writes it.
 #: Anything NOT in this list must be produced by the model's own parser.
 RUNTIME_DERIVED = {
-    # events/ingest.py::apply_derived_state, from a completed event
+    # events/normalize.py::apply_derived_state, from a completed event
     "lastClean", "lastVisit", "lastFeed", "petWeight",
     # ha/publisher.py::publish_media_ready, when the media pipeline files a clip
     "lastClipPath",

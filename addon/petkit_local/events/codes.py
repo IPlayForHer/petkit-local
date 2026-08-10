@@ -1,6 +1,6 @@
 """The PetKit protocol knowledge base: every event code, topic and enum we know.
 
-This module is DATA, not behaviour. `events/ingest.py` normalizes transports,
+This module is DATA, not behaviour. `events/normalize.py` normalizes transports,
 `events/decode.py` renders values for humans, and both read their meaning from
 here. Keeping it separate is what lets the panel's Debug view show *why* a
 label says what it says: the confidence grade and the firmware provenance are

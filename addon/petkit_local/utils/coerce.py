@@ -3,7 +3,7 @@
 Two problems make this module worth having. First, "parse a scalar, fall back
 instead of raising" had grown three private copies under three naming schemes
 (`_coerce_switch`/`_coerce_number` in `ha/commands.py`, `_as_int`/`_to_float`
-in `events/ingest.py`), each accepting a slightly different set of inputs, so
+in `events/normalize.py`), each accepting a slightly different set of inputs, so
 the same device value could parse in one code path and not in another. Second,
 request handlers call bare `int()` on DEVICE-CONTROLLED input — a device that
 sends a non-numeric `X-Device` id makes `int(x_dev.get("id", 0))` raise
@@ -25,7 +25,7 @@ T = TypeVar("T")
 
 # Deliberately stricter than int()/float(). Both builtins accept `_` digit
 # separators (`int("1_0") == 10`) and non-ASCII digits (`int("١٢٣") == 123`).
-# This codebase has already been bitten by the first one: `events/ingest.py`
+# This codebase has already been bitten by the first one: `events/normalize.py`
 # has to recognise the device's bare token `4_10000001_1784743819` as NOT a
 # number, which `float()` alone gets wrong. Rejecting both here keeps one
 # answer to "is this text a number?" across the codebase. Leading zeros ARE

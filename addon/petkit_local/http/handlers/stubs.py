@@ -157,7 +157,7 @@ async def handle_event_report(request: web.Request) -> web.Response:
     the matching HA `event` entity fires.
 
     `event_type` here is a NUMERIC code string ("9", "10", "5", ...), a
-    different namespace from MQTT's semantic strings; `events/ingest.py`'s
+    different namespace from MQTT's semantic strings; `events/normalize.py`'s
     module docstring has the confirmed mapping table.
 
     Returns:

@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 #: forwarded — the upstream reply is recorded and captured, which is the point of
 #: proxy mode — but the device is always served ours.
 #:
-#: `dev_ble_device` lists the accessories WE have paired (`devices/ble.py`); the
+#: `dev_ble_device` lists the accessories WE have paired (`devices/ble/`); the
 #: cloud's list is PetKit's, which for a taken-over device is empty. Serving the
 #: cloud's answer is therefore always wrong — it would tell the device to forget
 #: every accessory paired here — which is reason enough for this entry.

@@ -256,8 +256,12 @@ window.addEventListener('resize', closeHelp);
 
 document.querySelectorAll('nav button').forEach(b =>
   b.addEventListener('click', () => {
-    document.querySelectorAll('nav button').forEach(x => x.classList.remove('on'));
+    document.querySelectorAll('nav button').forEach(x => {
+      x.classList.remove('on');
+      x.setAttribute('aria-selected', 'false');
+    });
     b.classList.add('on');
+    b.setAttribute('aria-selected', 'true');
     ['devices', 'timeline', 'pets', 'provision', 'log', 'capture', 'patchers', 'setup'].forEach(t =>
       document.getElementById('tab-' + t).classList.toggle('hidden', t !== b.dataset.tab),
     );

@@ -5,7 +5,7 @@ to JSONL files under the capture directory. Each line is one timestamped record.
 This is the fastest way to turn a first real-device session into concrete
 `state_parsers` / bridge tuning instead of guessing.
 
-**A capture is SENSITIVE and is never redacted.** Redaction (`http/redact.py`)
+**A capture is SENSITIVE and is never redacted.** Redaction (`http/redact/`)
 sanitises what is sent *to a device*; it does not touch what is written here,
 because the whole value of a capture is that it is verbatim. What each stream
 can contain:

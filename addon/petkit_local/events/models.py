@@ -5,12 +5,12 @@ The schema is deliberately denormalized and JSON-loose (`content_json`,
 only the fields we have confirmed get a column and the untouched payload is
 kept beside them — the same philosophy `devices/state_parsers.py` applies to
 state_report parsing. Recomputing a derived column from the raw JSON later is
-then a backfill (`events/ingest.py::backfill_event_rows`), not a data loss.
+then a backfill (`events/migrations.py::backfill_event_rows`), not a data loss.
 
 What the rows MEAN on the wire — `event_uid` versus `related_event` as a
 SESSION key, the numeric `dev_event_report` `event_type` codes, the
 `moduleType` -> `category` mapping — is documented once, in
-`events/ingest.py`'s module docstring. It is the authoritative reference and
+`events/normalize.py`'s module docstring. It is the authoritative reference and
 is not repeated here.
 
 These models describe a table set that is already deployed, so column names,
@@ -43,7 +43,7 @@ class Base(DeclarativeBase):
 class Event(Base):
     """One report from a device.
 
-    Written from two transports that `events/ingest.py` normalizes to the same
+    Written from two transports that `events/normalize.py` normalizes to the same
     shape: a `dev_event_report` POST (HTTP, from the device's `cloud` process,
     whose `event_type` is a numeric code string) and an MQTT `thing/event/*`
     message (from `ctrl`, whose `event_type` is a semantic name).
@@ -110,7 +110,7 @@ class Media(Base):
     update rather than a duplicate.
 
     `category` is derived from `module_type`, never stored as sent — see
-    `events/ingest.py::_MODULE_TYPE_TO_CATEGORY`. It matters more than it
+    `events/normalize.py::_MODULE_TYPE_TO_CATEGORY`. It matters more than it
     looks: video arrives as many ~4s chunks sharing one `related_event`, and
     two different streams (the main recording and its low-res timelapse) cover
     the same span, so `media/stitch.py` keys an episode on category as well.
@@ -152,7 +152,7 @@ class BlockedAttempt(Base):
     """Something the real cloud tried to do to a device, and did not get to do.
 
     Written only in proxy mode, by the redaction layer's blocking rules
-    (`http/redact.py::BLOCKING_RULES`): a shell command, a firmware push, or an
+    (`http/redact/rules.py::BLOCKING_RULES`): a shell command, a firmware push, or an
     attempt to re-credential the device. Deliberately NOT the routine address
     substitutions: the device re-polls `dev_serverinfo`, `dev_device_info` and
     its STS block on their own timers, so recording each `apiServers`,
@@ -186,7 +186,7 @@ class BlockedAttempt(Base):
     # by construction. Left open so a future source that cannot attribute a
     # blocked attempt records it rather than dropping it.
     device_id: Mapped[int | None] = mapped_column(Integer)
-    #: One of `http/redact.py`'s blocking rule names ("rce", "ota", "secret").
+    #: One of `http/redact/`'s blocking rule names ("rce", "ota", "secret").
     kind: Mapped[str | None] = mapped_column(Text)
     #: "http" or "mqtt" — which side of the proxy caught it.
     transport: Mapped[str | None] = mapped_column(Text)

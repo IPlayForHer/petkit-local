@@ -26,7 +26,7 @@ from petkit_local.utils.const import device_display_name
 from petkit_local.utils.paths import sanitize_filename
 
 # Media role (the `category` column, derived from moduleType by
-# events/ingest.py::_MODULE_TYPE_TO_CATEGORY) -> folder name. NOT keyed by the
+# events/normalize.py::_MODULE_TYPE_TO_CATEGORY) -> folder name. NOT keyed by the
 # STS capability: several roles share one capability, and they must not share
 # a folder.
 ROLE_FOLDERS = {
@@ -44,7 +44,7 @@ ROLE_FOLDERS = {
     # footage per ~4s of wall clock, i.e. a ~4x TIME-LAPSE of the same span
     # the main recording covers — not a low-res mirror, which is why it looks
     # "sped up". Kept apart so it never mixes with the main stream. See
-    # events/ingest.py::_MODULE_TYPE_TO_CATEGORY.
+    # events/normalize.py::_MODULE_TYPE_TO_CATEGORY.
     "cloudDouble": "Timelapse",
 }
 
@@ -62,13 +62,13 @@ def role_folder(category: str) -> str:
 
     Deliberately never raises: an unrecognised category must still produce a
     browsable file (the loud complaint about it happens once, at ingest — see
-    events/ingest.py::_resolve_category).
+    events/normalize.py::_resolve_category).
     """
     return ROLE_FOLDERS.get(category, "Other")
 
 
 # content flags (as seen on file_info entries, mirrored on
-# event_report.content — see events/ingest.py::classify_event_kind) -> a
+# event_report.content — see events/normalize.py::classify_event_kind) -> a
 # human label for the filename.
 # Order matters: `toiletEvent` (the box was actually used) outranks
 # `petEvent` (the pet was merely seen and recorded). A chunk from an

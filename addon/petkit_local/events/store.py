@@ -271,7 +271,7 @@ class EventStore:
         Every write method commits on its own, which is right for the one-row
         writes the device drives but wrong for a pass that rewrites thousands
         of rows: that pays an fsync each time and leaves the table half-updated
-        if it dies midway. Used by `events/ingest.py::backfill_event_rows`.
+        if it dies midway. Used by `events/migrations.py::backfill_event_rows`.
         """
         await self._ensure_connected()
         async with self._write_lock:
@@ -655,7 +655,7 @@ class EventStore:
         Every row gains a synthetic `"media"` key holding the media rows that
         share its `related_event` (always a list, possibly empty). Session
         grouping - visit plus its sub-events - is NOT done here but by
-        `events/ingest.py::group_sessions` on top of this result, keeping the
+        `events/sessions.py::group_sessions` on top of this result, keeping the
         grouping heuristic out of SQL where it stays readable and testable.
         """
         stmt = select(Event)

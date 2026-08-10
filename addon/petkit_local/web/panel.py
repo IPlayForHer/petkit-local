@@ -1514,7 +1514,7 @@ async def api_timeline(request: web.Request) -> web.Response:
     """Grouped visit sessions for one LOCAL day, with their media.
 
     `GET /api/timeline?device=&filter=&date=`; grouping is
-    events/ingest.py::group_sessions. Answers
+    events/sessions.py::group_sessions. Answers
     `{"date", "tz_offset", "counts", "sessions"}`: `counts` is per filter chip
     and is computed BEFORE filtering, so the chips keep showing their totals
     while one of them is active. Sessions are grouped in Python at query time

@@ -102,7 +102,7 @@ def build_tls_context() -> ssl.SSLContext:
 
     What this does NOT weaken, because none of it rests on the server's
     identity: the OTA push is blocked on arrival (`_block_ota`), every
-    downstream frame is redacted by content (`http/redact.py`), and only frames
+    downstream frame is redacted by content (`http/redact/`), and only frames
     a device originates go up (`_is_from_device`). What it does cost is real —
     anything on the path can pose as the cloud and have its `thing/service/*`
     commands relayed down to the box — and that is the accepted trade for

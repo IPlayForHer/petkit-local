@@ -88,7 +88,7 @@ def device_field(request: web.Request, name: str) -> str | None:
     """One identity field, from whichever of the three places carries it.
 
     Header, then query string, then the urlencoded POST body
-    (``request["form"]``, filled by ``http/middleware.py``). The first two are
+    (``request["form"]``, filled by ``http/middleware/``). The first two are
     the Ingenic models; the third is the only one an ESP32 feeder uses, which
     is why it exists — see `parse_form_body`.
 
@@ -106,7 +106,7 @@ def device_id(request: web.Request) -> int | None:
     """Return the requesting device's petkit id, or None if unidentifiable.
 
     Reads the X-Device header first (parsed into ``request["x_device"]`` by
-    ``http/middleware.py``), then the ``id`` query parameter, then the ``id``
+    ``http/middleware/``), then the ``id`` query parameter, then the ``id``
     field of an urlencoded POST body.
 
     Returns:

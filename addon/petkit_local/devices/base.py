@@ -42,7 +42,7 @@ class Refused(ValueError):
     away, which is the silent failure that refusing was supposed to avoid.
 
     Lives here rather than in `ha/commands.py` because a BLE accessory refuses
-    writes too (`devices/ble.py`), and `devices/` cannot import `ha/`. Two
+    writes too (`devices/ble/`), and `devices/` cannot import `ha/`. Two
     classes of one name reaching the same `except` in `web/panel.py` is the
     trap this avoids.
     """
@@ -279,7 +279,7 @@ class Device:
         """Whether this model has no network of its own.
 
         True means this `Device` should not exist: the real thing pairs over
-        BLE to a WiFi device that relays for it (`devices/ble.py`), so it can
+        BLE to a WiFi device that relays for it (`devices/ble/`), so it can
         neither sign up nor hold credentials nor poll. Read by
         `registry.get_or_create`, which warns rather than refuses -- a device
         is never told no. Nothing else branches on it: one that cannot arrive
@@ -381,7 +381,7 @@ class Device:
 
         Proxy mode's whole point is seeing real cloud replies, so when a proxied
         `dev_signup` reveals the device's genuine secret it is adopted here
-        (`http/middleware.py::_remember_upstream_credentials`) and handed on
+        (`http/middleware/proxy.py::_remember_upstream_credentials`) and handed on
         unchanged. The device then signs with a credential PetKit accepts, and
         we never had to reproduce the signature algorithm — the device computes
         it. Note this is NOT `mqtt_device_secret`: the real cloud issues two

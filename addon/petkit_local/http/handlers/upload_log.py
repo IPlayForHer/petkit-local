@@ -40,7 +40,7 @@ from petkit_local.utils.coerce import to_int
 log = logging.getLogger(__name__)
 
 #: What the cloud answers `dev_upload_log` with: a bare STRING result, not the
-#: usual object (captured 2026-07-27). `http/redact.py` sends the same literal.
+#: usual object (captured 2026-07-27). `http/redact/` sends the same literal.
 UPLOAD_LOG_DONE = {"result": "success"}
 
 #: "No token issued." The device's own log confirms it takes the hint rather

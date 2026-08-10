@@ -1,11 +1,11 @@
 """Proxy mode: forward device requests to the official PetKit API server.
 
 This is the observation mode, and since the rework it forwards EVERYTHING —
-`http/middleware.py::proxy_middleware` runs it for every `/6/` request, not just
+`http/middleware/proxy.py::proxy_middleware` runs it for every `/6/` request, not just
 the handful nobody implemented. A device therefore runs against the real cloud
 while its whole conversation passes through us.
 
-What the device is allowed to receive back is not decided here: `http/redact.py`
+What the device is allowed to receive back is not decided here: `http/redact/`
 owns that, and this module only carries bytes and reports what happened. The
 split matters because the MQTT bridge needs the same rules on frames that never
 touch HTTP.
@@ -59,7 +59,7 @@ log = logging.getLogger(__name__)
 #: like them. Which one holds a given device is decided when the device is
 #: registered, not by where its owner lives; PetKit moves a device between them
 #: through `dev_serverinfo`'s `apiServers`, which redaction blocks from reaching
-#: it (`http/redact.py`).
+#: it (`http/redact/`).
 UPSTREAM_PRESETS = {
     "petkit-eu": "https://api-eu.petkt.com/6/",
     "petkit-americas": "https://api.petkt.com/6/",
@@ -283,7 +283,7 @@ async def forward(
             because it also needs the bytes for capture and because the local
             handler must be free to read the (cached) payload itself.
         upstream: A base URL from `resolve_upstream` — scheme and host only.
-        policy: What the reply may contain, see `http/redact.py`.
+        policy: What the reply may contain, see `http/redact/`.
         dns_server: `proxy_dns`, for a LAN whose own DNS answers PetKit's names
             with this add-on. Empty uses the system resolver. See `http/dns.py`.
 

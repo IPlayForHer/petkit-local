@@ -1,7 +1,7 @@
 """Device registry: in-memory device state plus crash-safe JSON persistence.
 
 Also home to `PersistedRegistry`, the debounced writer shared with
-`devices/ble.py` — see its docstring for why both registries need it.
+`devices/ble/` — see its docstring for why both registries need it.
 """
 from __future__ import annotations
 

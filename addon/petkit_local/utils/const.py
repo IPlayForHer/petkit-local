@@ -57,7 +57,7 @@ DEVICE_TYPES_ALL = DEVICE_TYPES_LITTER | DEVICE_TYPES_FEEDER | DEVICE_TYPES_WATE
 # Models with no network of their own. They pair over BLE to a WiFi device --
 # a litter box or a feeder -- which relays for them, so they never sign up, never
 # hold MQTT credentials and never poll a heartbeat. Their readings arrive inside
-# their parent's traffic (`devices/ble.py`), and a `Device` for one of these
+# their parent's traffic (`devices/ble/`), and a `Device` for one of these
 # codenames means something went wrong upstream, not that a new model appeared.
 #
 # The fountains were listed as network devices because PetKit's cloud API models

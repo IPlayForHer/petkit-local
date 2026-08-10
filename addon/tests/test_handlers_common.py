@@ -210,7 +210,7 @@ def test_no_device_response_shape():
 # --- the third source: an urlencoded POST body ------------------------------
 #
 # Some models send no `X-Device` and no query string at all — a Feeder D4 puts
-# its whole identity in the body. `http/middleware.py` parses it once into
+# its whole identity in the body. `http/middleware/` parses it once into
 # `request["form"]` so these accessors can stay synchronous.
 
 def test_identity_can_come_from_the_body_alone():

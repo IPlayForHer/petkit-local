@@ -16,7 +16,7 @@ Three rules that reading the handlers alone will not reveal:
   purpose; aiohttp matches in registration order, so anything added after it
   would be unreachable.
 * **Proxy mode is not visible here.** Forwarding to the real PetKit cloud is a
-  middleware (`http/middleware.py::proxy_middleware`), not a branch in any
+  middleware (`http/middleware/proxy.py::proxy_middleware`), not a branch in any
   handler: it wraps every route including the catch-all, so a handler is written
   as though only the local answer existed.
 """

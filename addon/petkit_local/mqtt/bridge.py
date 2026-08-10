@@ -14,7 +14,7 @@ single most important thing to know here: anything that escapes per-message
 handling takes down the bridge for all devices at once (see `_consume`).
 
 The device-side event_type strings this module dispatches on (`pet_in`,
-`clean_over`, ...) are NOT capture-confirmed — see `events/ingest.py`'s header
+`clean_over`, ...) are NOT capture-confirmed — see `events/normalize.py`'s header
 for what is. An unrecognised one degrades to "record it, publish state" rather
 than failing.
 """
@@ -127,7 +127,7 @@ def _event_content(params: dict) -> dict:
     return c if isinstance(c, dict) else {}
 
 # Which HA `event` entity an event fires now lives in
-# `events/ingest.py::entity_for_event`. It used to be a literal map of MQTT
+# `events/normalize.py::entity_for_event`. It used to be a literal map of MQTT
 # topic names here, which the HTTP handler imported too — and which silently
 # never matched there, because over HTTP `event_type` is a numeric code rather
 # than a name. Resolving through `codes.lookup` handles both namespaces and

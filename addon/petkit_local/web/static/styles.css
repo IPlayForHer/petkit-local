@@ -1,3 +1,29 @@
+/* PetKit Local — the web panel's only stylesheet.
+ *
+ * One file on purpose. The panel is served over plain HTTP/1.1 (aiohttp, and
+ * HA Ingress in front of it), so every extra stylesheet is another serialised
+ * round trip, and `asset_version()` in web/panel.py hashes this file by name
+ * to cache-bust it.
+ *
+ * Sections, in order — the same names the JS uses for its own:
+ *
+ *   TOKENS        colours and the one layout variable, light and dark
+ *   BASE          reset, typography, links, the shared .row/.col/.sw/.stbl
+ *   CONTROLS      buttons, inputs, switches
+ *   DEVICE PANELS one collapsible <details> per device
+ *   SCHEDULES     the editors inside a device panel
+ *   AI / PETS     the pet list, its mugshots and the face cropper
+ *   LOG           the live traffic view and the device-log viewer
+ *   TIMELINE      the day view, its time gutter and media tiles
+ *   MODAL         the media lightbox
+ *   RESPONSIVE    the narrow-screen overrides that are not inline above
+ *   HELP          the `?` popover, parented to <body>
+ *
+ * Prettier-formatted, and CI checks it:
+ *   npx prettier@3 --write addon/petkit_local/web/static/styles.css
+ */
+
+/* ==== TOKENS ==== */
 :root {
   color-scheme: light dark;
   /* Timeline time column. Overridden to a wider value by `sizeTimeColumn()` in
@@ -26,6 +52,7 @@
     --line: #2a2f36;
   }
 }
+/* ==== BASE ==== */
 * {
   box-sizing: border-box;
 }
@@ -278,11 +305,63 @@ pre {
   flex: 1;
   min-width: 280px;
 }
+
+/* toggle */
+.sw {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex: none;
+}
+.sw input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.sw .sl {
+  position: absolute;
+  inset: 0;
+  background: var(--line);
+  border-radius: 999px;
+  transition: 0.15s;
+  cursor: pointer;
+}
+.sw .sl:before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: 0.15s;
+}
+.sw input:checked + .sl {
+  background: var(--ok);
+}
+.sw input:checked + .sl:before {
+  transform: translateX(18px);
+}
+.stbl td:first-child {
+  color: var(--mut);
+}
+.stbl td:nth-child(2) {
+  font-weight: 600;
+  text-align: right;
+}
+.stbl td:nth-child(3) {
+  color: var(--mut);
+  font-size: 11px;
+  text-align: right;
+}
 /* Deliberately NOT element-qualified. These were `button.act` etc., and the
    Device-logs download is an <a> (its href is built at runtime) — so it wore
    the same classes as the Live-traffic download button and rendered as a bare
    blue link next to it. Two identical labels, two different-looking controls.
    `display:inline-block` is what makes the <a> take the padding. */
+/* ==== CONTROLS ==== */
 .act,
 .ghost,
 .mini {
@@ -402,6 +481,7 @@ a:hover {
   gap: 12px;
   white-space: nowrap;
 }
+/* ==== DEVICE PANELS ==== */
 /* device panels — one collapsible <details> per device, all expanded by
    default. Replaces a grid of summary cards plus a single shared detail pane:
    with one pane the open state of everything inside it was lost on every
@@ -474,6 +554,7 @@ a:hover {
   letter-spacing: 0.4px;
   color: var(--mut);
 }
+/* ==== SCHEDULES ==== */
 /* Columns, not a stack. Every schedule box is a few short rows, so stacked full
    width they were content in the top-left corner of a very wide empty
    rectangle, five times over. `auto-fill` gives three columns on a desktop, two
@@ -730,7 +811,7 @@ a:hover {
   width: auto;
   min-width: 110px;
 }
-/* ---- AI / Pets ---- */
+/* ==== AI / PETS ==== */
 .newpet {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -1066,93 +1147,46 @@ a:hover {
     height: 84px;
   }
 }
-/* The recognised pet on a timeline card — a sibling of .tl-kind, not a
-   different kind of object: same flat tint, same capsule, no border. Only
-   the avatar and a readable name size differ, since a pet's name is content
-   rather than a category label.
-
-   inline-BLOCK, not inline-flex: an inline-flex box takes its baseline from
-   its first flex item, which here is the avatar, so the whole pill was
-   aligned by the image's bottom edge and floated visibly above the text.
-   As an inline-block it aligns on its own last line box — the name — exactly
-   like .tl-kind does. */
-.tl-pet {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(127, 127, 127, 0.14);
-  color: var(--fg);
-  margin-right: 7px;
-  white-space: nowrap;
-  vertical-align: 1px;
-}
-.tl-pet:has(img) {
-  padding-left: 2px;
-}
-.tl-pet img {
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  object-fit: cover;
-  margin-right: 5px;
-  vertical-align: -3px;
-}
-/* toggle */
-.sw {
-  position: relative;
-  width: 40px;
-  height: 22px;
-  flex: none;
-}
-.sw input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-  position: absolute;
-}
-.sw .sl {
-  position: absolute;
-  inset: 0;
-  background: var(--line);
-  border-radius: 999px;
-  transition: 0.15s;
-  cursor: pointer;
-}
-.sw .sl:before {
-  content: '';
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  left: 3px;
-  top: 3px;
-  background: #fff;
-  border-radius: 50%;
-  transition: 0.15s;
-}
-.sw input:checked + .sl {
-  background: var(--ok);
-}
-.sw input:checked + .sl:before {
-  transform: translateX(18px);
-}
-.stbl td:first-child {
-  color: var(--mut);
-}
-.stbl td:nth-child(2) {
-  font-weight: 600;
-  text-align: right;
-}
-.stbl td:nth-child(3) {
-  color: var(--mut);
-  font-size: 11px;
-  text-align: right;
-}
-/* log */
+/* ==== LOG ==== */
 .log {
   font-family: ui-monospace, monospace;
   font-size: 12px;
+}
+/* The scrolling viewport around a log. Both logs use it; the Device-logs one is
+   shorter because its card sits under the live one. */
+.log.pane {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.devlog .log.pane {
+  max-height: 50vh;
+}
+/* A card's title row: controls on one line with the heading, tight to the body
+   below it. */
+.row.head {
+  margin-bottom: 8px;
+  align-items: center;
+}
+.row.head h3 {
+  margin: 0;
+}
+/* Controls that must not take a whole flex row of their own — a checkbox and
+   its label, a picker, a grep box. `.col`'s 280px minimum is for form fields. */
+.row.head label,
+.row.head select {
+  width: auto;
+}
+.row.head label input[type='checkbox'] {
+  width: auto;
+  vertical-align: middle;
+}
+.row.head input[type='text'],
+.row.head input:not([type]) {
+  width: auto;
+  flex: 1;
+  min-width: 140px;
 }
 .log .l {
   border-bottom: 1px solid var(--line);
@@ -1284,6 +1318,41 @@ details.adv summary {
   font-size: 13px;
   padding: 4px 0;
 }
+/* The recognised pet on a timeline card — a sibling of .tl-kind, not a
+   different kind of object: same flat tint, same capsule, no border. Only
+   the avatar and a readable name size differ, since a pet's name is content
+   rather than a category label.
+
+   inline-BLOCK, not inline-flex: an inline-flex box takes its baseline from
+   its first flex item, which here is the avatar, so the whole pill was
+   aligned by the image's bottom edge and floated visibly above the text.
+   As an inline-block it aligns on its own last line box — the name — exactly
+   like .tl-kind does. */
+.tl-pet {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.14);
+  color: var(--fg);
+  margin-right: 7px;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+.tl-pet:has(img) {
+  padding-left: 2px;
+}
+.tl-pet img {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-right: 5px;
+  vertical-align: -3px;
+}
+
+/* ==== TIMELINE ==== */
 /* timeline — a left time-gutter with the content column beside it, so
    timestamps line up and scan down the edge (like the official app).
    The feed is a capped, centred column (like the app's phone-width column):
@@ -1664,7 +1733,7 @@ table.tl-dbgt td:first-child {
   background: rgba(239, 68, 68, 0.16);
   color: var(--bad);
 }
-/* media modal */
+/* ==== MODAL ==== */
 .modal {
   position: fixed;
   inset: 0;
@@ -1694,6 +1763,7 @@ table.tl-dbgt td:first-child {
     margin-top: 8px;
   }
 }
+/* ==== RESPONSIVE ==== */
 @media (max-width: 560px) {
   main {
     padding: 12px;
@@ -1726,6 +1796,23 @@ table.tl-dbgt td:first-child {
   background: #0d9488;
 }
 
+/* Provisioning form: labels that own their line, and the button row under them. */
+.field-label {
+  display: block;
+  margin-top: 8px;
+}
+.form-actions {
+  margin-top: 12px;
+}
+#p-log {
+  margin-top: 10px;
+}
+/* The modal's dismiss button, out of the content flow in the top-right. */
+.modal-close {
+  float: right;
+}
+
+/* ==== HELP ==== */
 /* Inline help: a `?` beside a label, and the popover it opens. The popover is
    parented to <body> (see `help()` in app.js), so it must out-stack every card
    and the sticky nav. */

@@ -2,24 +2,17 @@
 
 Device payloads (state reports, MQTT properties, event/media metadata) are
 untrusted JSON: a level may be missing, may be an explicit ``null``, or may be
-a scalar where a sub-object was expected. Three near-identical private helpers
-grew for this, one per package, with subtly different semantics — this module
-is the single implementation they collapse into:
+a scalar where a sub-object was expected. Every package needs the same three
+traversals, and this is the one implementation of them: :func:`dig` for a
+nested lookup, :func:`dig_path` for a dotted one, and :func:`first_of` for a
+field the device spells several ways in the same payload.
 
-============================================  ==================================
-Existing helper                               Replacement
-============================================  ==================================
-``devices/state_parsers.py::_safe_get``       :func:`dig`
-``web/panel.py::_resolve_path``               :func:`dig_path`
-``events/ingest.py::_first``                  :func:`first_of`
-============================================  ==================================
-
-``events/ingest.py``'s ``_content_of`` / ``_as_dict`` are deliberately NOT
+``events/normalize.py``'s ``_content_of`` / ``_as_dict`` are deliberately NOT
 covered here: they parse JSON *strings* (including the bare-token repair for
 the device's invalid JSON), which is decoding, not traversal.
 
-**Absent vs. present-but-None.** The two are not the same and the existing
-helpers already distinguish them, so this module preserves that exactly:
+**Absent vs. present-but-None.** The two are not the same, and every function
+here distinguishes them:
 
 * :func:`dig` / :func:`dig_path` test *key presence*, so a key that is present
   with an explicit ``null`` yields ``None`` — the reported value — and never
@@ -41,8 +34,6 @@ from typing import Any
 
 def dig(data: Any, *keys: Any, default: Any = None) -> Any:
     """Descend through nested mappings, returning ``default`` on any miss.
-
-    Replaces ``devices/state_parsers.py::_safe_get``.
 
     Args:
         data: Any value; only mappings can be descended into.
@@ -71,13 +62,11 @@ def dig_path(data: Any, path: str, default: Any = None) -> Any:
     This is the form entity ``value_path`` definitions are written in, so the
     panel can resolve the same string HA's value_template reads.
 
-    Replaces ``web/panel.py::_resolve_path``.
-
     Args:
-        path: Dot-separated keys. An empty path yields ``default`` (matching
-            ``_resolve_path``), rather than ``data`` as ``dig()`` with no keys
-            would — an entity with no ``value_path`` has no value, it does not
-            have the whole document as its value.
+        path: Dot-separated keys. An empty path yields ``default``, rather than
+            ``data`` as ``dig()`` with no keys would — an entity with no
+            ``value_path`` has no value, it does not have the whole document as
+            its value.
 
     Returns:
         The value at ``path``, or ``default``. Explicit ``None`` values are

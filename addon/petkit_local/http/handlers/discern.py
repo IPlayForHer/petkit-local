@@ -128,7 +128,7 @@ async def handle_discern_config(request: web.Request) -> web.Response:
     `content.score_info[].score`, which is a face-match similarity on a wholly
     different scale (values to 1846 against this threshold of 25). Confusing
     the two is exactly how this endpoint was misread; see
-    `events/ingest.py::_extract_pet_ref`.
+    `events/normalize.py::_extract_pet_ref`.
     """
     device = request_device(request)
     _note_ai_capable(request, device)

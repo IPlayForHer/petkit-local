@@ -241,7 +241,7 @@ def test_superset_of_ha_commands_helpers():
 
 def test_underscore_narrowing_is_deliberate():
     """The one place these helpers accept LESS than the bare `int()`/`float()`
-    calls they replaced: underscore digit separators. `events/ingest.py` has to
+    calls they replaced: underscore digit separators. `events/normalize.py` has to
     recognise the device's bare token `4_10000001_1784743819` as NOT a number,
     which is exactly what `float()` gets wrong."""
     assert float("1_0") == 10.0        # what the replaced helpers did

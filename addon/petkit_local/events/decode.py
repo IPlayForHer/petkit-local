@@ -531,7 +531,7 @@ def summary_bits(event_type: str | None,
         bits.append(f"litter {level:g}%")
     # Yowling. PetKit frames meowing in the box as a possible sign of physical
     # discomfort, so it belongs on the card rather than buried in Debug — and
-    # `events/ingest.py::_filter_buckets` also files such a visit under the
+    # `events/sessions.py::_filter_buckets` also files such a visit under the
     # Health alert chip. The duration comes from the spans when they parse;
     # `petVoice` alone still says it happened.
     if to_int(content.get("petVoice"), 0):

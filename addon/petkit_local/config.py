@@ -283,7 +283,7 @@ class Config:
     capture: bool = False
 
     # Proxy mode: forward every device request to the real PetKit cloud and
-    # answer with its reply, redacted (`http/redact.py`). All panel-only.
+    # answer with its reply, redacted (`http/redact/`). All panel-only.
     proxy_mode: bool = False
     #: A key of `http/proxy.py::UPSTREAM_PRESETS`, a full URL, or "" for
     #: `proxy.DEFAULT_UPSTREAM`.

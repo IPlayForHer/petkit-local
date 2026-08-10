@@ -13,7 +13,7 @@ from collections import OrderedDict, deque
 from typing import Any, Container
 
 #: Cap on one MQTT payload in the live log. Same reasoning as
-#: `http/middleware.py::_short`: the ring holds these in memory and ships every
+#: `http/middleware/logging.py::_short`: the ring holds these in memory and ships every
 #: one of them to every open browser.
 _PAYLOAD_LIMIT = 4000
 
