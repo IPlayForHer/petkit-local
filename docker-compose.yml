@@ -5,17 +5,38 @@
 # add-on store at all, and this file is that path: the same image, the same
 # features, configured from the command line instead of an options screen.
 #
-#   docker compose up -d --build
+#   docker compose up -d
 #
-# Needs BuildKit, which Compose uses by default and Docker has used since 23.
-# On a very old daemon, export DOCKER_BUILDKIT=1 first. See the Dockerfile
-# header for why the per-architecture base cannot fall back safely without it.
+# Two values are yours to set, and they live in `.env` rather than in this
+# file — so they stay out of the repository and a `git pull` never conflicts
+# with them. Compose refuses to start until both are there:
 #
-# Change the two CHANGE-ME values before starting. Nothing else is required.
+#   cp .env.example .env && $EDITOR .env
+#
+# Nothing else is required.
 
 services:
   petkit-local:
-    build: ./addon
+    # Published by .github/workflows/publish.yml, and the same image the
+    # Home Assistant app pulls. One multi-architecture package covering amd64,
+    # arm64 and armv7, so Docker picks the right platform on its own — you do
+    # not choose one.
+    #
+    #   :latest   the newest release
+    #   :2.0.0    a release you pin, so nothing moves until you say so
+    #   :dev      the last commit on main. Untested by definition; use it to try
+    #             a fix before it ships, with `docker compose up -d --pull always`
+    #             (a moving tag is cached by digest, so Compose will not refetch
+    #             it on its own).
+    image: ghcr.io/alex-so-3/petkit-local:latest
+    #
+    # To build it yourself instead — a local change, or an architecture nobody
+    # publishes — comment out the line above and uncomment this, then
+    # `docker compose up -d --build`. Needs BuildKit, which Compose uses by
+    # default and Docker has used since 23; on a very old daemon export
+    # DOCKER_BUILDKIT=1 first. The Dockerfile header explains why the
+    # per-architecture base cannot fall back safely without it.
+    # build: ./addon
     container_name: petkit-local
     restart: unless-stopped
 
@@ -79,18 +100,16 @@ services:
       - -m
       - petkit_local.main
       - --data-dir=/data
-      # The address the DEVICE will call, and the most important line in this
-      # file. It must be an IP or a name the device itself can resolve — most
-      # PetKit hardware cannot resolve .local names — and it is burned in at
-      # provisioning, so pick one that will not move. The port here must match
-      # the host side of the mapping above.
+      # The address the DEVICE will call, and the most important value in
+      # this setup — see `.env.example` for what it has to be. The port in it
+      # must match the host side of the mapping above.
       #
       # Three things are derived from it, so a wrong value fails in three
       # places: the API address itself, the MQTT broker the device is told to
       # connect to, and the bucket it uploads photos and video to. Leave the
       # host out and there is nothing to derive them from — media uploads in
       # particular then have nowhere to go, and the add-on says so at startup.
-      - --api-url=http://CHANGE-ME/6/
+      - --api-url=${PETKIT_API_URL:?not set. Copy .env.example to .env and fill it in.}
       # Optional: override the derived https://<api-host>:9000 media upload URL.
       # Use this when devices must upload through a different hostname, port or
       # TLS-terminating proxy than the API host.
@@ -101,7 +120,7 @@ services:
       # Your Home Assistant MQTT broker, so entities appear via MQTT discovery.
       # Drop these two lines (or pass --no-ha) to run with no Home Assistant at
       # all: the web panel and the local cloud work regardless.
-      - --ha-mqtt-host=CHANGE-ME
+      - --ha-mqtt-host=${PETKIT_HA_MQTT_HOST:?not set. Put it in .env, or delete this line to run without Home Assistant.}
       - --ha-mqtt-port=1883
       # Uncomment if your broker requires credentials.
       # - --ha-mqtt-user=petkit

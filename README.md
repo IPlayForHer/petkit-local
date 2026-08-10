@@ -204,12 +204,17 @@ Apps need the Supervisor, so the app store only exists on Home Assistant OS and 
 Everywhere else this runs as an ordinary container — same image, same features, configured on the
 command line instead of from an options screen.
 
-`docker-compose.yml` in the repository root is ready to use. Set the two `CHANGE-ME` values — the
-address your devices will call, and your MQTT broker — and start it:
+`docker-compose.yml` in the repository root pulls the published image, so there is nothing to
+build. Two values are yours to set — the address your devices will call, and your MQTT broker — and
+they live in `.env` so they stay out of the repository:
 
 ```sh
-docker compose up -d --build
+cp .env.example .env   # then edit the two values in it
+docker compose up -d
 ```
+
+Compose refuses to start until both are filled in. To build from source instead, the compose file
+has the line to uncomment.
 
 The panel is then on port 8099. Note that it has **no authentication** of its own: as an app
 it sits behind Home Assistant Ingress, and there is no Ingress here. The compose file explains how

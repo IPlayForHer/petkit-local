@@ -83,6 +83,38 @@ larger change are collected in [`AGENTS.md`](AGENTS.md), which points at the
 module docstrings that document each one in full. (Every coding agent reads that
 file; `CLAUDE.md` is a two-line stub that imports it.)
 
+## Releasing
+
+Images are published to GHCR by `.github/workflows/publish.yml` as a single
+multi-architecture package, `ghcr.io/alex-so-3/petkit-local`. That is what the
+add-on documentation asks for — a per-architecture name with `{arch}` in it is
+described there as a compatibility fallback — and it is also the only shape
+docker-compose can use, since Compose has no `{arch}` substitution.
+
+`addon/config.yaml`'s `image:` key is what makes the Supervisor pull that
+package instead of building the Dockerfile on the user's machine. It pulls
+`<image>:<version>`, taking the version from the same file.
+
+**A push to `main` publishes `dev` and `sha-<short>` only.** `dev` always points
+at the last commit, which is what makes it useful for trying a change before it
+ships; `sha-<short>` never moves, so a specific build can be pinned while
+bisecting. The version tag is what the Supervisor pulls, so it is a promise that
+the version is released, and it is cut by a git tag and nothing else. The workflow refuses a `v*` tag whose
+version does not match `addon/config.yaml`, because an image under a version the
+Supervisor never asks for is worse than no image.
+
+A release is therefore:
+
+1. One commit that bumps `addon/config.yaml`, `addon/petkit_local/utils/const.py`
+   and `addon/pyproject.toml` together (`tests/test_version.py` checks they
+   agree) and adds the `## X.Y.Z` section to `addon/CHANGELOG.md`.
+2. `git tag vX.Y.Z && git push --tags`, which builds and publishes all three.
+
+The first push of a new package creates it **private**, and the Supervisor pulls
+anonymously — so a private package fails every install with `pull access denied`.
+Making it public is a one-time manual step per package, under the account's
+Packages tab, and cannot be done from CI.
+
 ## House style
 
 Full type hints. Comments that explain *why* rather than restate the code. Match

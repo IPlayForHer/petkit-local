@@ -66,7 +66,12 @@ jobs:
   # QEMU makes it slow but it only has to be correct. armv7 is the whole point:
   # it takes the Debian branch of the Dockerfile and is the only arch that
   # compiles psutil and pyyaml from source.
+  #
+  # Pull requests only: on main the same three builds run in `publish.yml`, and
+  # a failure there fails the push just as loudly. Running both would pay for
+  # the slow one twice.
   build:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
