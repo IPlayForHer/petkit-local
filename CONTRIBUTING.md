@@ -110,10 +110,20 @@ A release is therefore:
    agree) and adds the `## X.Y.Z` section to `addon/CHANGELOG.md`.
 2. `git tag vX.Y.Z && git push --tags`, which builds and publishes all three.
 
-The first push of a new package creates it **private**, and the Supervisor pulls
-anonymously — so a private package fails every install with `pull access denied`.
-Making it public is a one-time manual step per package, under the account's
-Packages tab, and cannot be done from CI.
+A package created by a workflow inherits the repository's visibility, so a
+public repo publishes a public package with nothing to click. Verify it anyway
+the first time — `docker logout ghcr.io && docker manifest inspect <image>:dev`
+— because the Supervisor pulls anonymously and a private package fails every
+install with `pull access denied`.
+
+Actions are pinned to commit SHAs rather than tags. `@v6` is a tag its owner can
+move, and `publish` runs with `packages: write`; the comment beside each SHA
+says which release it is. Resolve the tag rather than trusting that comment when
+updating one:
+
+```sh
+gh api repos/docker/build-push-action/commits/v6 --jq .sha
+```
 
 ## House style
 
