@@ -228,6 +228,7 @@ class Go2rtc:
 
     @property
     def running(self) -> bool:
+        """Whether our go2rtc child is alive right now."""
         return self._proc is not None and self._proc.returncode is None
 
     def stream_url_for(self, device: Device) -> str:
@@ -247,6 +248,7 @@ class Go2rtc:
         return streams
 
     def wanted(self) -> bool:
+        """Whether go2rtc should be running: it exists and has a camera to serve."""
         return have_go2rtc() and bool(self.desired_streams())
 
     async def _watched_streams(self) -> set[str]:
@@ -344,6 +346,11 @@ class Go2rtc:
         await self._start()
 
     async def _start(self) -> None:
+        """Spawn go2rtc against the config already written.
+
+        Never raises: a camera that cannot be served must not take the add-on
+        down with it, so a failure is logged and leaves `running` False.
+        """
         try:
             # DEVNULL rather than pipes: this child outlives the call, and one
             # whose output is never drained eventually blocks on a full pipe.

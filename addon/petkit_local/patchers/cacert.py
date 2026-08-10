@@ -24,12 +24,11 @@ def patch_ca_bundle(original: bytes | None, our_cert_pem: bytes) -> bytes:
     Raises:
         ValueError: If either side is not a PEM bundle, or ours is already in.
 
-    Both inputs are validated because the failure mode of not doing so is
-    severe: this used to treat an empty `original` as "the device has no CA
-    bundle" and return a file containing ONLY our certificate, which — written
-    over /app/bin/ca.crt — would leave the device unable to verify any other
-    TLS peer. Every device ships a bundle (226 KB on a T5, 11 KB on a D4SH), so
-    an empty read means the download failed, not that there is nothing to keep.
+    Both inputs are validated because an empty `original` must not read as "the
+    device has no CA bundle": that would write a /app/bin/ca.crt holding ONLY
+    our certificate and leave the device unable to verify any other TLS peer.
+    Every device ships a bundle (226 KB on a T5, 11 KB on a D4SH), so an empty
+    read means the download failed, not that there is nothing to keep.
     """
     if b"-----BEGIN CERTIFICATE-----" not in our_cert_pem:
         raise ValueError("our_cert_pem is not valid PEM")

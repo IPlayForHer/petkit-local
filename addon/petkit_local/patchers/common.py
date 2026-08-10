@@ -1,7 +1,7 @@
 """Shared helpers for device patchers.
 
 - run_cmd delivery over MQTT or the heartbeat queue, whichever the device is
-  actually using (same PATH 2 format from note 18)
+  actually using (`build_run_cmd` documents the envelope)
 - Temporary httpd on the device for file download
 - File staging on the add-on for device wget
 - Unified app_init.sh wrapper generation
@@ -92,14 +92,17 @@ def uses_opt_boot(device: Device | None) -> bool:
 
 
 def app_init_wrapper_path(device: Device | None = None) -> str:
+    """Where this device's generated init wrapper lives."""
     return OPT_APP_INIT_WRAPPER if uses_opt_boot(device) else APP_INIT_WRAPPER
 
 
 def patch_storage_dir(device: Device | None = None) -> str:
+    """The writable partition patched files are kept on, per device."""
     return "/opt" if uses_opt_boot(device) else "/system"
 
 
 def patched_file_path(filename: str, device: Device | None = None) -> str:
+    """Where a patched copy of `filename` is stored on the device."""
     return f"{patch_storage_dir(device)}/{filename}"
 
 
@@ -134,10 +137,9 @@ async def send_run_cmd(device: Device, command: str, bridge: Any = None) -> str:
     """Deliver a shell command over whichever transport the device is using.
 
     A device that has joined MQTT STOPS polling the HTTP heartbeat (confirmed
-    on a T5: quiet ~40s after CONNECT, for as long as the session lives), so
-    the heartbeat queue this used to be the only writer of is never drained and
-    every patcher step times out. That is what made patchers stop working once
-    the mqtt patcher was applied.
+    on a T5: quiet ~40s after CONNECT, for as long as the session lives), so a
+    command left on the heartbeat queue is never drained and every patcher step
+    times out — which is why this picks the transport rather than assuming one.
 
     MQTT delivery goes to `/{pk}/{dn}/user/get`, the one downstream topic that
     carries the same `msgType` envelope the heartbeat does.
@@ -350,6 +352,7 @@ def required_free_bytes(write_bytes: int, existing_bytes: int = 0) -> int:
 
 
 def _fmt_bytes(n: int) -> str:
+    """Byte count for a progress line the operator reads."""
     if n >= 1024 * 1024:
         return f"{n / (1024 * 1024):.1f} MB"
     if n >= 1024:
@@ -523,8 +526,8 @@ def generate_app_init_wrapper(active_patchers: set[str],
     Everything happens before the stock init is sourced, because the stock
     init is what starts the processes: a bind-mount that lands after it would
     only take effect on the following boot. There is deliberately no post-init
-    phase — camera used to start tserver there, and now reaches it through the
-    agora bind-mount instead, which also puts it under the watchdog.
+    phase — camera reaches tserver through the agora bind-mount instead, which
+    also puts it under the watchdog.
     """
     lines = [WRAPPER_HEADER_TEMPLATE.format(
         wrapper=app_init_wrapper_path(device))]

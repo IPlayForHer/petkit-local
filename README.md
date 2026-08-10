@@ -258,8 +258,9 @@ PetKit's regional servers the app gave it. Your DNS server's query log will name
 every PetKit domain and be done. Note that DNS only changes where a *name* resolves, not the port:
 the device keeps dialling whatever its provisioned `apiServers` URL says, which on a factory device
 is port 80 — so **this has to be reachable on port 80**, or you have to change the port by
-provisioning over BLE instead. The app maps its API to host port 8080 by default; a DNS-redirected
-device needs that changed to 80.
+provisioning over BLE instead. The add-on maps its API to host port 80 out of the box, which is what
+a DNS-redirected device needs. (A device provisioned over BLE instead is told the port, so remapping
+80/tcp works for it — the add-on puts the published host port in the address it hands out.)
 
 **Ingenic/Linux models** — Purobot, YumShare, EverSweet Ultra AI — enforce HTTPS, so a DNS override
 alone will not do: you would also have to serve a certificate for their name and make the device
@@ -287,22 +288,19 @@ the box — useful if you want to add a model, or are just curious.
   evidence grade and the firmware function behind it — so the panel can explain an event instead of
   printing a number.
 
+[ARCHITECTURE.md](ARCHITECTURE.md) maps the packages and traces a device request through them.
 The protocol invariants a contributor must not break are summarised in
 [`.claude/CLAUDE.md`](.claude/CLAUDE.md).
 
 ## 🙌 Contributing
 
 **A report that your model works is worth opening an issue for.** There is exactly one device behind
-the "confirmed working" list, so everything else is inference until an owner says otherwise. *"T4,
-everything works"* is enough to move a model up the table, and issues that report nothing wrong are
-welcome here.
+the "confirmed working" list, so everything else is inference until an owner says otherwise.
 
-Also: captures from a model doing something unexplained, new codenames, and entity fixes. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for what each of those involves, how to develop against this
-without a device, and what is easy to break.
-
-> **⚠ If you attach a capture, read it first.** It records everything the device said and was told,
-> unfiltered, which can include your Wi-Fi SSID and, if proxy mode was on, your PetKit credentials.
+Captures from a model doing something unexplained, new codenames and entity fixes are all welcome
+too. [CONTRIBUTING.md](CONTRIBUTING.md) covers what each involves, how to develop against this
+without a device, what is easy to break, and — read this before attaching a capture — what a capture
+records about your network and your PetKit account.
 
 ## 🙇 Credits
 

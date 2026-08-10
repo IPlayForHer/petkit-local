@@ -473,7 +473,8 @@ def test_a_normal_model_registers_quietly(caplog):
 def test_the_w5_frame_decoder_covers_its_whole_family():
     """One protocol, one entity set. The `w5` string was hardcoded in three
     places, so a paired W4 or CTW2 would have decoded to nothing."""
-    from petkit_local.devices.ble import W5_PROTOCOL, get_ble_entities, parser_for
+    from petkit_local.devices.ble import W5_PROTOCOL, parser_for
+    from petkit_local.ha.entities.ble import get_ble_entities
 
     assert W5_PROTOCOL == {"w4", "w5", "ctw2"}
     for codename in W5_PROTOCOL:
@@ -485,7 +486,8 @@ def test_the_ctw3_is_not_read_with_the_w5_offsets():
     """Different block length, different layout, big-endian integers. Reading
     one with the other's offsets does not fail — it produces confident
     nonsense, which is worse."""
-    from petkit_local.devices.ble import W5_PROTOCOL, get_ble_entities, parser_for
+    from petkit_local.devices.ble import W5_PROTOCOL, parser_for
+    from petkit_local.ha.entities.ble import get_ble_entities
 
     assert "ctw3" not in W5_PROTOCOL
     assert parser_for("ctw3").__name__ == "parse_ctw3_ble_response"
@@ -652,7 +654,7 @@ def test_the_ctw3_entities_read_what_the_decoder_writes():
     A button is exempt and has to be: it names no path because it is an action,
     not a reading.
     """
-    from petkit_local.devices.ble import get_ble_entities
+    from petkit_local.ha.entities.ble import get_ble_entities
 
     fragment = _ctw3()
     for entity in get_ble_entities("ctw3"):
@@ -905,9 +907,8 @@ def test_the_filter_reset_needs_no_reading_at_all():
 
 def test_every_writable_entity_has_a_frame_behind_it():
     """A switch HA can toggle but nothing can send is worse than no switch."""
-    from petkit_local.devices.ble import (
-        CTW3_WRITABLE, W5_WRITABLE, get_ble_entities,
-    )
+    from petkit_local.devices.ble import CTW3_WRITABLE, W5_WRITABLE
+    from petkit_local.ha.entities.ble import get_ble_entities
 
     assert {e.key for e in get_ble_entities("ctw3") if e.is_settable} == CTW3_WRITABLE
     assert {e.key for e in get_ble_entities("w5") if e.is_settable} == W5_WRITABLE

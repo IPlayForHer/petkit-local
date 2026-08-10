@@ -304,7 +304,8 @@ async def test_every_published_entity_component_has_somewhere_to_render():
     were published to Home Assistant and rendered nowhere in the panel, which is
     invisible until someone goes looking for a schedule editor that does not
     exist. Any NEW component must be routed too."""
-    from petkit_local.devices.ble import BLE_TYPES, get_ble_entities
+    from petkit_local.devices.ble import BLE_TYPES
+    from petkit_local.ha.entities.ble import get_ble_entities
     from petkit_local.ha.categories import CATEGORY_SPECS
 
     published = {e.component for spec in CATEGORY_SPECS.values()
@@ -334,7 +335,8 @@ async def test_the_accessory_panel_renders_every_component_an_accessory_has():
     component that reaches HA fine can still land nowhere here. The filter
     reset was the first: `button` was routed by ENTITY_SECTION and dropped by
     accBody, which knew only switch, number, select and the two sensors."""
-    from petkit_local.devices.ble import BLE_TYPES, get_ble_entities
+    from petkit_local.devices.ble import BLE_TYPES
+    from petkit_local.ha.entities.ble import get_ble_entities
 
     app, reg, hub = _panel()
     c = await _mk_client(app)

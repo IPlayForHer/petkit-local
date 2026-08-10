@@ -1,0 +1,6 @@
+# CI formats only the panel's own CSS/JS (see .github/workflows/tests.yml), so a
+# bare `prettier --write .` must not reformat everything else in the repo.
+*.md
+*.yml
+*.yaml
+addon/petkit_local/web/templates/

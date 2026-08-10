@@ -65,11 +65,11 @@ log = logging.getLogger(__name__)
 #:
 #: anything else logs `//***** error msgType (%d) *****//` and is dropped.
 #:
-#: This map used to read 2/3/5/6/7 — invented, sequential, and wrong for four
-#: of its five entries. `start` worked by coincidence; every settings write and
-#: every feed sent over HTTP was silently discarded by the device. Nothing on
-#: our side can see that: the heartbeat is answered, the queue drains, and
-#: `wait_for_heartbeat` reports the command delivered.
+#: A wrong value here is invisible from this side: the heartbeat is answered,
+#: the queue drains and `wait_for_heartbeat` reports the command delivered,
+#: while the device discards it. Only these three exist — do not extend.
+#:
+#: Nothing sends msgType 0; it is here because the enum has three arms.
 MSG_TYPE_TOPIC = 0
 MSG_TYPE_PROPERTY_SET = 1
 MSG_TYPE_SERVICE_INVOKE = 2

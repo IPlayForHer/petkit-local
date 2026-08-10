@@ -99,9 +99,9 @@ from petkit_local.utils.const import (
 from petkit_local.utils.dicts import dig_path
 from petkit_local.utils.jsonio import atomic_write_json, read_json
 from petkit_local.devices.ble import (
-    BLE_TYPES, CLOUD_BINDING_ENDPOINTS, ble_command_for, cloud_bindings,
-    get_ble_entities, normalize_mac,
+    BLE_TYPES, CLOUD_BINDING_ENDPOINTS, ble_command_for, cloud_bindings, normalize_mac,
 )
+from petkit_local.ha.entities.ble import get_ble_entities
 from petkit_local.ai.pets import cloud_pets
 from petkit_local.http.cloud_fetch import CLOUD_TIMEOUT, CloudRefused, fetch_as_device
 from petkit_local.utils.paths import UnsafePathError, safe_join

@@ -240,13 +240,12 @@ async def _store_upload(dest: str, body: bytes) -> str | None:
     Every `OSError` is caught, not a hand-picked few. The obvious cases are
     keys no write can ever replace — a trailing slash (`t5/1/fullVideo/`) or a
     key that is a prefix of one already stored, both of which the device
-    produces on its own — but the one that matters is **ENOSPC**. A full
-    `/media` used to escape as a 500, and per `_denied` a 5xx makes the cloud
-    process retry the same key forever: a full disk turned into a permanent
-    upload storm from every device at once. The narrow
-    `(IsADirectoryError, NotADirectoryError)` tuple also missed
-    `FileExistsError`, which is what `Path.mkdir(exist_ok=True)` raises when a
-    parent path component is an existing regular file.
+    produces on its own — but the one that matters is **ENOSPC**: per `_denied`
+    a 5xx makes the cloud process retry the same key forever, so a full disk
+    escaping as a 500 becomes a permanent upload storm from every device at
+    once. `FileExistsError` is in scope too — that is what
+    `Path.mkdir(exist_ok=True)` raises when a parent path component is an
+    existing regular file.
 
     A refusal is the right answer for all of them: the device stops asking for
     that key, and the operator sees the log line.

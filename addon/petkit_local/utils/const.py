@@ -19,10 +19,9 @@ predicates the rest of the code actually reads.
 #: `tests/test_version.py` asserts it equals `config.yaml` and `pyproject.toml`,
 #: which is what stops a bump from landing in two places out of three.
 #:
-#: Why the panel needs this at all: a W7H owner updated the add-on, still saw
-#: the old entities, and there was no way — for them or for us — to tell whether
-#: the new code was running. The entity COUNT eventually gave it away. A version
-#: on the screen answers in one glance what took a screenshot and an inference.
+#: The panel shows it because there is otherwise no way — for an owner or for
+#: us — to tell which build is running: a stale entity set looks exactly like an
+#: update that did not take.
 VERSION = "1.10.0"
 
 DEVICE_TYPES_LITTER = {"t3", "t4", "t5", "t6", "t7"}

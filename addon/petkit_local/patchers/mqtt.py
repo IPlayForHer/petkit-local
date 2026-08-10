@@ -53,6 +53,14 @@ _GP_SETUP_INSN = b'\x21\xe0\x99\x03'
 
 
 def _find_via_dynsym(data: bytes) -> int | None:
+    """File offset of `SYMBOL_NAME`, read from `.dynsym`, or None.
+
+    The exact answer when the binary still has a dynamic symbol table, which is
+    why it is tried before the byte-pattern scan. None covers every way that can
+    fail — pyelftools absent, section stripped, symbol missing, or a virtual
+    address that maps outside the file — because each of them just means "fall
+    back to the scan".
+    """
     try:
         from elftools.elf.elffile import ELFFile
     except ImportError:

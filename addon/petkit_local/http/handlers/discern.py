@@ -110,12 +110,10 @@ async def handle_discern_config(request: web.Request) -> web.Response:
     """Give the device the two thresholds its detector runs on.
 
     Returns ``{"result": {"list": {"area": int, "score": float}}}`` — the real
-    cloud's shape, captured 2026-07-27. This endpoint carries NO enable flag:
-    the `{"aiAnalyse": 0|1, "discernPic": 0|1}` body this used to return was
-    built from two STATE-report field names (device -> us) mistakenly reused as
-    config names in the opposite direction, and the firmware never looked for
-    them. `ai_enabled` therefore expresses itself through `dev_discern_pic`
-    instead: no photos served, nobody to recognise.
+    cloud's shape, captured 2026-07-27. This endpoint carries NO enable flag.
+    `aiAnalyse` and `discernPic` are STATE-report field names (device -> us) and
+    the firmware never looks for them here, so `ai_enabled` expresses itself
+    through `dev_discern_pic` instead: no photos served, nobody to recognise.
 
     Both values are read by `get_pet_discern_config_by_network` as `valueint`
     (so the cloud's `25.0` truncates to `25`) and PERSISTED TO DEVICE FLASH as

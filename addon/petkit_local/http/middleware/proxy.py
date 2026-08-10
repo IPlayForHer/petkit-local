@@ -1,49 +1,22 @@
-"""Request-scoped identity, proxying and observability for the device-facing server.
+"""Proxy mode as a middleware: forward the request, answer with what came back.
 
-Three middlewares, in the order aiohttp applies them (outermost first):
-
-* `logging_middleware` — the one place every device request is logged, mirrored
-  to the panel's live log and (optionally) written to a capture file, and the
-  one place a device's `online`/`last_seen` is refreshed. Liveness lives here
-  rather than in the handlers because *any* HTTP contact proves the device is
-  up, and not every device model does MQTT or even an HTTP heartbeat.
-* `device_middleware` — parses the firmware's `X-Device` header and the URL
-  into ``request["x_device"]``, ``request["api_version"]`` and
-  ``request["device_type"]``, so no handler has to re-derive them.
-* `proxy_middleware` — when proxy mode is on, forwards the request to the real
-  PetKit cloud and answers with its (redacted) reply instead of ours.
-
-That order is load-bearing in both directions. `device_middleware` runs before
-the proxy so `request["device_type"]` is set when the upstream is being chosen,
-and `logging_middleware` stays outermost so the panel's live log and the capture
-file record **what the device actually received**, not what our handler would
-have said.
-
-Nothing here rejects a request: identity is best-effort and every key it sets is
-optional, because a device that cannot be identified must still get a valid
-answer (see `http/server.py`'s "never 404 a device" rule). The proxy holds the
-same line — every failure path falls back to the local answer.
+Everything that decides whether a device is served the cloud's reply or ours
+lives here — the endpoints that are never forwarded, the policy handed to
+redaction, and the recording of each exchange onto the panel, the database and
+the capture. `http/proxy.py` does the transport; this module does the policy.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
-import time
-from typing import Awaitable, Callable
 
 from aiohttp import web
 
-from petkit_local.http.handlers._common import device_id, request_device
+from petkit_local.http.handlers._common import request_device
+from petkit_local.http.middleware import API_PREFIX, PROXY_OUTCOME, Handler
+from petkit_local.http.middleware.logging import _short, _text
 
 log = logging.getLogger(__name__)
-
-Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
-
-#: Only the PetKit API prefix is device protocol traffic. The bucket, the face
-#: photos and the patcher downloads share this app and must never be forwarded
-#: upstream, logged as device traffic, or counted as liveness.
-API_PREFIX = "/6/"
 
 #: Endpoints whose answer describes OUR state, not the cloud's. They are still
 #: forwarded — the upstream reply is recorded and captured, which is the point of
@@ -97,6 +70,10 @@ LOCAL_ONLY_ENDPOINTS = frozenset({"dev_ble_device"})
 #: proxy mode's reach permanently; switching the guard off proxies it again.
 GUARDED_LOCAL_ENDPOINTS = frozenset({"dev_upload_file_info_v2"})
 
+#: Request headers echoed into the capture record — the ones `http/proxy.py`
+#: forwards, so a capture shows exactly what upstream was told.
+_FORWARDED_HEADERS = ("X-Device", "X-Session", "F-Session", "User-Agent", "Content-Type")
+
 
 def _reports_a_local_log_upload(request: web.Request, config: dict) -> bool:
     """Whether this is a `dev_upload_log` naming an object in OUR bucket.
@@ -110,109 +87,6 @@ def _reports_a_local_log_upload(request: web.Request, config: dict) -> bool:
     bucket = (config.get("bucket_endpoint") or "").rstrip("/")
     key = request.query.get("key", "")
     return bool(bucket) and key.startswith(bucket)
-
-
-def parse_x_device(header: str) -> dict | None:
-    """Parse the firmware's `X-Device` header into a flat dict of fields.
-
-    The header is query-string shaped — ``id=10000001&type=T5&sn=...&...`` — so
-    it is decoded with `parse_qs`. If that yields no ``id``, the header is
-    re-split on raw ``&``/``=`` (values left percent-encoded) and that result is
-    used instead, but only when it does produce one.
-
-    Returns:
-        The header's fields keyed by name, or None when no ``id`` field could be
-        recovered at all — such a header identifies nothing, and callers treat
-        it exactly like an absent header rather than trusting the other fields.
-    """
-    if not header:
-        return None
-    from urllib.parse import parse_qs
-    parsed = parse_qs(header, keep_blank_values=True)
-    result = {k: v[0] for k, v in parsed.items() if v}
-    if "id" not in result:
-        parts = dict(p.split("=", 1) for p in header.split("&") if "=" in p)
-        if "id" in parts:
-            return parts
-        return None
-    return result
-
-
-async def parse_form_body(request: web.Request) -> dict[str, str]:
-    """The urlencoded POST body as a flat dict, or {} for anything else.
-
-    A third place a device may put its identity, and for some of them the only
-    one. An ESP32 feeder signs up with no `X-Device` header and no query string
-    at all -- everything is in the body::
-
-        POST /6/d4/dev_signup   Content-Type: application/x-www-form-urlencoded
-        hardware=1&firmware=1.267&mac=...&id=400090690&sn=20241223G11497&...
-
-    Read here rather than in the handlers so `_common.py`'s accessors stay
-    synchronous and every endpoint gets it at once, exactly as `X-Device` is.
-
-    Costs nothing: `logging_middleware` already reads the body of every POST
-    under `/6/`, and aiohttp caches it, so this is the same bytes a second time.
-    It cannot starve `proxy_middleware` either -- that copies the body into a
-    local before calling the handler.
-
-    Never raises. A body that is not urlencoded, not decodable, or simply
-    absent yields {}, which reads the same as a device that sent nothing.
-    """
-    if request.method not in ("POST", "PUT", "PATCH"):
-        return {}
-    ctype = request.headers.get("Content-Type", "")
-    if "application/x-www-form-urlencoded" not in ctype.lower():
-        return {}
-    try:
-        raw = await request.read()
-    except Exception:  # noqa: BLE001 - a body we cannot read is a body we ignore
-        return {}
-    if not raw:
-        return {}
-    from urllib.parse import parse_qs
-    try:
-        parsed = parse_qs(raw.decode("utf-8", errors="replace"), keep_blank_values=True)
-    except Exception:  # noqa: BLE001 - device input never raises
-        return {}
-    return {k: v[0] for k, v in parsed.items() if v}
-
-
-@web.middleware
-async def device_middleware(request: web.Request, handler: Handler) -> web.StreamResponse:
-    """Attach the requester's identity to the request, then hand it on.
-
-    Sets, when derivable: ``request["x_device"]`` (the parsed `X-Device` header,
-    only if it carries an id), ``request["form"]`` (the urlencoded POST body),
-    ``request["api_version"]`` and ``request["device_type"]``. All are optional
-    — handlers use `handlers/_common.py` to resolve a device and answer sensibly
-    when none of this is present.
-    """
-    info = None
-    x_device = request.headers.get("X-Device", "")
-    if x_device:
-        info = parse_x_device(x_device)
-        if info and "id" in info:
-            request["x_device"] = info
-
-    request["form"] = await parse_form_body(request)
-
-    path = request.path
-    poll_m = re.match(r"^/(\d+)/poll/(\w+)/", path)
-    m = re.match(r"^/(\d+)/(\w+)/", path)
-    if poll_m:
-        request["api_version"] = poll_m.group(1)
-        request["device_type"] = poll_m.group(2)
-    elif m and m.group(2) != "poll":
-        request["api_version"] = m.group(1)
-        request["device_type"] = m.group(2)
-
-    # Fallback: device type from the X-Device `type` field (paths that omit it,
-    # e.g. /6/dev_serverinfo or /6/poll/heartbeat).
-    if "device_type" not in request and info and info.get("type"):
-        request["device_type"] = info["type"].lower()
-
-    return await handler(request)
 
 
 def _is_heartbeat(path: str) -> bool:
@@ -417,11 +291,6 @@ async def proxy_middleware(request: web.Request, handler: Handler) -> web.Stream
         return local
 
 
-#: Where `proxy_middleware` leaves what it did, for `logging_middleware` to fold
-#: into the entry it was already going to write.
-PROXY_OUTCOME = "proxy_outcome"
-
-
 def _local_socket(request: web.Request) -> tuple[str, int] | None:
     """The `(address, port)` of ours this device's connection arrived on.
 
@@ -584,153 +453,3 @@ def _remember_upstream_credentials(request: web.Request, device, exchange) -> No
         log.debug("Incomplete upstream MQTT credentials from %s, ignoring", request.path)
         return
     store.put(device.petkit_id, creds)
-
-
-def _text(raw: bytes | None) -> str | None:
-    """Decode a captured body, never raising on a binary one."""
-    if raw is None:
-        return None
-    return bytes(raw).decode("utf-8", "replace")
-
-
-#: Request headers echoed into the capture record — the ones `http/proxy.py`
-#: forwards, so a capture shows exactly what upstream was told.
-_FORWARDED_HEADERS = ("X-Device", "X-Session", "F-Session", "User-Agent", "Content-Type")
-
-
-def _short(text: str | None, limit: int = 4000) -> str | None:
-    """Cap a body at `limit` chars for the panel log, marking what was cut.
-
-    The live log holds these in memory and ships them to every open browser, so
-    an unbounded state_report or file_info body would be paid for repeatedly.
-    None passes through as None to keep "no body" distinct from "empty body".
-    """
-    if text is None:
-        return None
-    return text if len(text) <= limit else text[:limit] + f"\n... (+{len(text) - limit} bytes truncated)"
-
-
-@web.middleware
-async def logging_middleware(request: web.Request, handler: Handler) -> web.StreamResponse:
-    """Log, mirror and capture a device request, and refresh device liveness.
-
-    Only `/6/` paths — the PetKit API prefix — are treated as device traffic;
-    the bucket, the face photos and the patcher downloads share this app but are
-    not protocol calls and must not mark a device online or flood the panel log.
-
-    For those paths it: emits the one-line access log, records a detailed entry
-    (headers, query, capped bodies) on the panel's event hub, appends to the
-    capture file when `capture` is configured, and stamps `last_seen` on the
-    resolved device — firing the app's ``on_device_seen`` callback if that
-    request is what brought it back online.
-    """
-    # Pre-read the request body for POST/PUT so we can surface it in the panel
-    # log. aiohttp caches the payload, so the handler still reads it normally.
-    req_body = None
-    if request.method in ("POST", "PUT", "PATCH") and request.path.startswith(API_PREFIX):
-        try:
-            raw = await request.read()
-            if raw:
-                req_body = raw.decode("utf-8", "replace")
-        except Exception:
-            req_body = None
-
-    resp = await handler(request)
-    if request.path.startswith(API_PREFIX):
-        dt = request.get("device_type", "?")
-        pid = request.get("x_device", {}).get("id", "?")
-        log.info("%s %s [%s id=%s] -> %d", request.method, request.path, dt, pid, resp.status)
-        hub = request.app.get("event_hub")
-        if hub is not None:
-            did = device_id(request)
-            resp_body = None
-            try:
-                if getattr(resp, "body", None) is not None:
-                    resp_body = bytes(resp.body).decode("utf-8", "replace")
-            except Exception:
-                resp_body = None
-            detail = {
-                "method": request.method,
-                "path": request.path,
-                "status": resp.status,
-                "device_type": dt,
-                "headers": dict(request.headers),
-                "query": dict(request.query),
-                "req_body": _short(req_body),
-                "resp_body": _short(resp_body),
-            }
-            # What proxy mode did with this request, if anything. Folded into
-            # the entry rather than published separately — see `_note_outcome`.
-            if PROXY_OUTCOME in request:
-                detail["proxy"] = request[PROXY_OUTCOME]
-            hub.record_http(did, request.method, request.path, resp.status, detail=detail)
-
-        config = request.app.get("config", {})
-        if config.get("capture"):
-            from petkit_local.utils.capture import capture_record
-            capture_record(config.get("capture_dir", "/data/capture"), "requests", {
-                "method": request.method,
-                "path": request.path,
-                "status": resp.status,
-                "xdevice": request.headers.get("X-Device", ""),
-                "xsession": request.headers.get("X-Session", ""),
-                "query": dict(request.query),
-            })
-
-        # Any HTTP contact keeps the device online (HTTP is a valid transport,
-        # not every device does MQTT / an HTTP heartbeat).
-        device = request_device(request)
-        if device is not None:
-            device.last_seen = time.time()
-            # The `type` spelling the firmware itself puts in `X-Device`, kept
-            # verbatim. It is one of the five fields hashed into that header's
-            # `sign`, so signing a request AS this device needs the device's own
-            # spelling and not our lowercase codename — see `http/cloud_fetch.py`.
-            # Recorded from live traffic rather than assumed, because a guess
-            # here fails as an authentication error and nothing else.
-            wire_type = (request.get("x_device") or {}).get("type") or ""
-            if wire_type and device.wire_type != wire_type:
-                device.wire_type = wire_type
-            if not device.online:
-                device.online = True
-                cb = request.app.get("on_device_seen")
-                if cb is not None:
-                    await cb(device)
-    return resp
-
-
-@web.middleware
-async def never_fail_middleware(request: web.Request, handler: Handler) -> web.StreamResponse:
-    """Turn any unhandled handler exception into an empty success.
-
-    `http/server.py`'s rule is that a device is never given a 4xx or 5xx,
-    because the firmware reads one as a server fault and retries forever. That
-    rule was enforced by every handler individually catching its own failures —
-    and several could still escape: a SQLAlchemy error from `upsert_event` on a
-    full or read-only disk, an unreadable media key file in `handle_oss_sts`, an
-    `MqttError` from the HA publisher during a broker restart, a `RecursionError`
-    from deeply nested JSON. Each of those became aiohttp's default 500, i.e.
-    precisely the retry loop the rule exists to prevent.
-
-    So this is the backstop, outermost of the four. It answers `{"result": {}}`,
-    the same shape `handle_catchall` uses for an endpoint we do not implement —
-    a device treats it as "nothing to do" and moves on.
-
-    It deliberately does NOT swallow:
-
-    * `web.HTTPException` — a handler that returns a status on purpose (the
-      bucket's 403 refusals, a redirect) keeps it.
-    * `asyncio.CancelledError` — shutdown must stay prompt.
-
-    The log line is ERROR with a traceback: this firing is always a bug worth
-    fixing, and swallowing it silently would hide exactly the failures the rule
-    is protecting the device from.
-    """
-    try:
-        return await handler(request)
-    except (web.HTTPException, asyncio.CancelledError):
-        raise
-    except Exception:
-        log.exception("Unhandled error in %s %s - answering empty success so the "
-                      "device does not retry forever", request.method, request.path)
-        return web.json_response({"result": {}})

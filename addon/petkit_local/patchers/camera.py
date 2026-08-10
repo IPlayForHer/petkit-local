@@ -8,6 +8,11 @@ else.
 
 No binary patching and no file of ours on the device — the whole patch is one
 line in the /system/app_init.sh wrapper.
+
+**Never point Home Assistant's Generic Camera straight at the device.** HA's
+`stream` component opens the URL with PyAV and `av.open()` segfaults inside
+libav, killing the whole HA process. Put go2rtc in between; `STREAM_PATHS`
+below records the evidence and the second reason for it.
 """
 from __future__ import annotations
 
@@ -24,29 +29,22 @@ log = logging.getLogger(__name__)
 #: * `main.flv?audio=1` / `sub.flv?audio=1` — H.264 (1056² and 528²) plus AAC at
 #:   16 kHz mono, verified over sustained reads both directly and through
 #:   go2rtc. These are the ones to hand out.
-#: * `main.ts` / `sub.ts` — dropped. They carry AAC announcing
-#:   `sample_rate=0, channels=0` and list every stream twice, so nothing loads
-#:   them. Note this is where the broken audio lives: the FLV endpoints report a
-#:   valid `16000/1` every time they were sampled.
+#: * `main.ts` / `sub.ts` — dropped. They announce `sample_rate=0, channels=0`
+#:   and list every stream twice, so nothing loads them. The FLV endpoints
+#:   reported a valid `16000/1` every time they were sampled.
 #: * The `audio` parameter is required, not optional — `sub.flv` with no query
 #:   at all resets the connection.
 #:
-#: **Do not point Home Assistant's Generic Camera straight at these.** Its
-#: `stream` component opens the URL with PyAV and `av.open()` segfaults inside
-#: libav, killing the whole HA process — `Fatal Python error: Segmentation
-#: fault` in `stream/worker.py::try_open_stream`. Observed twice, with and
-#: without audio, so audio is NOT the trigger. Not reproducible with `av.open`
-#: in isolation (single, looped, concurrent, or with HA's own options), so it
-#: needs HA's threading context; it is an HA/PyAV bug and ours is only the
-#: input. Put go2rtc in between — verified: it reads this FLV and republishes
-#: clean RTSP, and because it holds ONE connection to the device it also spares
-#: it the pathology below.
+#: The PyAV segfault in the module docstring was observed twice, with and
+#: without audio, so audio is not the trigger; it is not reproducible with
+#: `av.open` in isolation, so it needs HA's threading context. go2rtc reads
+#: this FLV and republishes clean RTSP.
 #:
 #: tserver also needs **seconds between connections**: opened back to back it
-#: refuses the second, while the same pair six seconds apart both succeed, and
-#: three concurrent opens serve one and refuse two. A cooldown, not an
-#: alternation. One long-lived reader in front of it is not a nicety, it is what
-#: makes the camera usable for more than one viewer.
+#: refuses the second, the same pair six seconds apart both succeed, and three
+#: concurrent opens serve one and refuse two. So one long-lived reader in front
+#: of it is not a nicety — it is what makes the camera usable for more than one
+#: viewer.
 #:
 #: These are paths rather than one URL because tserver answers the same stream on
 #: every path it is given: `/snapshot.jpg`, `/jpeg` and `/cgi-bin/snapshot.cgi`

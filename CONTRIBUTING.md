@@ -43,8 +43,13 @@ cd addon
 pip install -e ".[dev]"
 pytest                              # the whole suite
 pytest -k stitch                    # by name
+pytest --firmware                   # also the patcher tests, if you have images
 ruff check petkit_local/ tests/
 ```
+
+`--firmware` runs the patcher integration tests against real device images,
+which are multi-megabyte and not in the repo. Populate `addon/tests/firmware/`
+first; the test module says what it expects. Without the flag those tests skip.
 
 The suite needs no device, no broker and no network. CI runs it on Python 3.11 and
 3.12, imports every module so a runtime-only one cannot break unnoticed, and builds
@@ -72,9 +77,10 @@ Please run the tests before opening a PR.
   been observed is left unset rather than given an invented default, because
   `dev_device_info` serves those values straight back to the device.
 
-The invariants worth knowing before a larger change are collected in
-[`.claude/CLAUDE.md`](.claude/CLAUDE.md), which points at the module docstrings
-that document each one in full.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the map: what each package owns and how
+a device request travels through them. The invariants worth knowing before a
+larger change are collected in [`.claude/CLAUDE.md`](.claude/CLAUDE.md), which
+points at the module docstrings that document each one in full.
 
 ## House style
 

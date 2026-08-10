@@ -32,8 +32,8 @@ from petkit_local.utils.paths import sanitize_filename
 ROLE_FOLDERS = {
     "fullVideo": "Playback",
     "highLight": "Highlight",
-    # ONE poster image per event (moduleType EVENT_PREVIEW) — not the waste
-    # gallery, which this used to be mislabelled as.
+    # ONE poster image per event (moduleType EVENT_PREVIEW). NOT the waste
+    # gallery, which is `wasteCheck` below.
     "eventImage": "Snapshots",
     # The app's "Check waste" set, ~5 photos per cleaning (SHIT_PICTURE).
     "wasteCheck": "Waste",

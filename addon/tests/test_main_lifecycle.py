@@ -1,4 +1,4 @@
-"""Process lifecycle wiring in `petkit_local/main.py`.
+"""Process lifecycle wiring in `petkit_local/main/`.
 
 `main()` itself ends in `web.run_app`, so it cannot be called from a test.
 What IS testable — and what actually broke in production — is the shutdown
@@ -16,7 +16,7 @@ from aiohttp import web
 from petkit_local.devices.registry import DeviceRegistry
 from petkit_local.http.proxy import close_proxy_session, get_proxy_session
 from petkit_local.http.server import create_app
-from petkit_local.main import BACKGROUND_TASKS, _spawn, _stop_tasks
+from petkit_local.main.lifecycle import BACKGROUND_TASKS, _spawn, _stop_tasks
 
 CONFIG = {
     "api_url": "http://server/6/",
@@ -26,7 +26,10 @@ CONFIG = {
     "proxy_block_run_cmd": True,
 }
 
-MAIN_PY = pathlib.Path(__file__).resolve().parent.parent / "petkit_local" / "main.py"
+MAIN = pathlib.Path(__file__).resolve().parent.parent / "petkit_local" / "main"
+MAIN_PY = MAIN / "__init__.py"
+WIRING_PY = MAIN / "wiring.py"
+LIFECYCLE_PY = MAIN / "lifecycle.py"
 
 
 def _app() -> web.Application:
@@ -57,11 +60,11 @@ async def test_spawn_registers_every_task_for_shutdown():
 async def test_main_creates_no_task_outside_the_registration_helper():
     """The hardcoded task-name tuple drifted once; this is why it can't again.
 
-    `_spawn` is the single place `main.py` may call `create_task`, because the
-    shutdown path iterates what `_spawn` recorded. A second call site would be
-    a task nothing cancels.
+    `_spawn` is the single place `main/lifecycle.py` may call `create_task`,
+    because the shutdown path iterates what `_spawn` recorded. A second call
+    site would be a task nothing cancels.
     """
-    source = MAIN_PY.read_text()
+    source = LIFECYCLE_PY.read_text()
     assert source.count("asyncio.create_task(") == 1
     # ...and it is the one inside _spawn.
     spawn_body = source.split("def _spawn(", 1)[1].split("\nasync def ", 1)[0]
@@ -216,11 +219,11 @@ async def test_media_pipeline_tasks_finish_before_the_store_would_close():
 def test_cleanup_closes_the_event_store_last():
     """Source-order pin for the part of shutdown a unit test cannot reach.
 
-    `cleanup_background` is a closure inside `main()` (it captures the store,
-    both registries and the config), so the ordering is asserted on the source.
+    `cleanup_background` takes the whole `Services` bundle (the store, both
+    registries, the sidecar), so the ordering is asserted on the source.
     Everything that can still write must appear before the `close()`.
     """
-    source = MAIN_PY.read_text()
+    source = LIFECYCLE_PY.read_text()
     body = source.split("async def cleanup_background(", 1)[1]
     # Drop the docstring: it names the same calls it is explaining.
     body = body.split('"""')[2]
@@ -234,7 +237,7 @@ def test_cleanup_closes_the_event_store_last():
 
 
 def test_registries_are_started_and_stopped():
-    source = MAIN_PY.read_text()
+    source = LIFECYCLE_PY.read_text()
     start = source.split("async def start_background(", 1)[1].split("async def cleanup_background(", 1)[0]
     assert "await registry.start()" in start
     assert "await ble_registry.start()" in start
@@ -248,7 +251,7 @@ def test_event_store_is_opened_before_anything_can_query_it():
     aiohttp runs to completion before the first request is served and before
     the MQTT bridge is spawned — so no reader can ever see an unmigrated DB.
     """
-    source = MAIN_PY.read_text()
+    source = LIFECYCLE_PY.read_text()
     start = source.split("async def start_background(", 1)[1].split("async def cleanup_background(", 1)[0]
 
     connect = start.index("await event_store.connect()")
@@ -258,8 +261,10 @@ def test_event_store_is_opened_before_anything_can_query_it():
                   "create_panel_app("):
         assert connect < start.index(later), later
 
-    # ...and nothing opens or migrates it back in the sync part of main().
-    before_hook = source.split("async def start_background(", 1)[0]
+    # ...and nothing opens or migrates it back in the sync part of main(),
+    # which is the composition root plus the entry point around it.
+    before_hook = (source.split("async def start_background(", 1)[0]
+                   + WIRING_PY.read_text() + MAIN_PY.read_text())
     assert "event_store.connect()" not in before_hook
     assert "reclassify_media_categories" not in before_hook
     assert "backfill_event_rows(" not in before_hook
@@ -268,10 +273,10 @@ def test_event_store_is_opened_before_anything_can_query_it():
 def test_ssl_is_imported_once_and_the_logger_is_module_named():
     import petkit_local.main as main_module
 
-    source = MAIN_PY.read_text()
+    source = LIFECYCLE_PY.read_text()
     assert len(re.findall(r"^import ssl", source, re.M)) == 1
     assert "import ssl as _ssl" not in source
-    assert 'logging.getLogger("petkit-local")' not in source
+    assert 'logging.getLogger("petkit-local")' not in MAIN_PY.read_text()
     # Same name imported or run as `python3 -m petkit_local.main`.
     assert main_module.log.name == "petkit_local.main"
 

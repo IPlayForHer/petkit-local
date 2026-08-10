@@ -113,6 +113,12 @@ def _parse_answers(data: bytes, txid: int) -> list[str]:
 
 
 class _QueryProtocol(asyncio.DatagramProtocol):
+    """Resolves `future` with the first datagram the socket receives.
+
+    One future per query, so the second answer to a retransmitted question is
+    dropped rather than raising InvalidStateError on a settled future.
+    """
+
     def __init__(self, future: asyncio.Future) -> None:
         self._future = future
 
@@ -176,6 +182,7 @@ async def resolve_a(name: str, server: str) -> list[str]:
 
 
 def _is_ip_literal(host: str) -> bool:
+    """Whether `host` is already a dotted-quad, so no lookup is needed."""
     try:
         socket.inet_aton(host)
     except OSError:
@@ -234,6 +241,14 @@ class UpstreamResolver(AbstractResolver):
     async def resolve(
         self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
     ) -> list[dict]:
+        """aiohttp's resolver contract: `host` -> a list of address dicts.
+
+        IPv4 only, because that is all `query_a` asks for.
+
+        Raises:
+            OSError: the configured server returned no address. aiohttp treats
+                any other exception type as a bug rather than a lookup failure.
+        """
         addresses = await resolve_a(host, self._server)
         if not addresses:
             raise OSError(f"{host} could not be resolved via {self._server}")

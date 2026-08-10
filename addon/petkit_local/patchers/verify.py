@@ -46,6 +46,7 @@ _E_MACHINE_NAMES = {3: "EM_386", EM_MIPS: "EM_MIPS", 40: "EM_ARM", 62: "EM_X86_6
 
 
 def _u16le(data: bytes, offset: int) -> int:
+    """Read a 16-bit little-endian field out of an ELF header."""
     return data[offset] | (data[offset + 1] << 8)
 
 
@@ -115,6 +116,11 @@ def assert_mips_elf(data: bytes, what: str, *, exec_only: bool = False) -> None:
 
 
 def is_arm_elf(data: bytes, *, exec_only: bool = False) -> bool:
+    """Whether `data` is a 32-bit little-endian ARM ELF we can patch.
+
+    Args:
+        exec_only: Require `ET_EXEC`. See `assert_arm_elf` for why.
+    """
     if len(data) < _MIN_ELF_HEADER or data[:4] != ELF_MAGIC:
         return False
     if data[_EI_CLASS] != ELFCLASS32 or data[_EI_DATA] != ELFDATA2LSB:
@@ -128,6 +134,19 @@ def is_arm_elf(data: bytes, *, exec_only: bool = False) -> bool:
 
 
 def assert_arm_elf(data: bytes, what: str, *, exec_only: bool = False) -> None:
+    """Raise unless `data` is an ARM 32-bit little-endian ELF.
+
+    The ARM twin of `assert_mips_elf`, and `exec_only` carries the same weight:
+    a virtual address is converted to a file offset with `vaddr - ARM_ELF_BASE`,
+    which only holds for a fixed-load-address ET_EXEC. A PIE binary would be
+    patched at a wrong offset without complaining.
+
+    Args:
+        what: Named in the error, so the message says which download failed.
+
+    Raises:
+        ValueError: with what the header actually said (`describe_elf`).
+    """
     if is_arm_elf(data, exec_only=exec_only):
         return
     wanted = "ARM 32-bit little-endian ELF executable"

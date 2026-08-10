@@ -37,7 +37,7 @@ PetKit device ──HTTP───► petkit-local ──MQTT discovery──► 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `api_url` | *(empty = auto)* | URL the device is told to use for the HTTP API. **Leave empty to auto-detect the HA host's LAN IP** (recommended — embedded PetKit devices can't resolve mDNS `.local`). Override only for a specific address/port, e.g. `http://<ha-host-ip>/6/`. A `.local` value is ignored in favour of the detected IP. |
-| `mqtt_host` | *(ignored)* | Accepted by the schema but not used: the broker address handed to a device is derived per request from the address that device reached it on, so one instance can serve devices that see it under different addresses. |
+| `bucket_endpoint` | *(empty)* | Where devices upload photos and video. Empty derives it from the host IP and the port `9000/tcp` is published on. Set it when uploads must go through a different hostname, port or TLS-terminating proxy. |
 | `ha_mqtt_host` | *(empty)* | **Your Home Assistant MQTT broker**, so entities can be published to HA. Auto-detected if you run the Mosquitto app; otherwise set it (an external broker's hostname or IP). Leave empty to skip HA publishing entirely — the device side still works. |
 | `ha_mqtt_port` | `1883` | HA MQTT broker port. |
 | `ha_mqtt_user` / `ha_mqtt_pass` | *(empty)* | HA MQTT broker credentials (leave empty for anonymous). |
@@ -60,6 +60,14 @@ effect immediately, and persist to `/data/settings_overrides.json`.
 | `1883` | *(unmapped)* | Plain MQTT listener, internal to this app. Map it only if a device connects in plaintext. |
 | `9000` | `9000` | Media upload bucket the device PUTs photos and videos to. |
 | `8099` | *(unmapped)* | The web panel over plain HTTP, **no authentication**. Ingress proxies this internally. |
+| `8554` | *(unmapped)* | Camera RTSP from the bundled go2rtc. Home Assistant reaches it over the internal network, so map it only to watch the stream from elsewhere on the LAN — and note 8554 clashes with the go2rtc app. |
+
+Remapping a port is honoured where it can be: the host port `80/tcp` is
+published on goes into the address devices are handed, and the same for the
+bucket on `9000/tcp`. Two cannot follow. A device redirected by DNS dials port
+80 with nothing to tell it otherwise, and the MQTT port comes from the
+firmware's own build — so leave `80` and `443` alone unless you know which of
+your devices is provisioned with what.
 
 **MQTT port coexistence:** the device-facing broker is a *separate* broker from
 Home Assistant's. Its plain listener is unmapped by default, so it cannot clash
@@ -70,12 +78,11 @@ Ingress and is authenticated by Home Assistant; port 8099 is the same
 application without that check, which is why it is unmapped by default. Map it
 only if you want to `curl` the JSON API while debugging.
 
-Earlier versions also served the panel on port 8098 over HTTPS with a
-self-signed certificate and no authentication, so Web Bluetooth provisioning
-would have a secure context. That has been removed — it published the whole API
-to the LAN. Provisioning now needs Home Assistant served over HTTPS with a
-certificate your browser trusts; the Provision tab explains this and links a
-hosted alternative when it is not.
+Web Bluetooth provisioning needs a secure context. This app deliberately does
+not manufacture one for you with a second, self-signed HTTPS port — that would
+publish the whole API to the LAN again. Provisioning needs Home Assistant served
+over HTTPS with a certificate your browser trusts; the Provision tab explains
+this and links a hosted alternative when it is not.
 
 Port 9000 likewise accepts uploads without authentication — it stands in for
 Aliyun OSS, whose credentials this app issues to the device itself.
@@ -88,9 +95,10 @@ The device must resolve `api_url` to this app.
 below.
 
 **ESP32 models** (T3/T4/D3/D4/D4S, Feeder, Feeder Mini) can also be redirected
-by DNS, because they talk plain HTTP. The EverSweet fountains are not on that
+by DNS, because they talk plain HTTP. The BLE-only EverSweet fountains are not on that
 list and never will be: they have no network of their own, so there is no name
-to redirect (see the README's supported-devices table). There is no one name to point here: like the Linux
+to redirect (see the README's supported-devices table). The EverSweet Ultra AI
+does have Wi-Fi, and is a Linux model — see below. There is no one name to point here: like the Linux
 models, they are given their API server during Bluetooth setup, so it is
 whichever of PetKit's regional servers the app handed that device. Find it in
 your DNS server's query log, or redirect every PetKit domain. The device dials

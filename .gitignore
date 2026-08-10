@@ -36,8 +36,9 @@ dist/
 *.db-wal
 *.db-shm
 
-# Machine-specific Claude Code permissions (contains LAN addresses/paths)
+# Machine-specific Claude Code state (LAN addresses/paths, local scheduling)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Real device firmware images for patcher integration tests (multi-MB ELF blobs).
 # Run `pytest --firmware` after populating addon/tests/firmware/ — see the test file.

@@ -170,6 +170,13 @@ _ARM_CMP_R0_R0   = b'\x80\x42'   # cmp r0, r0 — always Z=1
 
 
 def _patch_cloud_arm(data: bytes) -> tuple[bytes, list[dict]]:
+    """Apply the ARM form of the cloud patches to `data`.
+
+    Returns:
+        `(patched bytes, applied)`, where `applied` describes each site for the
+        panel. A site already carrying its patched bytes is reported as such
+        rather than failing, so re-running the patcher is safe.
+    """
     patched = bytearray(data)
     applied: list[dict] = []
 

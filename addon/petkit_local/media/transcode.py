@@ -64,8 +64,8 @@ async def run_ffmpeg(args: list[str], *, timeout: float, what: str,
     on a full pipe buffer instead of dying.
 
     `CancelledError` gets the same treatment, and that is not theoretical:
-    the stitcher's shutdown cancel could not previously terminate a running
-    ffmpeg at all, so restarting mid-stitch orphaned the child.
+    the stitcher is cancelled at shutdown, so without it a restart mid-stitch
+    orphans the child.
     """
     try:
         proc = await asyncio.create_subprocess_exec(

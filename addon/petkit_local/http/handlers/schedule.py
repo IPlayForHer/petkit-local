@@ -5,16 +5,15 @@ clock, not driven from here, so the response has to be a valid schedule under
 all circumstances — including for a device we cannot identify. A valid schedule
 with nothing in it is an empty array, and that is what an unset one gets.
 
-**There is no default cleaning schedule.** This used to answer with three
-entries — 09:45, 13:45 and 18:45, every day — for any box that had not been
-given one, which meant this add-on ran somebody's litter box on a timetable they
-never chose and could not see. (The times were not even invented: a T5 was later
-watched being sent exactly these by PetKit's own cloud. That makes them a real
-account's schedule, which is not the same thing as this account's.)
+**There is no default cleaning schedule**, and there must not be: a schedule
+served from here is one the owner never chose and cannot see, and the box runs
+it. Not even a plausible one — a T5 was watched being sent 09:45/13:45/18:45 by
+PetKit's own cloud, which makes those times some real account's schedule, not
+this account's.
 
-The same reasoning as `devices/base.py::default_settings`, which stopped seeding
-`sandType` for the same reason: a value we make up does not stay ours. It is
-served to the device as the owner's setting.
+Same rule as `devices/base.py::default_settings`: a value we make up does not
+stay ours, because it is served straight back to the device as the owner's
+setting.
 """
 from __future__ import annotations
 

@@ -56,8 +56,8 @@ LOG_LEVELS = ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG")
 def _opt_int(opts: dict[str, Any], key: str, default: int) -> int:
     """Read an integer option, keeping `default` if the value is not one.
 
-    /data/options.json is user-editable, and a bare int() on a typo there used
-    to abort startup with a traceback that never named the offending option.
+    /data/options.json is user-editable, and a bare int() on a typo there
+    aborts startup with a traceback that never names the offending option.
     """
     if key not in opts:
         return default
@@ -72,7 +72,7 @@ def _opt_bool(opts: dict[str, Any], key: str, default: bool) -> bool:
     """Read a boolean option, keeping `default` if the value is not one.
 
     Not `bool(opts[key])`: the JSON string "false" is truthy, so an option
-    written as text used to turn the feature ON.
+    written as text would turn the feature ON.
     """
     if key not in opts:
         return default

@@ -186,10 +186,9 @@ def resolve_upstream(setting: str) -> str:
             is how you reach a server by address — which is what a LAN that
             redirects PetKit's names to this add-on leaves you needing.
 
-    There used to be an `auto` here that chose by device generation. It chose
-    between two names for one server — `api.eu-pet.com` and `api-eu.petkt.com`
-    answer on the same pair of addresses — so it never did anything, and the
-    premise was wrong anyway: provisioning decides the region, not the firmware
+    There is deliberately no per-generation choice: `api.eu-pet.com` and
+    `api-eu.petkt.com` are two names for one server, answering on the same pair
+    of addresses, and provisioning decides the region anyway — not the firmware
     family.
     """
     value = (setting or "").strip() or DEFAULT_UPSTREAM
@@ -292,8 +291,8 @@ async def forward(
         The `Exchange`, or None when the upstream could not be reached, answered
         too slowly, or the breaker is open. None means "we have nothing from
         PetKit"; the caller answers from our own handler instead, so a device
-        never pays for the cloud being down. Unlike the old `proxy_request`,
-        this never manufactures a 502 — that WAS the device paying for it.
+        never pays for the cloud being down. A 502 is never manufactured
+        here: handing one to a device IS making it pay.
     """
     if breaker_is_open(request.app):
         return None

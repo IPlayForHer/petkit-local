@@ -16,15 +16,17 @@ enough to be worth stating plainly.
 
 | Surface | Why |
 |---|---|
-| Device API (host `8080`) | The firmware has no credential to offer beyond an `X-Device` header it also computes itself. Anything on the LAN can talk to it. |
+| Device API (host `80`) | The firmware has no credential to offer beyond an `X-Device` header it also computes itself. Anything on the LAN can talk to it. |
 | Media bucket (host `9000`) | It stands in for Aliyun OSS, whose credentials this app issues to the device. Object keys are containment-checked, so an upload cannot escape the media root — but anyone on the LAN can upload. |
 | Web panel (container `8099`) | Unmapped by default and reached through Home Assistant Ingress, which authenticates. **Map it to a host port and the whole API — device settings, commands, pet records, the patchers — is available with no login.** |
 
-The panel was once served a second time over HTTPS on port 8098 with a
-self-signed certificate and no authentication, so that Web Bluetooth
-provisioning had a secure context. It never reached a release — provisioning now
-asks the operator for a real certificate in front of the ordinary panel port
-instead.
+Web Bluetooth provisioning needs a secure context. Serving the panel a second
+time over HTTPS with a self-signed certificate would have given it one, and was
+rejected: it means a second unauthenticated surface, on a port nobody expects,
+presenting a certificate nobody can verify. Provisioning asks the operator for a
+real certificate in front of the ordinary panel port instead. (Confirmed on
+hardware: it works through Ingress when Home Assistant itself is served over a
+valid certificate.)
 
 ### Things that are deliberately permissive
 

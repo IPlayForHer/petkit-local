@@ -1,14 +1,12 @@
 """Crash-safe JSON/file persistence helpers.
 
 Every state file in this add-on (`devices.json`, `ble_devices.json`,
-`retention.json`, the panel's settings overrides, the bucket AES key) used to be
-written by truncating the target and writing in place. A container kill or power
-loss during that window leaves a truncated file, and the readers treat a
-truncated file the same as a missing one: `DeviceRegistry._load` swallows the
-`JSONDecodeError` and starts empty, so every device re-signs-up and is issued
-fresh MQTT credentials. This module centralises the write-temp-then-rename dance
-so that failure mode cannot happen, and pairs it with the "load or fall back to a
-default" reader those same call sites each re-implemented.
+`retention.json`, the panel's settings overrides, the bucket AES key) is written
+through here, because a truncated one is indistinguishable from a missing one:
+`DeviceRegistry._load` swallows the `JSONDecodeError` and starts empty, so every
+device re-signs-up and is issued fresh MQTT credentials. Writing to a temporary
+file and renaming it into place is what makes a container kill mid-write leave
+the previous contents rather than half of the new ones.
 """
 from __future__ import annotations
 

@@ -173,11 +173,10 @@ ROLE_DETECTION = "detection"
 class EventCode:
     """One event type, in either the HTTP (NS1) or MQTT (NS3) namespace.
 
-    A single row replaces what used to be membership in up to six parallel
-    sets. That is not tidiness for its own sake: codes 1, 2, 4, 13, 14, 15 and
-    16 were in *none* of those sets, so they classified as "other" and
-    rendered as "Event 13" -- a gap only visible by cross-checking six
-    collections by hand. One row per code makes completeness testable.
+One row per code, carrying everything known about it — which is what
+    makes completeness testable. Split across parallel membership sets instead,
+    a code that belongs to none of them classifies as "other" and renders as
+    "Event 13", and finding it means cross-checking every set by hand.
 
     Attributes:
         kind: The `event_kind` bucket, from `EVENT_KINDS`.
@@ -1079,8 +1078,10 @@ def error_flag_label(flag: str, device_type: str | None = None) -> str:
 
 
 # --- derived views ---------------------------------------------------------
-# Computed once at import so hot paths keep doing set membership rather than
-# dataclass attribute walks.
+# Computed once at import so hot paths do set membership rather than dataclass
+# attribute walks. Only the four below have readers; a set nothing asks for is
+# a table that can drift from `EventCode` without anything noticing, so derive
+# a new one where it is needed rather than pre-computing it here.
 
 def _codes_where(table: dict[str, EventCode], **match: object) -> frozenset[str]:
     """Keys of `table` whose `EventCode` matches every attribute in `match`."""
@@ -1088,11 +1089,6 @@ def _codes_where(table: dict[str, EventCode], **match: object) -> frozenset[str]
         key for key, code in table.items()
         if all(getattr(code, attr) == value for attr, value in match.items())
     )
-
-
-def _codes_with_kind(table: dict[str, EventCode], kind: str) -> frozenset[str]:
-    """Keys of `table` whose `EventCode.kind` is `kind`."""
-    return _codes_where(table, kind=kind)
 
 
 #: Every key in either namespace, for the derived sets below and for callers
@@ -1108,14 +1104,6 @@ ALL_EVENT_CODES: dict[str, EventCode] = {
     **LITTER_HTTP_CODES,
 }
 
-TOILET_CODES = _codes_with_kind(ALL_EVENT_CODES, KIND_TOILET)
-CLEANING_CODES = _codes_with_kind(ALL_EVENT_CODES, KIND_CLEANING)
-PET_CODES = _codes_with_kind(ALL_EVENT_CODES, KIND_PET)
-MOTION_CODES = _codes_with_kind(ALL_EVENT_CODES, KIND_MOTION)
-ERROR_CODES = _codes_with_kind(ALL_EVENT_CODES, KIND_ERROR)
-FEEDING_CODES = _codes_with_kind(ALL_EVENT_CODES, KIND_FEEDING)
-DRINKING_CODES = _codes_with_kind(ALL_EVENT_CODES, KIND_DRINKING)
-
 DETAIL_CODES = _codes_where(ALL_EVENT_CODES, detail=True)
 ANCHOR_CODES = _codes_where(ALL_EVENT_CODES, anchor=True)
 DONE_CODES = _codes_where(ALL_EVENT_CODES, role=ROLE_DONE)
@@ -1125,8 +1113,6 @@ DONE_CODES = _codes_where(ALL_EVENT_CODES, role=ROLE_DONE)
 #: detail -- it is the line that heads an unparented cycle's card and the one
 #: that carries the episode's waste photos.
 PRIMARY_DONE_CODES = DONE_CODES - _codes_where(ALL_EVENT_CODES, detail=True)
-VISIT_SUMMARY_CODES = _codes_where(ALL_EVENT_CODES, role=ROLE_VISIT_SUMMARY)
-ERROR_START_CODES = _codes_where(ALL_EVENT_CODES, role=ROLE_ERROR_START)
 
 
 def lookup(event_type: str | None,

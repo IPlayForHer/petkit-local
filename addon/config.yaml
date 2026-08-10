@@ -59,7 +59,6 @@ options:
   # address the mapping cannot express — a reverse proxy, another interface.
   # An explicit value is used verbatim, so include the port if it is not 80.
   api_url: ""
-  mqtt_host: ""
   # Where devices upload photos and video. Empty derives it from the host IP and
   # the port 9000/tcp is published on. Set it when uploads must go through a
   # different hostname, port or TLS-terminating proxy.
@@ -79,11 +78,10 @@ options:
   mqtt_strict_auth: false
   # NOTE: proxy mode and payload capture are deliberately NOT options here.
   # Both are debugging switches you flip while watching a device, so they live
-  # in the panel's Setup -> Live settings and persist to
+  # in the panel's Setup -> Settings and persist to
   # /data/settings_overrides.json instead of needing an add-on restart.
 schema:
   api_url: str?
-  mqtt_host: str?
   bucket_endpoint: str?
   ha_mqtt_host: str?
   ha_mqtt_port: port

@@ -66,9 +66,8 @@ def _locate_raw_file(raw_root: str, info: dict) -> str | None:
         return None
     # `file_id` is device-supplied and validated only as non-empty, and a wrong
     # match here does not merely mis-file: the located file is processed under
-    # THIS entry's metadata and then deleted. So a bare substring scan — which
-    # is what this used to be — let an id of "1" consume an unrelated pending
-    # upload.
+    # THIS entry's metadata and then deleted. A bare substring scan is therefore
+    # not good enough — an id of "1" would consume an unrelated pending upload.
     #
     # Exact name or stem wins outright: it cannot collide by accident whatever
     # its length. The substring fallback survives for a device that decorated
