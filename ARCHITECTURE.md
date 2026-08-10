@@ -5,18 +5,15 @@ servers, and everything follows from that one fact: the device believes it is ta
 so every answer has to be shaped like the cloud's, and a wrong answer is not an error message — it
 is a device that reboots, retries forever, or silently stops working.
 
-One process, one asyncio loop, one container. Four servers run inside it:
+One process, one asyncio loop, one container, four servers inside it: an HTTP API and an MQTT
+broker that the device talks to, a bucket it uploads media to, and the web panel you look at.
+Plus one outbound client — `aiomqtt` connected to *Home Assistant's* broker, which is where
+entities are published.
 
-| Server | Port | What talks to it |
-|---|---|---|
-| Device HTTP API | 80 | The device, for everything except telemetry |
-| MQTT broker (amqtt) | 443 (TLS) | The device, for telemetry and pushed commands |
-| Media bucket | 9000 | The device, uploading photos and video |
-| Web panel | 8099 | You, through Home Assistant Ingress |
+Do not confuse the two brokers. The one we run is for devices; the one we connect to is HA's.
 
-Plus one outbound client: `aiomqtt` connected to *Home Assistant's* broker, which is where entities
-are published. Do not confuse the two brokers. The one we run is for devices; the one we connect to
-is HA's.
+(Which port each of those listens on, and what happens if you remap one, is an operator question:
+see [`addon/DOCS.md`](addon/DOCS.md).)
 
 ## Packages
 
@@ -34,11 +31,15 @@ petkit_local/
 │   ├── dns.py         resolver for upstream lookups only
 │   └── cloud_fetch.py signs as the device to ask PetKit something directly
 ├── mqtt/          broker.py (amqtt) · auth.py (Aliyun HMAC) · topics.py
-│                  bridge.py (device <-> us) · upstream.py (us <-> real Aliyun)
-├── devices/       base.py Device + its wire payloads · registry.py (atomic JSON)
-│                  state_parsers.py · ble/ (framing, W5, CTW3, registry)
+│                  bridge.py (device <-> us) · ble_relay.py (accessories through a parent)
+│                  upstream.py (us <-> real Aliyun)
+├── devices/       base.py Device identity and state · payloads.py the response bodies
+│                  defaults.py per-category seed data · registry.py (atomic JSON)
+│                  state_parsers.py + state_tables.py + consumables.py
+│                  ble/ (framing, W5, CTW3, registry)
 ├── ha/            categories.py device category -> entities · discovery.py EntityDef -> payload
-│                  publisher.py (the one HA-broker connection) · commands.py HA write -> command
+│                  publisher.py (the one HA-broker connection, outbound)
+│                  command_router.py + commands.py (inbound: HA write -> device command)
 │                  entities/ one module per component
 ├── events/        codes.py THE protocol tables · decode.py renders values for humans
 │                  normalize.py transport -> row · sessions.py rows -> visits
@@ -66,7 +67,7 @@ device --HTTP--> http/server.py route table
                    │
                    └─> handlers/<endpoint>.py
                          │  reads and mutates one Device
-                         └─> devices/base.py builds the response body the firmware expects
+                         └─> devices/payloads.py builds the body the firmware expects
 ```
 
 Telemetry takes the other road:
@@ -83,10 +84,10 @@ device --MQTT--> mqtt/broker.py --> mqtt/auth.py (HMAC, and it SUBSCRIBES the de
 And the way back, when you flip a switch in Home Assistant:
 
 ```
-HA --MQTT--> ha/publisher.py --> ha/commands.py builds the device command
-                                   │
-                                   ├─ device on MQTT?  mqtt/bridge.py publishes it
-                                   └─ otherwise        queued for the HTTP heartbeat
+HA --MQTT--> ha/command_router.py --> ha/commands.py builds the device command
+                                        │
+                                        ├─ device on MQTT?  mqtt/bridge.py publishes it
+                                        └─ otherwise        queued for the HTTP heartbeat
 ```
 
 Which of those two the command takes is decided by `Device.mqtt_connected`, and that flag is
@@ -109,8 +110,9 @@ Two files carry almost all of the reverse-engineered protocol, and both are deli
 - **`events/codes.py`** — every event code, in six namespaces that must never be merged, each row
   graded by the evidence behind it and naming the firmware function it came from. It is one file
   because the namespaces collide, and the collisions are only visible when they sit together.
-- **`devices/base.py`** — the response bodies. What a device is told about itself, its server, its
-  storage credentials and its schedule.
+- **`devices/payloads.py`** — the response bodies. What a device is told about itself, its server,
+  its storage credentials and its schedule. A value invented here is served to the device as its
+  owner's setting, which is why several fields are deliberately left unset.
 
-Read [`.claude/CLAUDE.md`](.claude/CLAUDE.md) before changing either. It collects the invariants
+Read [`AGENTS.md`](AGENTS.md) before changing either. It collects the invariants
 that are not obvious from the code — the ones where the natural-looking change is the wrong one.

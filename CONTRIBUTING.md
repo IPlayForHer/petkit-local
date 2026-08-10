@@ -79,8 +79,9 @@ Please run the tests before opening a PR.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) is the map: what each package owns and how
 a device request travels through them. The invariants worth knowing before a
-larger change are collected in [`.claude/CLAUDE.md`](.claude/CLAUDE.md), which
-points at the module docstrings that document each one in full.
+larger change are collected in [`AGENTS.md`](AGENTS.md), which points at the
+module docstrings that document each one in full. (Every coding agent reads that
+file; `CLAUDE.md` is a two-line stub that imports it.)
 
 ## House style
 

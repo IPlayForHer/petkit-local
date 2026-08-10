@@ -3,68 +3,29 @@
 A Home Assistant add-on that impersonates the PetKit cloud: a litter box, feeder or fountain
 connects to it over HTTP + MQTT instead of PetKit's servers (the Pura Air purifiers are BLE-only
 and reach it through a parent device), and petkit-local answers as the official API, stores events
-and media locally, and publishes entities via MQTT discovery. It is an add-on **repository** — `repository.yaml` at the root, the add-on in `addon/`, the package in
-`addon/petkit_local/`. It also runs as a plain container or bare process (`docker-compose.yml` at
-the root, or `--no-ha`); HA Container and HA Core have no add-on system, so that path is supported,
-not a fallback.
+and media locally, and publishes entities via MQTT discovery.
+
+It is an add-on **repository** — `repository.yaml` at the root, the add-on in `addon/`, the package
+in `addon/petkit_local/`. It also runs as a plain container or bare process (`docker-compose.yml`
+at the root, or `--no-ha`); HA Container and HA Core have no add-on system, so that path is
+supported, not a fallback.
 
 **Stack.** Python 3.11+, one asyncio loop, one container. aiohttp (device API, bucket, panel), amqtt
 (embedded device-facing broker), aiomqtt (client for HA's broker), SQLAlchemy 2.0 async + aiosqlite
 (`{data_dir}/petkit.db`), Jinja2, ffmpeg. Device identity and settings persist as atomic JSON
 (`devices.json`, `ble_devices.json`). `README.md` credits the projects the payloads came from.
 
-## Layout
+## Orientation
 
-`ARCHITECTURE.md` at the repo root has the full map and traces a request through it. What matters
-here is where a given kind of knowledge lives:
+`ARCHITECTURE.md` is the map: what each package owns, and how a device request travels through
+them. Read it first — this file assumes it.
 
-```
-petkit_local/
-├── main/          # cli.py flags · wiring.py composition root -> Services · lifecycle.py the
-│                  #   background tasks and their shutdown order
-├── config.py      # Config dataclass; /data/options.json + Supervisor (host IP, PORT MAPPING)
-│                  #   + CLI + panel overrides
-├── http/          # the cloud a device believes it is talking to. server.py route table + catch-all
-│                  #   · middleware/ device.py X-Device, proxy.py forwarding, logging.py (ORDER is
-│                  #   documented in its __init__) · redact/ what a cloud reply may contain
-│                  #   (rules.py + walker.py) · proxy.py upstream + forward() · dns.py resolver for
-│                  #   upstream only · cloud_fetch.py signs as the device · bucket.py
-│                  #   unauthenticated OSS sink · handlers/ one per endpoint
-├── mqtt/          # broker.py (amqtt) · auth.py (Aliyun HMAC + the server-side SUBSCRIBE)
-│                  #   · topics.py · bridge.py · ble_relay.py · upstream.py proxy-mode bridge to
-│                  #   the real Aliyun broker
-├── devices/       # base.py Device identity/state · payloads.py every device-facing response body
-│                  #   · defaults.py per-category seed data · registry.py (debounced atomic JSON)
-│                  #   · state_parsers.py + state_tables.py + consumables.py
-│                  #   · ble/ framing.py + w5.py + ctw3.py + registry.py
-├── ha/            # categories.py CATEGORY_SPECS + "what does this device publish"
-│                  #   · discovery.py EntityDef -> payload/topics · publisher.py (the one HA-broker
-│                  #   connection) · command_router.py HA writes · commands.py HA write -> device
-│                  #   command · entities/ per component (incl. ble.py)
-├── events/        # codes.py THE protocol tables (all 6 namespaces, graded, per device family) ·
-│                  #   decode.py renders content for humans · models.py SQLAlchemy models ·
-│                  #   store.py EventStore (async, plain dicts) · normalize.py transport in ·
-│                  #   sessions.py group_sessions() + Timeline filters · migrations.py ·
-│                  #   ingest.py is one import surface over the three
-├── media/         # pipeline.py decrypt -> remux -> friendly path -> row · crypto · transcode ·
-│                  #   layout · stitch.py joins an episode's ~4s chunks · retention.py caps ·
-│                  #   go2rtc.py runs go2rtc in front of the device's own stream
-├── web/           # panel.py routes + JSON API · hub.py event ring/WS/diagnostics ·
-│                  #   templates/ index.html + _cropper.html · static/app.js · static/styles.css
-│                  #   · static/bin/ the dropbear binaries the ssh patcher installs
-├── patchers/      # on-device patches: cacert · mqtt · cloud · camera · ssh · common.py
-│                  #   (delivery, staging, device space probe) · verify.py (MIPS/ARM/PEM
-│                  #   guards, run before anything is written)
-├── ai/pets.py     # pet CRUD + the face photos the device's NPU matches against
-│                  #   (pet_faces table, N per pet; resolve_pet_ref binds a reported id)
-└── utils/         # const · crypto · capture · jsonio · paths · coerce · dicts · timeutil
+Two rules about placement that the map does not make obvious:
 
-tests/            # ~1.6k tests, no device or broker needed. conftest.py has the shared fixtures
-                  #   and the --firmware flag that unlocks the patcher tests.
-```
-
-**Layering.** `devices` depends only on `events` and `utils`. "Which entities does this device
-publish" is an HA question and is answered in `ha/categories.py` — do not answer it from `devices/`.
+- `devices` depends only on `events` and `utils`. "Which entities does this device publish" is an
+  HA question, answered in `ha/categories.py`. Do not answer it from `devices/`.
+- `events/codes.py` and `devices/payloads.py` carry almost all the reverse-engineered protocol and
+  are deliberately large. Everything below is about not breaking them.
 
 ## Invariants — do not break these
 

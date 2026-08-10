@@ -290,7 +290,7 @@ the box — useful if you want to add a model, or are just curious.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) maps the packages and traces a device request through them.
 The protocol invariants a contributor must not break are summarised in
-[`.claude/CLAUDE.md`](.claude/CLAUDE.md).
+[`AGENTS.md`](AGENTS.md).
 
 ## 🙌 Contributing
 
