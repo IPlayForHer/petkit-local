@@ -16,7 +16,7 @@ cannot tell apart from a device that has not reported yet — four such entities
 shipped that way and were removed (see the note further down). The rule is
 enforced by `tests/test_entity_backing.py`, which walks every codename.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.devices.state_parsers import WORK_MODE_IDLE
 from petkit_local.events import codes

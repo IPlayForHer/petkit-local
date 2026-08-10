@@ -69,7 +69,7 @@ from petkit_local.utils.const import (
 )
 
 # --- device families -------------------------------------------------------
-# Codenames come from utils/const.py so this table and devices/categories.py
+# Codenames come from utils/const.py so this table and ha/categories.py
 # can never disagree about which models exist.
 
 ANY_DEVICE = frozenset(DEVICE_TYPES_ALL)
@@ -458,7 +458,7 @@ _CATEGORY_DEVICE_TYPES: tuple[tuple[str, frozenset[str]], ...] = (
 def category_of(device_type: str | None) -> str | None:
     """Behavioural category for a device codename, or None if unrecognised.
 
-    Mirrors `devices/categories.py::spec_for_device` without importing it --
+    Mirrors `ha/categories.py::spec_for_device` without importing it --
     that module pulls in the whole HA entity tree, and this one must stay a
     leaf so anything can read the protocol tables.
     """

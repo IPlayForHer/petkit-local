@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from petkit_local.devices.base import Device
-from petkit_local.devices.registry import get_entities_for_device, get_setting_fields
+from petkit_local.ha.categories import get_entities_for_device, get_setting_fields
 from petkit_local.ha.commands import handle_ha_command
 import base64
 

@@ -66,7 +66,7 @@ import jinja2
 from aiohttp import web
 
 from petkit_local.devices.base import Device, encode_multi_range, split_bucket_authority
-from petkit_local.devices.registry import get_entities_for_device
+from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.devices.state_parsers import apply_consumable_state
 from petkit_local.events import codes, decode, ingest
 from petkit_local.events.store import MAX_FACES_PER_PET

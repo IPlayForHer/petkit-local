@@ -1,7 +1,7 @@
 from petkit_local.devices.base import Device
 import pytest
 
-from petkit_local.devices.registry import get_entities_for_device
+from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.ha.commands import (
     ALL_ACTIONS,
     Refused,
@@ -360,7 +360,7 @@ def test_a_number_outside_its_range_is_refused_not_clamped():
     the failure this project avoids everywhere else.
     """
     from petkit_local.devices.base import Device
-    from petkit_local.devices.registry import get_entities_for_device
+    from petkit_local.ha.categories import get_entities_for_device
 
     dev = Device(device_type="t5", petkit_id=1, serial_number="SN")
     volume = next(e for e in get_entities_for_device(dev) if e.key == "volume")

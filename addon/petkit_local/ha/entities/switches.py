@@ -8,7 +8,7 @@ added on top of the base list for those device types.
 `CAPABILITY_SWITCHES` is the exception and is documented at its definition —
 it does not write device settings at all.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.ha.discovery import EntityDef
 

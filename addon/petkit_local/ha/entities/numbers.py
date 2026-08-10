@@ -5,7 +5,7 @@ field back via `property.set`. `min_value`/`max_value`/`step` are HA-side
 validation only: the device does its own clamping, so these bounds exist to
 stop an obviously-wrong value from ever being sent, not to guarantee one.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.ha.discovery import EntityDef
 

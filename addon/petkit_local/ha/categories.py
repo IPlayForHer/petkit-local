@@ -3,16 +3,19 @@
 PetKit ships many device codenames but only four behavioural families: litter
 box, feeder, water fountain, Pura Air spray. Everything a family contributes to
 Home Assistant -- which entity lists it publishes, which extra ones a
-camera-equipped model adds, and which MQTT event topics carry its state -- used
-to live in four near-identical modules (`litter.py`, `feeder.py`,
-`water_fountain.py`, `purifier.py`) that had already drifted apart in ordering
-and signature. This module replaces them with one table so that supporting a
-new family is a `CATEGORY_SPECS` entry, not a fifth copy of the same skeleton.
+camera-equipped model adds, and which MQTT event topics carry its state -- is
+one `CATEGORY_SPECS` entry here, so supporting a new family is a row rather
+than a fifth copy of the same skeleton.
 
 The table is deliberately data, not code: the entity set it produces is the
 user's Home Assistant state. A reordered or renamed entry orphans entities in
 live installations and loses their recorded history, so `CategorySpec` composes
 existing lists in a fixed order and never rewrites them.
+
+This is also where a `Device` is asked what it publishes
+(`get_entities_for_device` and friends). That question is an HA one, and
+answering it from `devices/` is what had the device layer importing every
+`ha/entities` module.
 """
 from __future__ import annotations
 
@@ -359,3 +362,44 @@ def spec_for_device(device: Device) -> CategorySpec | None:
         if device.device_type in spec.device_types:
             return spec
     return None
+
+
+def get_entities_for_device(device: Device) -> list[EntityDef]:
+    """HA entity definitions this device publishes, in discovery order.
+
+    Empty for a codename no category claims — see
+    `spec_for_device` below.
+    """
+    spec = spec_for_device(device)
+    if spec is None:
+        return []
+    return spec.entities_for(has_camera=device.is_camera,
+                             device_type=device.device_type)
+
+
+def get_setting_fields(device: Device) -> set[str]:
+    """Device settings fields that HA exposes as controls.
+
+    Used to route device-originated property/post keys back into
+    config["settings"] so a physical setting change reflects in HA.
+    """
+    fields: set[str] = set()
+    for e in get_entities_for_device(device):
+        if e.component in ("switch", "number", "select") and e.setting_field:
+            fields.add(e.setting_field)
+    return fields
+
+
+def get_mqtt_state_topics(device: Device) -> list[str]:
+    """MQTT event topic suffixes this device reports state on.
+
+    Descriptive only. `mqtt/bridge.py` holds ONE wildcard subscription covering
+    every device, so nothing builds subscriptions from this — it documents what
+    a category emits, and `tests/test_events_codes.py` asserts every topic here
+    resolves in the code table.
+    """
+    spec = spec_for_device(device)
+    if spec is None:
+        return []
+    return spec.state_topics_for(has_camera=device.is_camera,
+                                 device_type=device.device_type)

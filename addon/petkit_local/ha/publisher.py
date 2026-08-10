@@ -26,7 +26,8 @@ import time
 from typing import TYPE_CHECKING, Any, AsyncIterable
 
 from petkit_local.devices.base import Device
-from petkit_local.devices.registry import DeviceRegistry, get_entities_for_device
+from petkit_local.devices.registry import DeviceRegistry
+from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.devices.ble import get_ble_entities
 from petkit_local.ha.discovery import build_discovery_payload, discovery_topic
 from petkit_local.devices.state_parsers import apply_consumable_state

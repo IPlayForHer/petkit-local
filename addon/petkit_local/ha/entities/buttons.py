@@ -6,7 +6,7 @@ which owns the actual device action codes — a button whose key has no entry
 there appears in HA and does nothing but log a warning, so the two lists must
 be kept in step.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.ha.discovery import EntityDef
 
@@ -49,7 +49,7 @@ LITTER_CAMERA_BUTTONS = [
 #: * `pack_waste` sends `start_action: 8` — the value pypetkitapi calls
 #:   RESET_N50_DEODOR. Those two readings cannot both be right, and the T6 one
 #:   is what a controlled tap produced. This box has no N50 cartridge, so its
-#:   `reset_n50` button is excluded in `devices/categories.py` and the code goes
+#:   `reset_n50` button is excluded in `ha/categories.py` and the code goes
 #:   here under the name the hardware gives it.
 #: * `open_sealed_door` sends `start_action: 11`. The sealed waste door is this
 #:   model's hardware; on a box without one, 11 is an unknown value.

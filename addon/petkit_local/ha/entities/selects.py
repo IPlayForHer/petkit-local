@@ -7,7 +7,7 @@ the values the device actually uses, positionally paired with them. Give
 translation in both directions depends on it, see
 `ha/discovery.py::_select_value_template` and `ha/commands.py::_select_value`.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.ha.discovery import EntityDef
 

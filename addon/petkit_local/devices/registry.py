@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from petkit_local.devices.base import Device
-from petkit_local.devices.categories import spec_for_device
-from petkit_local.ha.discovery import EntityDef
 from petkit_local.utils.jsonio import atomic_write_json, atomic_write_text, read_json
 
 log = logging.getLogger(__name__)
@@ -21,19 +19,6 @@ log = logging.getLogger(__name__)
 # Distinguishes "read_json fell back" from "the file legitimately contained
 # null", which no default value can do on its own.
 _UNREADABLE = object()
-
-
-def get_entities_for_device(device: Device) -> list[EntityDef]:
-    """HA entity definitions this device publishes, in discovery order.
-
-    Empty for a codename no category claims — see
-    `devices/categories.py::spec_for_device`.
-    """
-    spec = spec_for_device(device)
-    if spec is None:
-        return []
-    return spec.entities_for(has_camera=device.is_camera,
-                             device_type=device.device_type)
 
 
 def _merge_default_settings(device: Device) -> None:
@@ -52,34 +37,6 @@ def _merge_default_settings(device: Device) -> None:
     if isinstance(settings, dict):
         for key, value in device.default_settings().items():
             settings.setdefault(key, value)
-
-
-def get_setting_fields(device: Device) -> set[str]:
-    """Device settings fields that HA exposes as controls.
-
-    Used to route device-originated property/post keys back into
-    config["settings"] so a physical setting change reflects in HA.
-    """
-    fields: set[str] = set()
-    for e in get_entities_for_device(device):
-        if e.component in ("switch", "number", "select") and e.setting_field:
-            fields.add(e.setting_field)
-    return fields
-
-
-def get_mqtt_state_topics(device: Device) -> list[str]:
-    """MQTT event topic suffixes this device reports state on.
-
-    Descriptive only. `mqtt/bridge.py` holds ONE wildcard subscription covering
-    every device, so nothing builds subscriptions from this — it documents what
-    a category emits, and `tests/test_events_codes.py` asserts every topic here
-    resolves in the code table.
-    """
-    spec = spec_for_device(device)
-    if spec is None:
-        return []
-    return spec.state_topics_for(has_camera=device.is_camera,
-                                 device_type=device.device_type)
 
 
 class PersistedRegistry:

@@ -9,7 +9,7 @@ web panel's own control emitting the same shape.
 import pytest
 
 from petkit_local.devices.base import Device, Refused
-from petkit_local.devices.registry import get_entities_for_device
+from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.ha.commands import _coerce_time, handle_ha_command
 from petkit_local.ha.discovery import build_discovery_payload
 from petkit_local.ha.entities.times import FOUNTAIN_W7H_TIMES

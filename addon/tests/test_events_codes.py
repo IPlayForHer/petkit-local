@@ -94,7 +94,7 @@ def test_mqtt_topics_resolve_for_every_category():
 def test_every_topic_the_bridge_dispatches_on_is_in_the_table():
     """`mqtt/bridge.py` reacting to a topic the table does not know means the
     event is stored with a label the table cannot produce."""
-    from petkit_local.devices.categories import CATEGORY_SPECS
+    from petkit_local.ha.categories import CATEGORY_SPECS
     for spec in CATEGORY_SPECS.values():
         for topic in spec.state_topics_for(True):
             if topic.endswith("/post"):      # transport, handled separately
@@ -122,7 +122,7 @@ def test_an_http_code_fires_the_same_ha_event_entity_as_its_mqtt_twin():
 def test_every_declared_ha_event_entity_can_actually_be_fired():
     """An `event` entity nothing maps to is published to HA and stays silent
     forever — indistinguishable from a device that never does the thing."""
-    from petkit_local.devices.categories import CATEGORY_SPECS
+    from petkit_local.ha.categories import CATEGORY_SPECS
     from petkit_local.events.ingest import KIND_TO_ENTITY
 
     declared = {e.key for spec in CATEGORY_SPECS.values()

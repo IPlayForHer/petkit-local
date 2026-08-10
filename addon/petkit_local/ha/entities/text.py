@@ -7,7 +7,7 @@ end-to-end without a bespoke UI. Note HA's 255-character cap on a text entity
 (enforced in `ha/discovery.py`): a longer schedule has to be edited in the web
 panel instead.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.ha.discovery import EntityDef
 

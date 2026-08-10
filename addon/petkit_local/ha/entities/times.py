@@ -11,7 +11,7 @@ MINUTES since midnight and are edited in the web panel — HA has no entity for 
 list of ranges. One point in time is the only part of PetKit's scheduling model
 that maps onto an HA entity at all.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.ha.discovery import EntityDef
 

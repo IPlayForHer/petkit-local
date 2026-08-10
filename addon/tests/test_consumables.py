@@ -19,7 +19,7 @@ from petkit_local.devices.state_parsers import (CONSUMABLE_RECORD_KEY, DEODORANT
                                                 normalize_property_params,
                                                 record_consumable_reset)
 from petkit_local.ha.commands import handle_ha_command
-from petkit_local.devices.registry import get_entities_for_device
+from petkit_local.ha.categories import get_entities_for_device
 
 
 def _dev():

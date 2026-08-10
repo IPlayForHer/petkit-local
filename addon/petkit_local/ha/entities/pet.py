@@ -7,7 +7,7 @@ device entity can express. `ai/pets.py::PetRegistry` owns the pets and
 ids) using the list below. Modeled on Jezza34000/homeassistant_petkit's pet
 sensors.
 
-Unlike every other list here these do NOT go through `devices/categories.py`:
+Unlike every other list here these do NOT go through `ha/categories.py`:
 they belong to no device type, and unlike a device the values are not reported
 by anything — `publish_pet_state` recomputes all of them from the event store.
 """

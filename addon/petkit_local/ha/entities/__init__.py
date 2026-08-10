@@ -2,7 +2,7 @@
 
 Every module here is data only: lists of `EntityDef` (see `ha/discovery.py`)
 with no logic, so the several hundred entities across the supported device
-types can be reviewed as a table rather than as code. `devices/categories.py`
+types can be reviewed as a table rather than as code. `ha/categories.py`
 decides which lists a given device type receives.
 
 Imports are limited to `EntityDef` and the protocol TABLES in `events/codes.py`

@@ -29,7 +29,8 @@ from typing import TYPE_CHECKING, Any, AsyncIterable
 from petkit_local.devices.ble import (
     BLEDevice, _iter_ble_frames, ble_command_frame, parser_for,
 )
-from petkit_local.devices.registry import DeviceRegistry, get_setting_fields
+from petkit_local.devices.registry import DeviceRegistry
+from petkit_local.ha.categories import get_setting_fields
 from petkit_local.events import codes
 from petkit_local.events.ingest import (apply_derived_state, apply_state_snapshot,
                                         entity_for_event, telemetry_only)

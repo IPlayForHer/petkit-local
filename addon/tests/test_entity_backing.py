@@ -17,7 +17,7 @@ import pytest
 
 from petkit_local.devices import state_parsers
 from petkit_local.devices.base import Device
-from petkit_local.devices.registry import get_entities_for_device
+from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.utils.const import DEVICE_TYPES_ALL
 
 #: `state.*` keys that no state parser produces because they are not device

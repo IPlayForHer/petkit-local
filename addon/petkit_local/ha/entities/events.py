@@ -11,7 +11,7 @@ not listed here is rejected by HA, so the two must be kept in step. The device
 event_type strings themselves are not capture-confirmed — see
 `events/ingest.py`'s header for what is.
 
-`devices/categories.py` decides which of these lists a given device type gets.
+`ha/categories.py` decides which of these lists a given device type gets.
 """
 from petkit_local.ha.discovery import EntityDef
 

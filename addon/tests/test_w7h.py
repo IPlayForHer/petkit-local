@@ -15,7 +15,7 @@ TEST-NET-1 address so the `other`-string parse is still exercised.
 import pytest
 
 from petkit_local.devices.base import Device
-from petkit_local.devices.registry import get_entities_for_device
+from petkit_local.ha.categories import get_entities_for_device
 from petkit_local.devices.state_parsers import (
     normalize_property_params, parse_state_report,
 )

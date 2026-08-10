@@ -305,7 +305,7 @@ async def test_every_published_entity_component_has_somewhere_to_render():
     invisible until someone goes looking for a schedule editor that does not
     exist. Any NEW component must be routed too."""
     from petkit_local.devices.ble import BLE_TYPES, get_ble_entities
-    from petkit_local.devices.categories import CATEGORY_SPECS
+    from petkit_local.ha.categories import CATEGORY_SPECS
 
     published = {e.component for spec in CATEGORY_SPECS.values()
                  for e in spec.entities_for(True)}

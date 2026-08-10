@@ -1,6 +1,6 @@
 from petkit_local.devices.base import Device
-from petkit_local.devices.categories import CATEGORY_SPECS, spec_for_device
-from petkit_local.devices.registry import get_entities_for_device, get_mqtt_state_topics
+from petkit_local.ha.categories import CATEGORY_SPECS, spec_for_device
+from petkit_local.ha.categories import get_entities_for_device, get_mqtt_state_topics
 from petkit_local.utils.const import DEVICE_TYPES_ALL
 
 VALID_COMPONENTS = {
