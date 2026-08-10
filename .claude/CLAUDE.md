@@ -1,9 +1,9 @@
 # petkit-local
 
-A Home Assistant add-on that impersonates the PetKit cloud: a litter box, feeder, fountain or
-purifier connects to it over HTTP + MQTT instead of PetKit's servers, and petkit-local answers as
-the official API, stores events and media locally, and publishes entities via MQTT discovery. It is
-an add-on **repository** — `repository.yaml` at the root, the add-on in `addon/`, the package in
+A Home Assistant add-on that impersonates the PetKit cloud: a litter box, feeder or fountain
+connects to it over HTTP + MQTT instead of PetKit's servers (the Pura Air purifiers are BLE-only
+and reach it through a parent device), and petkit-local answers as the official API, stores events
+and media locally, and publishes entities via MQTT discovery. It is an add-on **repository** — `repository.yaml` at the root, the add-on in `addon/`, the package in
 `addon/petkit_local/`. It also runs as a plain container or bare process (`docker-compose.yml` at
 the root, or `--no-ha`); HA Container and HA Core have no add-on system, so that path is supported,
 not a fallback.
@@ -15,35 +15,56 @@ not a fallback.
 
 ## Layout
 
+`ARCHITECTURE.md` at the repo root has the full map and traces a request through it. What matters
+here is where a given kind of knowledge lives:
+
 ```
 petkit_local/
-├── main.py        # process lifecycle: builds every server, starts/cancels background tasks
-├── config.py      # Config dataclass; /data/options.json + Supervisor + CLI + panel overrides
+├── main/          # cli.py flags · wiring.py composition root -> Services · lifecycle.py the
+│                  #   background tasks and their shutdown order
+├── config.py      # Config dataclass; /data/options.json + Supervisor (host IP, PORT MAPPING)
+│                  #   + CLI + panel overrides
 ├── http/          # the cloud a device believes it is talking to. server.py route table + catch-all
-│                  #   · middleware.py X-Device/logging/proxy · proxy.py upstream + forward()
-│                  #   · redact.py what a cloud reply may contain · bucket.py unauthenticated
-│                  #   OSS sink · handlers/ one per endpoint
-├── mqtt/          # broker.py (amqtt) · auth.py (Aliyun HMAC) · topics.py · bridge.py
-│                  #   · upstream.py proxy-mode bridge to the real Aliyun broker
-├── devices/       # base.py Device + every device-facing response body · registry.py (debounced
-│                  #   atomic JSON) · categories.py CATEGORY_SPECS · state_parsers.py · ble.py (K3/W5)
-├── ha/            # discovery.py EntityDef -> payload/topics · publisher.py (the one HA-broker
-│                  #   connection) · commands.py HA write -> device command · entities/ per component
+│                  #   · middleware/ device.py X-Device, proxy.py forwarding, logging.py (ORDER is
+│                  #   documented in its __init__) · redact/ what a cloud reply may contain
+│                  #   (rules.py + walker.py) · proxy.py upstream + forward() · dns.py resolver for
+│                  #   upstream only · cloud_fetch.py signs as the device · bucket.py
+│                  #   unauthenticated OSS sink · handlers/ one per endpoint
+├── mqtt/          # broker.py (amqtt) · auth.py (Aliyun HMAC + the server-side SUBSCRIBE)
+│                  #   · topics.py · bridge.py · ble_relay.py · upstream.py proxy-mode bridge to
+│                  #   the real Aliyun broker
+├── devices/       # base.py Device identity/state · payloads.py every device-facing response body
+│                  #   · defaults.py per-category seed data · registry.py (debounced atomic JSON)
+│                  #   · state_parsers.py + state_tables.py + consumables.py
+│                  #   · ble/ framing.py + w5.py + ctw3.py + registry.py
+├── ha/            # categories.py CATEGORY_SPECS + "what does this device publish"
+│                  #   · discovery.py EntityDef -> payload/topics · publisher.py (the one HA-broker
+│                  #   connection) · command_router.py HA writes · commands.py HA write -> device
+│                  #   command · entities/ per component (incl. ble.py)
 ├── events/        # codes.py THE protocol tables (all 6 namespaces, graded, per device family) ·
 │                  #   decode.py renders content for humans · models.py SQLAlchemy models ·
-│                  #   store.py EventStore (async, plain dicts) · ingest.py transport
-│                  #   normalizers + group_sessions()
+│                  #   store.py EventStore (async, plain dicts) · normalize.py transport in ·
+│                  #   sessions.py group_sessions() + Timeline filters · migrations.py ·
+│                  #   ingest.py is one import surface over the three
 ├── media/         # pipeline.py decrypt -> remux -> friendly path -> row · crypto · transcode ·
-│                  #   layout · stitch.py joins an episode's ~4s chunks · retention.py caps
+│                  #   layout · stitch.py joins an episode's ~4s chunks · retention.py caps ·
+│                  #   go2rtc.py runs go2rtc in front of the device's own stream
 ├── web/           # panel.py routes + JSON API · hub.py event ring/WS/diagnostics ·
-│                  #   templates/index.html · static/app.js · static/styles.css
+│                  #   templates/ index.html + _cropper.html · static/app.js · static/styles.css
+│                  #   · static/bin/ the dropbear binaries the ssh patcher installs
 ├── patchers/      # on-device patches: cacert · mqtt · cloud · camera · ssh · common.py
-│                  #   (delivery, staging, device space probe) · verify.py (MIPS/PEM
+│                  #   (delivery, staging, device space probe) · verify.py (MIPS/ARM/PEM
 │                  #   guards, run before anything is written)
 ├── ai/pets.py     # pet CRUD + the face photos the device's NPU matches against
 │                  #   (pet_faces table, N per pet; resolve_pet_ref binds a reported id)
 └── utils/         # const · crypto · capture · jsonio · paths · coerce · dicts · timeutil
+
+tests/            # ~1.6k tests, no device or broker needed. conftest.py has the shared fixtures
+                  #   and the --firmware flag that unlocks the patcher tests.
 ```
+
+**Layering.** `devices` depends only on `events` and `utils`. "Which entities does this device
+publish" is an HA question and is answered in `ha/categories.py` — do not answer it from `devices/`.
 
 ## Invariants — do not break these
 
@@ -51,7 +72,7 @@ petkit_local/
   (`confirmed`/`inferred`/`unverified`/`conflicted`) and carrying the firmware function behind it.
   Add a code there, not in a private set somewhere: the nine parallel collections this replaced are
   exactly why seven real codes were classified by none of them. `events/decode.py` renders values;
-  `events/ingest.py` only does transport.
+  `events/normalize.py` only does transport.
 - **HTTP `event_type` codes are PER DEVICE CATEGORY, not global.** Code `2` is `err_over` on a
   litter box and `feed_over` on a D4H feeder. Always pass `device_type` to `codes.lookup` /
   `classify_event_kind` / `event_label`; omitting it assumes a litter box.
@@ -89,7 +110,7 @@ petkit_local/
   the stitch episode key `(device_id, related_event, category)`. A stitch deletes its sources, so
   the joined output is verified before anything is removed (`media/stitch.py`).
 - **moduleType -> role -> capability**; roles share capabilities, so never assume role == capability
-  (`_MODULE_TYPE_TO_CATEGORY` / `CATEGORY_TO_CAPABILITY`, `events/ingest.py`):
+  (`_MODULE_TYPE_TO_CATEGORY` / `CATEGORY_TO_CAPABILITY`, `events/normalize.py`):
 
   | moduleType | role | capability | folder |
   |---|---|---|---|
@@ -126,7 +147,7 @@ petkit_local/
   holds the same line from the far side: an upstream that is unreachable, slow, or that REFUSES
   (a device the real cloud never heard of gets 401 on everything) falls back to the local answer.
 - **Proxy mode never hands a device an upstream credential, server address or firmware.** Redaction
-  is content-keyed, not endpoint-keyed (`http/redact.py`), so a hostile field is caught on an
+  is content-keyed, not endpoint-keyed (`http/redact/`), so a hostile field is caught on an
   endpoint nobody expected it on. Only *blocked* rules are persisted — the address, MQTT, STS and
   timezone rewrites fire on routine polling, so recording each one would bury the attempts that
   matter. Proxy mode and capture are configured ONLY from the panel; no add-on option, no CLI flag.
@@ -167,7 +188,8 @@ petkit_local/
 ## Dev commands
 
 ```sh
-cd addon && pytest                   # 1206 tests, no device or broker needed
+cd addon && pytest                   # the whole suite, no device or broker needed
+cd addon && pytest --firmware        # also the patcher tests, if tests/firmware/ is populated
 ruff check petkit_local/ tests/      # narrow lint gate; CI runs it too
 # The panel's CSS/JS are prettier-formatted (.prettierrc at the repo root).
 # CI checks this, so run it before pushing rather than after:
@@ -219,7 +241,7 @@ BuildKit's own `TARGETARCH` (which is what the 32-bit-ARM glibc base does).
   sent that way lacks the `method`/`id`/`params` envelope and the firmware has nothing to dispatch
   on. Use the `entity` form, which builds it (`ha/commands.py`).
 - **State parsing** is confirmed against real T4/T5 captures; spellings for other codenames come
-  from pypetkitapi and localkit. Capture mode (panel: Setup -> Live settings) collects
+  from pypetkitapi and localkit. Capture mode (panel: Setup -> Settings) collects
   what is needed to fix one.
 - **Protocol soft spots** (all graded in `events/codes.py`, all visible in the panel's Debug info):
   codes `4`/`13` have no firmware name and are labelled from their work mode; the `key` field the
