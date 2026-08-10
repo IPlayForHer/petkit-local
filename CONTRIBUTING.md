@@ -102,7 +102,14 @@ permanent — rather than adding a tag for it; `org.opencontainers.image.revisio
 on the image says which commit it came from.
 
 The version tag is what the Supervisor pulls, so it is a promise that the
-version is released, and it is cut by a git tag and nothing else. The workflow refuses a `v*` tag whose
+version is released, and it is cut by a git tag and nothing else.
+
+`prune-packages.yml` deletes the versions `dev` leaves behind as it moves. It
+runs weekly, and `workflow_dispatch` takes a `dry_run` (on by default) so you
+can see what it would remove first. It never deletes from "untagged" alone: a
+multi-architecture image is a manifest list whose per-platform children are
+themselves untagged, so deleting those would gut the released image. It resolves
+every tag and keeps whatever they reference. The workflow refuses a `v*` tag whose
 version does not match `addon/config.yaml`, because an image under a version the
 Supervisor never asks for is worse than no image.
 
