@@ -113,10 +113,16 @@ def default_settings(device: Device) -> dict[str, Any]:
         }
         if device.is_camera:
             base.update({
-                "camera": 1, "microphone": 1, "night": 1,
+                # All four additions below are 1 in the official D4SH
+                # `dev_device_info` response (firmware 895 / app 262667).
+                # They are not cosmetic app switches: ctrl reads the media
+                # gates before it starts an event capture/upload.
+                "camera": 1, "cameraConfig": 1,
+                "microphone": 1, "night": 1,
                 "timeDisplay": 1, "moveDetection": 1, "moveSensitivity": 1,
                 "petDetection": 1, "petSensitivity": 3,
                 "eatDetection": 1, "eatSensitivity": 3,
+                "feedPicture": 1, "eatVideo": 1, "upload": 1,
                 "soundEnable": 0, "systemSoundEnable": 0,
                 "volume": 4, "smartFrame": 1,
             })

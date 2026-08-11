@@ -66,6 +66,27 @@ def test_device_info_capacity_mirrors_enabled_capabilities():
     assert names == {"fullVideo", "eventImage", "highLight"}
 
 
+def test_camera_feeder_gets_media_subscription_and_firmware_gates():
+    """D4SH 895/262667 reads these before creating event media.
+
+    The official `dev_device_info` response carries all three gates, while
+    the firmware also parses the top-level capacity subscription.  Limiting
+    the subscription response to camera litter boxes leaves a connected D4SH
+    reporting state normally but producing no event image/video.
+    """
+    d = Device(device_type="d4sh", petkit_id=1, serial_number="SN")
+    info = payloads.to_device_info(d)["result"]
+
+    assert {item["name"] for item in info["capacity"]} == set(Device.CAPABILITY_TYPES)
+    assert info["cloudProduct"]["name"] == "Local"
+
+    settings = info["settings"]
+    assert settings["cameraConfig"] == 1
+    assert settings["feedPicture"] == 1
+    assert settings["eatVideo"] == 1
+    assert settings["upload"] == 1
+
+
 def test_supports_ai_seeds_from_the_codename_list():
     assert Device(device_type="t5", petkit_id=1).supports_ai is True
     assert Device(device_type="t6", petkit_id=1).supports_ai is True

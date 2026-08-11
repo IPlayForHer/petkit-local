@@ -148,10 +148,11 @@ def to_serverinfo(device: Device, api_url: str) -> dict[str, Any]:
 def to_device_info(device: Device, ble_registry: BLERegistry | None = None) -> dict[str, Any]:
     """`dev_device_info` — the device's own full configuration, as it sees it.
 
-    Camera litters additionally get the `capacity[]` / `cloudProduct` block
-    that stands in for a cloud subscription, and, when `ble_registry` is
-    given, the embedded K3 purifier block (`withK3`, `k3Device`,
-    `settings.k3Config`) for whichever K3 is linked to this device.
+    Camera litter boxes and feeders additionally get the `capacity[]` /
+    `cloudProduct` block that stands in for a cloud subscription. Camera
+    litters also get their consumable fields and, when `ble_registry` is given,
+    the embedded K3 purifier block (`withK3`, `k3Device`, `settings.k3Config`)
+    for whichever K3 is linked to this device.
 
     NOTE, and unlike its siblings, this method is NOT pure: the `settings`
     block in the result is the device's own `config["settings"]` dict rather
@@ -179,8 +180,6 @@ def to_device_info(device: Device, ble_registry: BLERegistry | None = None) -> d
     }
 
     if device.is_litter and device.is_camera:
-        now = int(time.time())
-        far = 4102444800
         result["sprayDays"] = SPRAY_TOTAL_DAYS
         # Falls back to the stamp we recorded, because `state` is empty for
         # the first moments after a restart and the firmware has a setter
@@ -195,6 +194,10 @@ def to_device_info(device: Device, ble_registry: BLERegistry | None = None) -> d
         result["frequencyPetTip"] = 0
         result["deodorantTip"] = 0
         result["purificationTip"] = 0
+
+    if device.is_camera and (device.is_litter or device.is_feeder):
+        now = int(time.time())
+        far = 4102444800
         # Mirrors to_oss_sts's capability[] set — a disabled capability
         # must disappear from BOTH so the device doesn't see conflicting
         # answers about what it's allowed to upload.
